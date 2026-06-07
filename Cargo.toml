@@ -15,6 +15,7 @@ reqwest = { version = "0.12", features = ["blocking", "json", "socks", "rustls-t
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+regex-lite = "0.1"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 dirs = "5"
 log = "0.4"

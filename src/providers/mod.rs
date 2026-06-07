@@ -3,11 +3,23 @@
 
 use crate::model::ProviderOutput;
 
+pub mod amp;
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
+pub mod copilot;
 pub mod cursor;
+pub mod devin;
+pub mod factory;
 pub mod grok;
+pub mod jetbrains;
+pub mod kimi;
+pub mod kiro;
+pub mod minimax;
 pub mod opencode_go;
+pub mod perplexity;
+pub mod synthetic;
+pub mod zai;
 
 /// A usage provider (Claude, Codex, ...).
 pub trait Provider: Send + Sync {
@@ -35,6 +47,18 @@ pub fn all() -> Vec<Box<dyn Provider>> {
         Box::new(cursor::Cursor),
         Box::new(grok::Grok),
         Box::new(opencode_go::OpenCodeGo),
+        Box::new(amp::Amp),
+        Box::new(zai::Zai),
+        Box::new(minimax::MiniMax),
+        Box::new(synthetic::Synthetic),
+        Box::new(kimi::Kimi),
+        Box::new(copilot::Copilot),
+        Box::new(factory::Factory),
+        Box::new(devin::Devin),
+        Box::new(jetbrains::JetBrains),
+        Box::new(kiro::Kiro),
+        Box::new(antigravity::Antigravity),
+        Box::new(perplexity::Perplexity),
     ]
 }
 

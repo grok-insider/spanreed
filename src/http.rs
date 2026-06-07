@@ -47,7 +47,7 @@ fn resolved_proxy() -> &'static Option<reqwest::Proxy> {
     })
 }
 
-fn client() -> reqwest::Result<reqwest::blocking::Client> {
+fn client_with(insecure: bool) -> reqwest::Result<reqwest::blocking::Client> {
     let mut builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
         .connect_timeout(Duration::from_secs(10))
@@ -55,6 +55,9 @@ fn client() -> reqwest::Result<reqwest::blocking::Client> {
         .user_agent("spanreed/0.1 (+linux)");
     if let Some(proxy) = resolved_proxy() {
         builder = builder.proxy(proxy.clone());
+    }
+    if insecure {
+        builder = builder.danger_accept_invalid_certs(true);
     }
     builder.build()
 }
@@ -64,6 +67,7 @@ pub struct Request {
     url: String,
     headers: HashMap<String, String>,
     body: Option<String>,
+    insecure: bool,
 }
 
 impl Request {
@@ -79,7 +83,14 @@ impl Request {
             url: url.into(),
             headers: HashMap::new(),
             body: None,
+            insecure: false,
         }
+    }
+
+    /// Accept invalid/self-signed TLS certs (for local language-server probes).
+    pub fn insecure(mut self) -> Self {
+        self.insecure = true;
+        self
     }
     pub fn header(mut self, k: impl Into<String>, v: impl Into<String>) -> Self {
         self.headers.insert(k.into(), v.into());
@@ -94,7 +105,7 @@ impl Request {
     }
 
     pub fn send(self) -> Result<Response, String> {
-        let client = client().map_err(|e| e.to_string())?;
+        let client = client_with(self.insecure).map_err(|e| e.to_string())?;
         let mut req = client.request(self.method, &self.url);
         for (k, v) in self.headers {
             req = req.header(k, v);

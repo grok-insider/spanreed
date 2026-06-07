@@ -93,11 +93,23 @@ pub fn jwt_exp_ms(token: &str) -> Option<i64> {
     Some((exp * 1000.0) as i64)
 }
 
+/// Minimal standard base64 decoder (handles `+/`, optional `=` padding).
+/// Returns the decoded bytes as a UTF-8 string (lossy) for token use.
+pub fn base64_decode_str(input: &str) -> Option<String> {
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = b64_decode_with(input, ALPHA)?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// Minimal base64url decoder (no padding required).
 fn base64url_decode(input: &str) -> Option<Vec<u8>> {
     const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    b64_decode_with(input, ALPHA)
+}
+
+fn b64_decode_with(input: &str, alpha: &[u8; 64]) -> Option<Vec<u8>> {
     let mut lut = [255u8; 256];
-    for (i, &c) in ALPHA.iter().enumerate() {
+    for (i, &c) in alpha.iter().enumerate() {
         lut[c as usize] = i as u8;
     }
     let mut out = Vec::new();
