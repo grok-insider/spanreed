@@ -63,16 +63,30 @@ The flake also advertises the cache via `nixConfig.extra-substituters`, so
 
 ## Providers
 
-| Provider      | Source on Linux                                             | Status |
-|---------------|------------------------------------------------------------|--------|
-| `claude`      | `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`)     | works  |
-| `codex`       | `$CODEX_HOME` / `~/.config/codex` / `~/.codex` `auth.json`  | works  |
-| `cursor`      | `~/.config/Cursor/.../state.vscdb` (SQLite)                 | works  |
-| `grok`        | `~/.grok/auth.json` (Grok CLI / SuperGrok Build)            | works  |
-| `opencode-go` | `~/.local/share/opencode/opencode.db` (SQLite)             | works  |
+| Provider                 | Source on Linux                                                  |
+|--------------------------|-----------------------------------------------------------------|
+| `claude`                 | `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`)          |
+| `codex`                  | `$CODEX_HOME` / `~/.config/codex` / `~/.codex` `auth.json`       |
+| `cursor`                 | `~/.config/Cursor/.../state.vscdb` (SQLite)                      |
+| `grok`                   | `~/.grok/auth.json` (Grok CLI / SuperGrok Build)                 |
+| `opencode-go`            | `~/.local/share/opencode/opencode.db` (SQLite)                  |
+| `amp`                    | `~/.local/share/amp/secrets.json`                               |
+| `zai`                    | `ZAI_API_KEY` / `GLM_API_KEY` env                               |
+| `minimax`                | `MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY` env (region-aware)     |
+| `synthetic`              | `~/.pi`, Factory, OpenCode auth, or `SYNTHETIC_API_KEY` env     |
+| `kimi`                   | `~/.kimi/credentials/kimi-code.json`                           |
+| `copilot`                | `gh auth token` / Secret Service / `~/.config/gh/hosts.yml`     |
+| `factory`                | `~/.factory/auth.json` (plain JSON; encrypted variants n/a)     |
+| `devin`                  | `~/.local/share/devin/credentials.toml`                        |
+| `jetbrains-ai-assistant` | `~/.config/JetBrains/<IDE>/options/AIAssistantQuotaManager2.xml`|
+| `kiro`                   | `~/.config/Kiro/.../state.vscdb` + `~/.aws/sso/cache`           |
+| `antigravity`            | local language server (discovered via `/proc`)                  |
+| `perplexity`             | macOS-only desktop cache — not available on Linux               |
 
-Each provider auto-refreshes short-lived OAuth tokens when needed and persists
-the refreshed token back to its source.
+Each OAuth provider auto-refreshes short-lived tokens when needed and persists
+the refreshed token back to its source. Credentials are read the Linux way:
+XDG paths, plaintext credential files, SQLite state DBs, the GitHub CLI, and the
+Secret Service via `secret-tool`.
 
 ## Usage
 
