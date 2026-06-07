@@ -116,12 +116,15 @@ fn try_region(region: Region) -> Option<Result<ProviderOutput, String>> {
     let model = data
         .get("model_remains")
         .and_then(|m| m.as_array())
-        .and_then(|arr| arr.first());
-    let model = match model {
-        Some(m) => m,
-        None => return None, // try next region
-    };
+        .and_then(|arr| arr.first())?;
 
+    let (line, plan) = parse_model(model, region.suffix())?;
+    Some(Ok(ProviderOutput::new(ID, NAME, vec![line]).with_plan(plan)))
+}
+
+/// Parse one `model_remains[]` entry into a Session line + plan (with region
+/// suffix). Prefers count totals, falling back to remaining-percent.
+fn parse_model(model: &serde_json::Value, suffix: &str) -> Option<(MetricLine, Option<String>)> {
     let total = num(model.get("current_interval_total_count"));
     let used_count = num(model.get("current_interval_usage_count"));
     let resets = model
@@ -129,13 +132,13 @@ fn try_region(region: Region) -> Option<Result<ProviderOutput, String>> {
         .and_then(util::to_iso)
         .or_else(|| model.get("remains_time").and_then(util::to_iso));
 
-    let plan_base = model
+    let plan = model
         .get("current_subscribe_title")
         .or_else(|| model.get("plan_name"))
         .or_else(|| model.get("plan"))
         .and_then(|v| v.as_str())
-        .map(util::plan_label);
-    let plan = plan_base.map(|p| format!("{p}{}", region.suffix()));
+        .map(util::plan_label)
+        .map(|p| format!("{p}{suffix}"));
 
     let line = match (total, used_count) {
         (Some(total), Some(used)) if total > 0.0 => MetricLine::Progress {
@@ -149,13 +152,11 @@ fn try_region(region: Region) -> Option<Result<ProviderOutput, String>> {
             color: None,
         },
         _ => {
-            // Fall back to remaining percent.
             let rem_pct = num(model.get("current_interval_remaining_percent"))?;
             MetricLine::percent("Session", 100.0 - rem_pct, resets)
         }
     };
-
-    Some(Ok(ProviderOutput::new(ID, NAME, vec![line]).with_plan(plan)))
+    Some((line, plan))
 }
 
 impl Provider for MiniMax {
@@ -186,6 +187,50 @@ impl Provider for MiniMax {
                 None => continue,
             }
         }
-        ProviderOutput::error(ID, NAME, last_err.unwrap_or_else(|| "Could not parse usage data.".into()))
+        ProviderOutput::error(
+            ID,
+            NAME,
+            last_err.unwrap_or_else(|| "Could not parse usage data.".into()),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_model_prefers_counts() {
+        let model = serde_json::json!({
+            "current_interval_total_count": 1000,
+            "current_interval_usage_count": 300,
+            "current_subscribe_title": "max",
+            "end_time": 1770000000_i64
+        });
+        let (line, plan) = parse_model(&model, " (GLOBAL)").unwrap();
+        match line {
+            MetricLine::Progress {
+                label, used, limit, ..
+            } => {
+                assert_eq!(label, "Session");
+                assert_eq!(used, 300.0);
+                assert_eq!(limit, 1000.0);
+            }
+            _ => panic!("expected count progress"),
+        }
+        assert_eq!(plan.as_deref(), Some("Max (GLOBAL)"));
+    }
+
+    #[test]
+    fn parse_model_falls_back_to_percent() {
+        let model = serde_json::json!({ "current_interval_remaining_percent": 70 });
+        let (line, _) = parse_model(&model, " (CN)").unwrap();
+        match line {
+            MetricLine::Progress { used, limit, .. } => {
+                assert_eq!(used, 30.0); // 100 - 70
+                assert_eq!(limit, 100.0);
+            }
+            _ => panic!("expected percent progress"),
+        }
     }
 }

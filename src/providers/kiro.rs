@@ -17,8 +17,7 @@ const STATE_KEY: &str = "kiro.kiroAgent";
 pub struct Kiro;
 
 fn state_db() -> std::path::PathBuf {
-    creds::config_home()
-        .join("Kiro/User/globalStorage/state.vscdb")
+    creds::config_home().join("Kiro/User/globalStorage/state.vscdb")
 }
 
 fn auth_token_file() -> std::path::PathBuf {
@@ -37,9 +36,7 @@ fn read_usage_state() -> Option<serde_json::Value> {
         &[&STATE_KEY],
     )?;
     let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    parsed
-        .get("kiro.resourceNotifications.usageState")
-        .cloned()
+    parsed.get("kiro.resourceNotifications.usageState").cloned()
 }
 
 fn num(v: Option<&serde_json::Value>) -> Option<f64> {
@@ -97,15 +94,10 @@ impl Provider for Kiro {
             }
         };
 
-        let primary = match primary_breakdown(&usage_state) {
-            Some(p) => p,
-            None => return ProviderOutput::error(ID, NAME, "No Kiro usage breakdown found."),
-        };
-
-        let limit = num(primary.get("usageLimit")).unwrap_or(0.0);
-        let used = num(primary.get("currentUsage")).unwrap_or(0.0);
-        if limit <= 0.0 {
-            return ProviderOutput::new(
+        match parse_usage_state(&usage_state) {
+            Some(lines) => ProviderOutput::new(ID, NAME, lines).with_plan(parse_plan(&usage_state)),
+            // Visible but no usable breakdown/limit yet.
+            None => ProviderOutput::new(
                 ID,
                 NAME,
                 vec![MetricLine::Badge {
@@ -114,41 +106,109 @@ impl Provider for Kiro {
                     color: Some("#a3a3a3".into()),
                     subtitle: None,
                 }],
-            );
+            ),
         }
+    }
+}
 
-        let resets = primary.get("resetDate").and_then(util::to_iso);
-        let mut lines = vec![MetricLine::Progress {
-            label: "Credits".into(),
-            used,
-            limit,
-            format: ProgressFormat::Count {
-                suffix: "credits".into(),
-            },
-            resets_at: resets,
-            color: None,
-        }];
+/// Parse the normalized usageState into Credits / Bonus Credits / Overages
+/// lines. Returns None when there is no usable primary breakdown.
+fn parse_usage_state(usage_state: &serde_json::Value) -> Option<Vec<MetricLine>> {
+    let primary = primary_breakdown(usage_state)?;
+    let limit = num(primary.get("usageLimit")).unwrap_or(0.0);
+    let used = num(primary.get("currentUsage")).unwrap_or(0.0);
+    if limit <= 0.0 {
+        return None;
+    }
 
-        // Overage status badge if present.
-        if let Some(status) = usage_state
-            .get("overageConfiguration")
-            .and_then(|o| o.get("overageStatus"))
-            .and_then(|v| v.as_str())
-        {
-            lines.push(MetricLine::Badge {
-                label: "Overages".into(),
-                text: util::plan_label(status),
+    let resets = primary.get("resetDate").and_then(util::to_iso);
+    let mut lines = vec![MetricLine::Progress {
+        label: "Credits".into(),
+        used,
+        limit,
+        format: ProgressFormat::Count {
+            suffix: "credits".into(),
+        },
+        resets_at: resets,
+        color: None,
+    }];
+
+    // Bonus / free-trial credit pool, when present.
+    let bonus = primary
+        .get("freeTrialUsage")
+        .filter(|f| num(f.get("usageLimit")).unwrap_or(0.0) > 0.0)
+        .or_else(|| {
+            primary
+                .get("bonuses")
+                .and_then(|b| b.as_array())
+                .and_then(|arr| arr.first())
+        });
+    if let Some(bonus) = bonus {
+        let blimit = num(bonus.get("usageLimit")).unwrap_or(0.0);
+        let bused = num(bonus.get("currentUsage")).unwrap_or(0.0);
+        if blimit > 0.0 {
+            lines.push(MetricLine::Progress {
+                label: "Bonus Credits".into(),
+                used: bused,
+                limit: blimit,
+                format: ProgressFormat::Count {
+                    suffix: "credits".into(),
+                },
+                resets_at: None,
                 color: None,
-                subtitle: None,
             });
         }
+    }
 
-        let plan = usage_state
-            .get("subscriptionInfo")
-            .and_then(|s| s.get("subscriptionTitle"))
-            .and_then(|v| v.as_str())
-            .map(util::plan_label);
+    // Overage status badge if present.
+    if let Some(status) = usage_state
+        .get("overageConfiguration")
+        .and_then(|o| o.get("overageStatus"))
+        .and_then(|v| v.as_str())
+    {
+        lines.push(MetricLine::Badge {
+            label: "Overages".into(),
+            text: util::plan_label(status),
+            color: None,
+            subtitle: None,
+        });
+    }
 
-        ProviderOutput::new(ID, NAME, lines).with_plan(plan)
+    Some(lines)
+}
+
+fn parse_plan(usage_state: &serde_json::Value) -> Option<String> {
+    usage_state
+        .get("subscriptionInfo")
+        .and_then(|s| s.get("subscriptionTitle"))
+        .and_then(|v| v.as_str())
+        .map(util::plan_label)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_credits_bonus_and_overages() {
+        let us = serde_json::json!({
+            "usageBreakdowns": [
+                { "resourceType": "CREDIT", "usageLimit": 1000, "currentUsage": 250, "resetDate": "2026-07-01T00:00:00Z",
+                  "freeTrialUsage": { "usageLimit": 50, "currentUsage": 10 } }
+            ],
+            "overageConfiguration": { "overageStatus": "enabled" },
+            "subscriptionInfo": { "subscriptionTitle": "kiro pro" }
+        });
+        let lines = parse_usage_state(&us).unwrap();
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Progress { label, used, limit, .. } if label == "Credits" && *used == 250.0 && *limit == 1000.0)));
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Progress { label, used, limit, .. } if label == "Bonus Credits" && *used == 10.0 && *limit == 50.0)));
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Badge { label, text, .. } if label == "Overages" && text == "Enabled")));
+        assert_eq!(parse_plan(&us).as_deref(), Some("Kiro Pro"));
+    }
+
+    #[test]
+    fn none_when_limit_zero() {
+        let us = serde_json::json!({ "usageBreakdowns": [ { "resourceType": "CREDIT", "usageLimit": 0 } ] });
+        assert!(parse_usage_state(&us).is_none());
     }
 }

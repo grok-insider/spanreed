@@ -46,7 +46,10 @@ fn has_token_like(auth: &serde_json::Value) -> bool {
         .and_then(|v| v.as_str())
         .map(|s| !s.is_empty())
         .unwrap_or(false)
-        || auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()).is_some()
+        || auth
+            .get("OPENAI_API_KEY")
+            .and_then(|v| v.as_str())
+            .is_some()
 }
 
 fn load_auth() -> Option<(serde_json::Value, Source, std::path::PathBuf)> {
@@ -95,7 +98,13 @@ fn save_auth(auth: &serde_json::Value, source: Source, path: &std::path::Path) {
         Source::Secret => {
             use std::io::Write;
             if let Ok(mut child) = std::process::Command::new("secret-tool")
-                .args(["store", "--label", "Codex Auth", "service", KEYCHAIN_SERVICE])
+                .args([
+                    "store",
+                    "--label",
+                    "Codex Auth",
+                    "service",
+                    KEYCHAIN_SERVICE,
+                ])
                 .stdin(std::process::Stdio::piped())
                 .spawn()
             {
@@ -181,11 +190,7 @@ fn refresh_if_needed(
     Ok(())
 }
 
-fn window_progress(
-    win: &serde_json::Value,
-    label: &str,
-    now_sec: i64,
-) -> Option<MetricLine> {
+fn window_progress(win: &serde_json::Value, label: &str, now_sec: i64) -> Option<MetricLine> {
     let used = win.get("used_percent")?.as_f64()?;
     let resets = win.get("reset_at").and_then(|r| {
         // reset_at is unix seconds; if missing, compute from window seconds.
@@ -229,7 +234,11 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
     }
 
     if let Some(credits) = data.get("credits") {
-        if credits.get("has_credits").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if credits
+            .get("has_credits")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             if let Some(balance) = credits.get("balance").and_then(|v| v.as_f64()) {
                 lines.push(MetricLine::Text {
                     label: "Credits".into(),
@@ -284,7 +293,11 @@ impl Provider for Codex {
         let (mut auth, source, path) = match load_auth() {
             Some(t) => t,
             None => {
-                return ProviderOutput::error(ID, NAME, "No credentials found. Run `codex` to log in.")
+                return ProviderOutput::error(
+                    ID,
+                    NAME,
+                    "No credentials found. Run `codex` to log in.",
+                )
             }
         };
 
@@ -321,17 +334,70 @@ impl Provider for Codex {
             return ProviderOutput::error(ID, NAME, "Token rejected. Run `codex` to log in again.");
         }
         if !(200..300).contains(&resp.status) {
-            return ProviderOutput::error(ID, NAME, format!("usage request failed (HTTP {})", resp.status));
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                format!("usage request failed (HTTP {})", resp.status),
+            );
         }
         let data = match resp.json() {
             Some(d) => d,
             None => return ProviderOutput::error(ID, NAME, "usage response not valid JSON"),
         };
         let plan = build_plan(&data);
-        let lines = parse_usage(&data);
+        let mut lines = parse_usage(&data);
         if lines.is_empty() {
             return ProviderOutput::error(ID, NAME, "no usage windows returned");
         }
+        lines.extend(crate::cost::cost_lines(crate::cost::Source::Codex));
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn used(lines: &[MetricLine], label: &str) -> Option<f64> {
+        lines.iter().find_map(|l| match l {
+            MetricLine::Progress {
+                label: lab, used, ..
+            } if lab == label => Some(*used),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn parses_rate_limit_windows_and_reviews_and_credits() {
+        let data = serde_json::json!({
+            "plan_type": "plus",
+            "rate_limit": {
+                "primary_window": { "used_percent": 6, "reset_at": 1738300000, "limit_window_seconds": 18000 },
+                "secondary_window": { "used_percent": 24, "reset_at": 1738900000, "limit_window_seconds": 604800 }
+            },
+            "code_review_rate_limit": {
+                "primary_window": { "used_percent": 2, "reset_at": 1738900000, "limit_window_seconds": 604800 }
+            },
+            "credits": { "has_credits": true, "unlimited": false, "balance": 5.39 }
+        });
+        let lines = parse_usage(&data);
+        assert_eq!(used(&lines, "Session"), Some(6.0));
+        assert_eq!(used(&lines, "Weekly"), Some(24.0));
+        assert_eq!(used(&lines, "Reviews"), Some(2.0));
+        // credits surface as a text line
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Text { label, value, .. } if label == "Credits" && value == "$5.39")));
+        assert_eq!(build_plan(&data).as_deref(), Some("Plus"));
+    }
+
+    #[test]
+    fn credits_hidden_without_has_credits() {
+        let data = serde_json::json!({
+            "rate_limit": { "primary_window": { "used_percent": 1, "reset_at": 1, "limit_window_seconds": 18000 } },
+            "credits": { "has_credits": false, "balance": 0 }
+        });
+        let lines = parse_usage(&data);
+        assert!(!lines
+            .iter()
+            .any(|l| matches!(l, MetricLine::Text { label, .. } if label == "Credits")));
     }
 }

@@ -15,9 +15,13 @@ Claude (Max 20x)
   Session: 15%
   Weekly: 22%
   Sonnet: 0%
+  Last 30 Days: ~$681.84 · 1.1B tokens
+  Usage Trend: ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▅█▂▁
 
 Codex (Free)
   Session: 5%
+  Last 30 Days: ~$2413.06 · 3.4B tokens
+  Usage Trend: ▁▃▃▁█▆▃▁▂▁▃▁█▅▁
 
 Grok (SuperGrok Heavy)
   Credits used: 0%
@@ -39,6 +43,27 @@ Copilot (Individual)
    new token back to its source), and calls the provider's usage endpoint.
 3. **Render** — results are emitted as human text, Waybar JSON, or raw JSON, and
    optionally cached behind a local HTTP API.
+
+## Cost estimation
+
+For **Claude** and **Codex**, spanreed estimates spend from the CLIs' local
+session logs (`~/.claude/projects`, `~/.codex/sessions`) — no API needed. It
+prices each message's token usage against an embedded model price table (a
+filtered snapshot of [LiteLLM](https://github.com/BerriAI/litellm)'s pricing),
+producing a `Last 30 Days` total and a `Usage Trend` daily sparkline.
+
+It's built to be cheap on repeated runs: append-only logs older than the window
+are skipped by mtime, only token-bearing lines are parsed (via a `memchr`
+pre-filter), files are read in parallel, duplicate messages are de-duped, and
+the 30-day aggregate is cached for a few minutes.
+
+Figures are **estimates** (prefixed `~$`) and a lower bound when a model is
+missing from the price table (shown as `(partial)`). Override or extend prices
+with `~/.config/spanreed/pricing.json` (same shape as the LiteLLM data, e.g.
+`{ "my-model": { "input_cost_per_token": 1e-6, "output_cost_per_token": 5e-6 } }`).
+
+Other providers surface dollar figures wherever their API returns them (Cursor
+credits/on-demand, Amp balance, Claude extra usage, OpenCode Go local spend).
 
 ## Install (Nix / NixOS)
 

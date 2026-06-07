@@ -111,82 +111,140 @@ impl Provider for Synthetic {
             .send()
         {
             Ok(r) => r,
-            Err(_) => return ProviderOutput::error(ID, NAME, "Request failed. Check your connection."),
+            Err(_) => {
+                return ProviderOutput::error(ID, NAME, "Request failed. Check your connection.")
+            }
         };
         if resp.is_auth_error() {
-            return ProviderOutput::error(ID, NAME, "API key invalid or expired. Check your Synthetic API key.");
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                "API key invalid or expired. Check your Synthetic API key.",
+            );
         }
         if !(200..300).contains(&resp.status) {
-            return ProviderOutput::error(ID, NAME, format!("Request failed (HTTP {})", resp.status));
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                format!("Request failed (HTTP {})", resp.status),
+            );
         }
         let data = match resp.json() {
             Some(d) => d,
             None => return ProviderOutput::error(ID, NAME, "Could not parse usage data."),
         };
 
-        let mut lines = Vec::new();
-
-        // 5h rolling limit (primary).
-        if let Some(roll) = data.get("rollingFiveHourLimit") {
-            let max = roll.get("max").and_then(|v| v.as_f64());
-            let remaining = roll.get("remaining").and_then(|v| v.as_f64());
-            if let (Some(max), Some(remaining)) = (max, remaining) {
-                if max > 0.0 {
-                    lines.push(MetricLine::Progress {
-                        label: "5h Rate Limit".into(),
-                        used: (max - remaining).max(0.0),
-                        limit: max,
-                        format: ProgressFormat::Count {
-                            suffix: "reqs".into(),
-                        },
-                        resets_at: None,
-                        color: None,
-                    });
-                }
-            }
-            if roll.get("limited").and_then(|v| v.as_bool()).unwrap_or(false) {
-                lines.push(MetricLine::Badge {
-                    label: "Rate Limited".into(),
-                    text: "Active".into(),
-                    color: Some("#ef4444".into()),
-                    subtitle: None,
-                });
-            }
-        }
-
-        // Weekly mana bar.
-        if let Some(pct_remaining) = data
-            .get("weeklyTokenLimit")
-            .and_then(|w| w.get("percentRemaining"))
-            .and_then(|v| v.as_f64())
-        {
-            lines.push(MetricLine::percent("Mana Bar", 100.0 - pct_remaining, None));
-        }
-
-        // Search hourly quota.
-        if let Some(hourly) = data.get("search").and_then(|s| s.get("hourly")) {
-            let limit = hourly.get("limit").and_then(|v| v.as_f64());
-            let requests = hourly.get("requests").and_then(|v| v.as_f64());
-            if let (Some(limit), Some(requests)) = (limit, requests) {
-                if limit > 0.0 {
-                    let resets = hourly.get("renewsAt").and_then(util::to_iso);
-                    lines.push(MetricLine::Progress {
-                        label: "Search".into(),
-                        used: requests,
-                        limit,
-                        format: ProgressFormat::Count {
-                            suffix: "reqs".into(),
-                        },
-                        resets_at: resets,
-                        color: None,
-                    });
-                }
-            }
-        }
-
+        let lines = parse_quotas(&data);
         if lines.is_empty() {
             return ProviderOutput::error(ID, NAME, "Could not parse usage data.");
         }
         ProviderOutput::new(ID, NAME, lines)
+    }
+}
+
+/// Parse the `/v2/quotas` payload into rate-limit / mana-bar / search lines.
+fn parse_quotas(data: &serde_json::Value) -> Vec<MetricLine> {
+    let mut lines = Vec::new();
+
+    // 5h rolling limit (primary).
+    if let Some(roll) = data.get("rollingFiveHourLimit") {
+        let max = roll.get("max").and_then(|v| v.as_f64());
+        let remaining = roll.get("remaining").and_then(|v| v.as_f64());
+        if let (Some(max), Some(remaining)) = (max, remaining) {
+            if max > 0.0 {
+                lines.push(MetricLine::Progress {
+                    label: "5h Rate Limit".into(),
+                    used: (max - remaining).max(0.0),
+                    limit: max,
+                    format: ProgressFormat::Count {
+                        suffix: "reqs".into(),
+                    },
+                    resets_at: None,
+                    color: None,
+                });
+            }
+        }
+        if roll
+            .get("limited")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            lines.push(MetricLine::Badge {
+                label: "Rate Limited".into(),
+                text: "Active".into(),
+                color: Some("#ef4444".into()),
+                subtitle: None,
+            });
+        }
+    }
+
+    // Weekly mana bar.
+    if let Some(pct_remaining) = data
+        .get("weeklyTokenLimit")
+        .and_then(|w| w.get("percentRemaining"))
+        .and_then(|v| v.as_f64())
+    {
+        lines.push(MetricLine::percent("Mana Bar", 100.0 - pct_remaining, None));
+    }
+
+    // Search hourly quota.
+    if let Some(hourly) = data.get("search").and_then(|s| s.get("hourly")) {
+        let limit = hourly.get("limit").and_then(|v| v.as_f64());
+        let requests = hourly.get("requests").and_then(|v| v.as_f64());
+        if let (Some(limit), Some(requests)) = (limit, requests) {
+            if limit > 0.0 {
+                let resets = hourly.get("renewsAt").and_then(util::to_iso);
+                lines.push(MetricLine::Progress {
+                    label: "Search".into(),
+                    used: requests,
+                    limit,
+                    format: ProgressFormat::Count {
+                        suffix: "reqs".into(),
+                    },
+                    resets_at: resets,
+                    color: None,
+                });
+            }
+        }
+    }
+
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_rolling_mana_and_search() {
+        let data = serde_json::json!({
+            "search": { "hourly": { "limit": 250, "requests": 10, "renewsAt": "2026-03-30T16:18:54.145Z" } },
+            "weeklyTokenLimit": { "percentRemaining": 80 },
+            "rollingFiveHourLimit": { "remaining": 450, "max": 600, "limited": false }
+        });
+        let lines = parse_quotas(&data);
+        let used = |label: &str| {
+            lines.iter().find_map(|l| match l {
+                MetricLine::Progress {
+                    label: lab, used, ..
+                } if lab == label => Some(*used),
+                _ => None,
+            })
+        };
+        assert_eq!(used("5h Rate Limit"), Some(150.0)); // 600 - 450
+        assert_eq!(used("Mana Bar"), Some(20.0)); // 100 - 80
+        assert_eq!(used("Search"), Some(10.0));
+        assert!(!lines
+            .iter()
+            .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Rate Limited")));
+    }
+
+    #[test]
+    fn rate_limited_badge_when_limited() {
+        let data = serde_json::json!({ "rollingFiveHourLimit": { "remaining": 0, "max": 600, "limited": true } });
+        let lines = parse_quotas(&data);
+        assert!(lines
+            .iter()
+            .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Rate Limited")));
     }
 }

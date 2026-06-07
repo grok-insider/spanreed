@@ -123,11 +123,7 @@ impl Provider for JetBrains {
         for file in &files {
             if let Some(text) = creds::read_file(file) {
                 if let Some(q) = parse_quota(&text) {
-                    if best
-                        .as_ref()
-                        .map(|b| q.maximum > b.maximum)
-                        .unwrap_or(true)
-                    {
+                    if best.as_ref().map(|b| q.maximum > b.maximum).unwrap_or(true) {
                         best = Some(q);
                     }
                 }
@@ -152,9 +148,36 @@ impl Provider for JetBrains {
         let lines = vec![
             MetricLine::percent("Quota", used_pct, quota.until.clone()),
             MetricLine::text("Used", format!("{used_credits:.1}")),
-            MetricLine::text("Remaining", format!("{:.1}", (max_credits - used_credits).max(0.0))),
+            MetricLine::text(
+                "Remaining",
+                format!("{:.1}", (max_credits - used_credits).max(0.0)),
+            ),
         ];
 
         ProviderOutput::new(ID, NAME, lines)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_option_quota_xml() {
+        let xml = r#"<application><component name="AIAssistantQuotaManager2">
+            <option name="current" value="2500000" />
+            <option name="maximum" value="10000000" />
+            <option name="available" value="7500000" />
+            <option name="until" value="2026-03-01T00:00:00Z" />
+        </component></application>"#;
+        let q = parse_quota(xml).unwrap();
+        assert_eq!(q.maximum, 10_000_000.0);
+        assert_eq!(q.used, 2_500_000.0);
+        assert_eq!(q.until.as_deref(), Some("2026-03-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn no_maximum_is_none() {
+        assert!(parse_quota("<x><option name=\"current\" value=\"1\"/></x>").is_none());
     }
 }

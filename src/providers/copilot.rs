@@ -4,6 +4,7 @@
 //!   1. `gh auth token` (GitHub CLI)
 //!   2. Secret Service item `gh:github.com` (via secret-tool)
 //!   3. file fallback `~/.config/gh/hosts.yml` oauth_token
+//!
 //! Usage: `GET https://api.github.com/copilot_internal/user`.
 
 use crate::creds;
@@ -68,7 +69,11 @@ fn token() -> Option<String> {
 }
 
 /// used = 100 - percent_remaining (clamped).
-fn snapshot_line(label: &str, snap: &serde_json::Value, resets: &Option<String>) -> Option<MetricLine> {
+fn snapshot_line(
+    label: &str,
+    snap: &serde_json::Value,
+    resets: &Option<String>,
+) -> Option<MetricLine> {
     let pct_remaining = snap.get("percent_remaining")?.as_f64()?;
     let used = (100.0 - pct_remaining).clamp(0.0, 100.0);
     Some(MetricLine::percent(label, used, resets.clone()))
@@ -110,7 +115,11 @@ impl Provider for Copilot {
             return ProviderOutput::error(ID, NAME, "Token rejected. Run `gh auth login`.");
         }
         if !(200..300).contains(&resp.status) {
-            return ProviderOutput::error(ID, NAME, format!("usage request failed (HTTP {})", resp.status));
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                format!("usage request failed (HTTP {})", resp.status),
+            );
         }
         let data = match resp.json() {
             Some(d) => d,
@@ -139,7 +148,11 @@ impl Provider for Copilot {
         }
 
         if lines.is_empty() {
-            return ProviderOutput::error(ID, NAME, "no usage quotas returned (free tier or no Copilot)");
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                "no usage quotas returned (free tier or no Copilot)",
+            );
         }
 
         let plan = data
@@ -148,5 +161,28 @@ impl Provider for Copilot {
             .map(util::plan_label);
 
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_used_is_inverse_of_remaining() {
+        let snap = serde_json::json!({ "percent_remaining": 30.0 });
+        let line = snapshot_line("Premium", &snap, &None).unwrap();
+        match line {
+            MetricLine::Progress { label, used, .. } => {
+                assert_eq!(label, "Premium");
+                assert_eq!(used, 70.0);
+            }
+            _ => panic!("expected progress"),
+        }
+    }
+
+    #[test]
+    fn snapshot_none_without_percent() {
+        assert!(snapshot_line("X", &serde_json::json!({}), &None).is_none());
     }
 }
