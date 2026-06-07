@@ -4,10 +4,10 @@
 //! `$CLAUDE_CONFIG_DIR`), refreshes if near expiry, then queries
 //! `GET https://api.anthropic.com/api/oauth/usage`.
 //!
-//! Linux differences vs upstream macOS: no Keychain. Claude Code on Linux
-//! stores credentials in the plaintext `.credentials.json` file (or, when the
-//! user has a Secret Service, under a `Claude Code-credentials` item which we
-//! read via `secret-tool`).
+//! On Linux, Claude Code stores credentials in the plaintext
+//! `.credentials.json` file. When a Secret Service is available the credentials
+//! may instead live under a `Claude Code-credentials` item, which we read via
+//! `secret-tool` as a fallback.
 
 use crate::creds;
 use crate::http::Request;

@@ -1,6 +1,4 @@
-//! Linux-native credential and local-state discovery.
-//!
-//! Replaces the macOS Keychain / `~/Library` machinery from upstream with:
+//! Linux-native credential and local-state discovery:
 //! - XDG paths (`~/.config`, `~/.local/share`)
 //! - plain credential files (JSON)
 //! - app SQLite state DBs (via rusqlite, read-only)

@@ -9,7 +9,7 @@ pub fn now_ms() -> i64 {
 }
 
 /// Convert a JSON value that may be an ISO string, unix seconds, or unix ms
-/// into an RFC3339 string (UTC). Mirrors upstream `ctx.util.toIso`.
+/// into an RFC3339 string (UTC).
 pub fn to_iso(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::String(s) => {

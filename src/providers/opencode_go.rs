@@ -94,7 +94,7 @@ impl Provider for OpenCodeGo {
         let rows = match load_rows() {
             Some(r) => r,
             None => {
-                // Visible but no data, per upstream failure behavior.
+                // Stay visible (rather than erroring) when usage data is missing.
                 if auth_has_go() {
                     return ProviderOutput::new(
                         ID,
