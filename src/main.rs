@@ -8,17 +8,36 @@
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
 
 mod api;
+mod cost;
 mod creds;
 mod http;
 mod model;
 mod output;
+mod pricing;
 mod probe;
 mod providers;
 mod util;
 
 use std::process::ExitCode;
 
+/// Restore the default SIGPIPE disposition.
+///
+/// Rust ignores SIGPIPE at startup, which turns a closed downstream pipe
+/// (e.g. `spanreed json | head`) into a write error that the `print!` macros
+/// surface as a panic. Resetting it to `SIG_DFL` makes the process exit quietly
+/// on a broken pipe, like a well-behaved Unix CLI.
+fn reset_sigpipe() {
+    // SAFETY: a single libc::signal call at startup, before any threads spawn.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
 fn main() -> ExitCode {
+    reset_sigpipe();
+    // Capture the local timezone offset while single-threaded (used for daily
+    // cost buckets); `time` can't read it reliably once threads exist.
+    util::init_local_offset();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();

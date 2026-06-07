@@ -51,8 +51,12 @@ fn entry_expires_at_ms(entry: &serde_json::Value) -> Option<i64> {
 fn needs_refresh(entry: &serde_json::Value, token: &str, now_ms: i64) -> bool {
     let entry_ms = entry_expires_at_ms(entry);
     let token_ms = util::jwt_exp_ms(token);
-    let entry_due = entry_ms.map(|ms| now_ms + REFRESH_BUFFER_MS >= ms).unwrap_or(false);
-    let token_due = token_ms.map(|ms| now_ms + REFRESH_BUFFER_MS >= ms).unwrap_or(false);
+    let entry_due = entry_ms
+        .map(|ms| now_ms + REFRESH_BUFFER_MS >= ms)
+        .unwrap_or(false);
+    let token_due = token_ms
+        .map(|ms| now_ms + REFRESH_BUFFER_MS >= ms)
+        .unwrap_or(false);
     entry_due || token_due
 }
 
@@ -173,7 +177,10 @@ fn load_auth() -> Result<AuthState, String> {
     let mut expired_candidate = false;
 
     for entry_key in keys {
-        let entry = doc.get(&entry_key).cloned().unwrap_or(serde_json::Value::Null);
+        let entry = doc
+            .get(&entry_key)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         if !entry.is_object() {
             continue;
         }
@@ -310,7 +317,10 @@ impl Provider for Grok {
             return ProviderOutput::error(
                 ID,
                 NAME,
-                format!("Grok billing request failed (HTTP {}). Try again later.", resp.status),
+                format!(
+                    "Grok billing request failed (HTTP {}). Try again later.",
+                    resp.status
+                ),
             );
         }
 
@@ -323,41 +333,50 @@ impl Provider for Grok {
             _ => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
         };
 
-        let used = units(config.get("used"));
-        let limit = units(config.get("monthlyLimit"));
-        let on_demand_cap = units(config.get("onDemandCap"));
-        let (used, limit, on_demand_cap) = match (used, limit, on_demand_cap) {
-            (Some(u), Some(l), Some(c)) if l > 0.0 => (u, l, c),
-            _ => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
+        let lines = match parse_billing(config) {
+            Some(l) => l,
+            None => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
         };
-
-        let resets_at = config.get("billingPeriodEnd").and_then(util::to_iso);
-        if resets_at.is_none() {
-            return ProviderOutput::error(ID, NAME, "Grok billing response changed.");
-        }
-
-        let used_pct = (used / limit * 100.0).clamp(0.0, 100.0);
-        let mut lines = vec![MetricLine::percent("Credits used", used_pct, resets_at)];
-
-        let payg = if on_demand_cap > 0.0 {
-            format!("{} cap", on_demand_cap as i64)
-        } else {
-            "Disabled".to_string()
-        };
-        lines.push(MetricLine::Badge {
-            label: "Pay as you go".into(),
-            text: payg,
-            color: Some(if on_demand_cap > 0.0 {
-                "#22c55e".into()
-            } else {
-                "#a3a3a3".into()
-            }),
-            subtitle: None,
-        });
 
         let plan = fetch_plan(&auth.token);
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
     }
+}
+
+/// Parse the billing `config` into Credits-used + Pay-as-you-go lines.
+/// Returns None when required fields are missing/invalid.
+fn parse_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> {
+    let used = units(config.get("used"))?;
+    let limit = units(config.get("monthlyLimit"))?;
+    let on_demand_cap = units(config.get("onDemandCap"))?;
+    if limit <= 0.0 {
+        return None;
+    }
+    let resets_at = config.get("billingPeriodEnd").and_then(util::to_iso)?;
+
+    let used_pct = (used / limit * 100.0).clamp(0.0, 100.0);
+    let mut lines = vec![MetricLine::percent(
+        "Credits used",
+        used_pct,
+        Some(resets_at),
+    )];
+
+    let payg = if on_demand_cap > 0.0 {
+        format!("{} cap", on_demand_cap as i64)
+    } else {
+        "Disabled".to_string()
+    };
+    lines.push(MetricLine::Badge {
+        label: "Pay as you go".into(),
+        text: payg,
+        color: Some(if on_demand_cap > 0.0 {
+            "#22c55e".into()
+        } else {
+            "#a3a3a3".into()
+        }),
+        subtitle: None,
+    });
+    Some(lines)
 }
 
 fn urlencode(s: &str) -> String {
@@ -371,4 +390,39 @@ fn urlencode(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_credits_used_and_payg_disabled() {
+        let config = serde_json::json!({
+            "monthlyLimit": { "val": 60000 },
+            "used": { "val": 15000 },
+            "onDemandCap": { "val": 0 },
+            "billingPeriodEnd": "2026-06-01T00:00:00+00:00"
+        });
+        let lines = parse_billing(&config).unwrap();
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Progress { label, used, .. } if label == "Credits used" && *used == 25.0)));
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Badge { label, text, .. } if label == "Pay as you go" && text == "Disabled")));
+    }
+
+    #[test]
+    fn payg_cap_when_enabled() {
+        let config = serde_json::json!({
+            "monthlyLimit": { "val": 100 }, "used": { "val": 0 }, "onDemandCap": { "val": 500 },
+            "billingPeriodEnd": "2026-06-01T00:00:00+00:00"
+        });
+        let lines = parse_billing(&config).unwrap();
+        assert!(lines
+            .iter()
+            .any(|l| matches!(l, MetricLine::Badge { text, .. } if text == "500 cap")));
+    }
+
+    #[test]
+    fn none_when_limit_missing() {
+        assert!(parse_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none());
+    }
 }

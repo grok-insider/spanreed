@@ -137,57 +137,98 @@ impl Provider for Kimi {
             return ProviderOutput::error(ID, NAME, "Token rejected. Run `kimi login` again.");
         }
         if !(200..300).contains(&resp.status) {
-            return ProviderOutput::error(ID, NAME, format!("usage request failed (HTTP {})", resp.status));
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                format!("usage request failed (HTTP {})", resp.status),
+            );
         }
         let data = match resp.json() {
             Some(d) => d,
             None => return ProviderOutput::error(ID, NAME, "usage response not valid JSON"),
         };
 
-        let mut lines = Vec::new();
-
-        // Overall (weekly) usage.
-        if let Some(usage) = data.get("usage") {
-            let limit = numf(usage.get("limit"));
-            let remaining = numf(usage.get("remaining"));
-            if let (Some(limit), Some(remaining)) = (limit, remaining) {
-                if limit > 0.0 {
-                    let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
-                    let resets = usage.get("resetTime").and_then(util::to_iso);
-                    lines.push(MetricLine::percent("Weekly", used_pct, resets));
-                }
-            }
-        }
-
-        // First windowed quota = session (5h).
-        if let Some(window) = data
-            .get("limits")
-            .and_then(|l| l.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|w| w.get("detail"))
-        {
-            let limit = numf(window.get("limit"));
-            let remaining = numf(window.get("remaining"));
-            if let (Some(limit), Some(remaining)) = (limit, remaining) {
-                if limit > 0.0 {
-                    let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
-                    let resets = window.get("resetTime").and_then(util::to_iso);
-                    lines.insert(0, MetricLine::percent("Session", used_pct, resets));
-                }
-            }
-        }
-
+        let lines = parse_usages(&data);
         if lines.is_empty() {
             return ProviderOutput::error(ID, NAME, "no usage windows returned");
         }
-
-        let plan = data
-            .get("user")
-            .and_then(|u| u.get("membership"))
-            .and_then(|m| m.get("level"))
-            .and_then(|v| v.as_str())
-            .map(|lvl| util::plan_label(&lvl.replace("LEVEL_", "").replace('_', " ")));
-
+        let plan = parse_plan(&data);
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
+    }
+}
+
+/// Parse `/usages` into Session (first window) + Weekly (overall) lines.
+fn parse_usages(data: &serde_json::Value) -> Vec<MetricLine> {
+    let mut lines = Vec::new();
+
+    // Overall (weekly) usage.
+    if let Some(usage) = data.get("usage") {
+        if let (Some(limit), Some(remaining)) =
+            (numf(usage.get("limit")), numf(usage.get("remaining")))
+        {
+            if limit > 0.0 {
+                let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
+                let resets = usage.get("resetTime").and_then(util::to_iso);
+                lines.push(MetricLine::percent("Weekly", used_pct, resets));
+            }
+        }
+    }
+
+    // First windowed quota = session (5h).
+    if let Some(window) = data
+        .get("limits")
+        .and_then(|l| l.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|w| w.get("detail"))
+    {
+        if let (Some(limit), Some(remaining)) =
+            (numf(window.get("limit")), numf(window.get("remaining")))
+        {
+            if limit > 0.0 {
+                let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
+                let resets = window.get("resetTime").and_then(util::to_iso);
+                lines.insert(0, MetricLine::percent("Session", used_pct, resets));
+            }
+        }
+    }
+
+    lines
+}
+
+fn parse_plan(data: &serde_json::Value) -> Option<String> {
+    data.get("user")
+        .and_then(|u| u.get("membership"))
+        .and_then(|m| m.get("level"))
+        .and_then(|v| v.as_str())
+        .map(|lvl| util::plan_label(&lvl.replace("LEVEL_", "").replace('_', " ").to_lowercase()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_session_and_weekly_with_string_numbers() {
+        let data = serde_json::json!({
+            "usage": { "limit": "100", "remaining": "74", "resetTime": "2026-02-11T17:32:50.757941Z" },
+            "limits": [ { "window": { "duration": 300 }, "detail": { "limit": "100", "remaining": "85", "resetTime": "2026-02-07T12:32:50Z" } } ],
+            "user": { "membership": { "level": "LEVEL_INTERMEDIATE" } }
+        });
+        let lines = parse_usages(&data);
+        let used = |label: &str| {
+            lines.iter().find_map(|l| match l {
+                MetricLine::Progress {
+                    label: lab, used, ..
+                } if lab == label => Some(*used),
+                _ => None,
+            })
+        };
+        // Session first (15% used), Weekly (26% used)
+        assert_eq!(used("Session"), Some(15.0));
+        assert_eq!(used("Weekly"), Some(26.0));
+        assert!(
+            matches!(lines.first(), Some(MetricLine::Progress { label, .. }) if label == "Session")
+        );
+        assert_eq!(parse_plan(&data).as_deref(), Some("Intermediate"));
     }
 }

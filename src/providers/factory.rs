@@ -161,7 +161,11 @@ impl Provider for Factory {
             return ProviderOutput::error(ID, NAME, "Token rejected. Run `droid` to log in again.");
         }
         if !(200..300).contains(&resp.status) {
-            return ProviderOutput::error(ID, NAME, format!("usage request failed (HTTP {})", resp.status));
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                format!("usage request failed (HTTP {})", resp.status),
+            );
         }
         let data = match resp.json() {
             Some(d) => d,
@@ -198,4 +202,31 @@ fn urlencode(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_line_uses_allowance_and_used() {
+        let usage = serde_json::json!({
+            "endDate": 1772956800000_i64,
+            "standard": { "orgTotalTokensUsed": 5000000, "totalAllowance": 20000000 },
+            "premium": { "orgTotalTokensUsed": 0, "totalAllowance": 0 }
+        });
+        let std = token_line(&usage, "standard", "Standard").unwrap();
+        match std {
+            MetricLine::Progress {
+                label, used, limit, ..
+            } => {
+                assert_eq!(label, "Standard");
+                assert_eq!(used, 5_000_000.0);
+                assert_eq!(limit, 20_000_000.0);
+            }
+            _ => panic!("expected progress"),
+        }
+        // premium allowance 0 -> no line
+        assert!(token_line(&usage, "premium", "Premium").is_none());
+    }
 }

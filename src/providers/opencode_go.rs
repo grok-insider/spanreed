@@ -66,11 +66,10 @@ fn sum_in_window(rows: &[(i64, f64)], start_ms: i64, end_ms: i64) -> f64 {
 
 /// Start of the current UTC week (Monday 00:00) in ms.
 fn utc_week_start_ms(now_ms: i64) -> i64 {
-    let now = time::OffsetDateTime::from_unix_timestamp(now_ms / 1000).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let now = time::OffsetDateTime::from_unix_timestamp(now_ms / 1000)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
     let weekday_from_monday = now.weekday().number_days_from_monday() as i64;
-    let midnight = now
-        .replace_time(time::Time::MIDNIGHT)
-        .unix_timestamp();
+    let midnight = now.replace_time(time::Time::MIDNIGHT).unix_timestamp();
     (midnight - weekday_from_monday * 86_400) * 1000
 }
 
@@ -177,7 +176,10 @@ fn monthly_window(now_ms: i64, anchor_ms: i64) -> (i64, i64) {
 fn make_utc(year: i32, month: time::Month, day: u8) -> i64 {
     let date = time::Date::from_calendar_date(year, month, day)
         .unwrap_or(time::Date::from_calendar_date(year, month, 1).unwrap());
-    date.with_time(time::Time::MIDNIGHT).assume_utc().unix_timestamp() * 1000
+    date.with_time(time::Time::MIDNIGHT)
+        .assume_utc()
+        .unix_timestamp()
+        * 1000
 }
 
 fn clamp_day(year: i32, month: time::Month, day: u8) -> u8 {
@@ -198,5 +200,40 @@ fn next_month(year: i32, month: time::Month) -> (i32, time::Month) {
         (year + 1, time::Month::January)
     } else {
         (year, month.next())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sum_in_window_filters_by_timestamp() {
+        let rows = vec![(1000, 1.0), (2000, 2.0), (3000, 4.0)];
+        // [1500, 3000): includes 2000 only
+        assert_eq!(sum_in_window(&rows, 1500, 3000), 2.0);
+        // [1000, 3001): all three
+        assert_eq!(sum_in_window(&rows, 1000, 3001), 7.0);
+    }
+
+    #[test]
+    fn utc_week_start_is_a_monday_midnight() {
+        // 2026-06-07 is a Sunday; week start should be Monday 2026-06-01 00:00 UTC.
+        let now = time::macros::datetime!(2026-06-07 12:34:56 UTC).unix_timestamp() * 1000;
+        let start = utc_week_start_ms(now);
+        let dt = time::OffsetDateTime::from_unix_timestamp(start / 1000).unwrap();
+        assert_eq!(dt.weekday(), time::Weekday::Monday);
+        assert_eq!(dt.time(), time::macros::time!(0:00));
+    }
+
+    #[test]
+    fn monthly_window_brackets_now() {
+        let now = time::macros::datetime!(2026-06-07 0:00 UTC).unix_timestamp() * 1000;
+        let anchor = time::macros::datetime!(2026-01-03 0:00 UTC).unix_timestamp() * 1000;
+        let (start, end) = monthly_window(now, anchor);
+        assert!(start <= now && now < end, "now must fall in [start,end)");
+        // anchored on day 3 -> window starts on a day-3
+        let s = time::OffsetDateTime::from_unix_timestamp(start / 1000).unwrap();
+        assert_eq!(s.day(), 3);
     }
 }

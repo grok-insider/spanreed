@@ -67,7 +67,10 @@ fn handle(mut stream: TcpStream, cache: Cache) -> std::io::Result<()> {
     let (status, body) = match path {
         "/" | "/usage" => {
             let outputs = cache.lock().map(|c| c.clone()).unwrap_or_default();
-            ("200 OK", serde_json::to_string(&outputs).unwrap_or_else(|_| "[]".into()))
+            (
+                "200 OK",
+                serde_json::to_string(&outputs).unwrap_or_else(|_| "[]".into()),
+            )
         }
         "/health" => ("200 OK", "{\"status\":\"ok\"}".to_string()),
         _ => ("404 Not Found", "{\"error\":\"not found\"}".to_string()),

@@ -81,7 +81,9 @@ fn parse_models(data: &serde_json::Value) -> Vec<MetricLine> {
             .and_then(|v| v.as_f64());
         if let (Some(fraction), false) = (fraction, label.is_empty()) {
             let used_pct = ((1.0 - fraction) * 100.0).clamp(0.0, 100.0);
-            let resets = quota.and_then(|q| q.get("resetTime")).and_then(util::to_iso);
+            let resets = quota
+                .and_then(|q| q.get("resetTime"))
+                .and_then(util::to_iso);
             lines.push(MetricLine::percent(label, used_pct, resets));
         }
     }
@@ -123,7 +125,11 @@ impl Provider for Antigravity {
         let data = match data {
             Some(d) => d,
             None => {
-                return ProviderOutput::error(ID, NAME, "Could not reach Antigravity language server.")
+                return ProviderOutput::error(
+                    ID,
+                    NAME,
+                    "Could not reach Antigravity language server.",
+                )
             }
         };
 
@@ -140,5 +146,34 @@ impl Provider for Antigravity {
             .map(util::plan_label);
 
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_per_model_fraction_quota() {
+        let data = serde_json::json!({
+            "cascadeModelConfigData": {
+                "clientModelConfigs": [
+                    { "label": "Gemini 3 Pro", "quotaInfo": { "remainingFraction": 0.25, "resetTime": "2026-02-07T14:23:01Z" } },
+                    { "label": "Claude Sonnet 4.5", "quotaInfo": { "remainingFraction": 1.0 } }
+                ]
+            }
+        });
+        let lines = parse_models(&data);
+        // remaining 0.25 -> 75% used
+        let gemini = lines.iter().find_map(|l| match l {
+            MetricLine::Progress { label, used, .. } if label == "Gemini 3 Pro" => Some(*used),
+            _ => None,
+        });
+        assert_eq!(gemini, Some(75.0));
+        let claude = lines.iter().find_map(|l| match l {
+            MetricLine::Progress { label, used, .. } if label == "Claude Sonnet 4.5" => Some(*used),
+            _ => None,
+        });
+        assert_eq!(claude, Some(0.0));
     }
 }

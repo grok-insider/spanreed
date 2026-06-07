@@ -30,7 +30,11 @@ fn resolved_proxy() -> &'static Option<reqwest::Proxy> {
         let path = creds::config_home().join("spanreed").join("config.json");
         let cfg = creds::read_json(&path)?;
         let proxy = cfg.get("proxy")?;
-        if !proxy.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if !proxy
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             return None;
         }
         let url = proxy.get("url").and_then(|v| v.as_str())?;

@@ -20,7 +20,8 @@ const NAME: &str = "Claude";
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const SCOPES: &str = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+const SCOPES: &str =
+    "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 const REFRESH_BUFFER_MS: i64 = 5 * 60 * 1000;
 const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 
@@ -191,7 +192,10 @@ fn refresh_if_needed(
     }
 
     // Mirror updated tokens into the full doc and persist.
-    if let Some(obj) = full.get_mut("claudeAiOauth").and_then(|v| v.as_object_mut()) {
+    if let Some(obj) = full
+        .get_mut("claudeAiOauth")
+        .and_then(|v| v.as_object_mut())
+    {
         obj.insert("accessToken".into(), serde_json::json!(oauth.access_token));
         if let Some(rt) = &oauth.refresh_token {
             obj.insert("refreshToken".into(), serde_json::json!(rt));
@@ -249,7 +253,11 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
     }
 
     if let Some(extra) = data.get("extra_usage") {
-        if extra.get("is_enabled").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if extra
+            .get("is_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             let used = extra.get("used_credits").and_then(|v| v.as_f64());
             let limit = extra.get("monthly_limit").and_then(|v| v.as_f64());
             if let (Some(used), Some(limit)) = (used, limit) {
@@ -331,9 +339,78 @@ fn fetch_and_build(access_token: &str) -> Result<(Option<String>, Vec<MetricLine
         return Err(format!("usage request failed (HTTP {})", resp.status));
     }
     let data = resp.json().ok_or("usage response not valid JSON")?;
-    let lines = parse_usage(&data);
+    let mut lines = parse_usage(&data);
     if lines.is_empty() {
         return Err("no usage windows returned".into());
     }
+    // Append local-log cost estimate (Last 30 Days + Usage Trend).
+    lines.extend(crate::cost::cost_lines(crate::cost::Source::Claude));
     Ok((None, lines))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ProgressFormat;
+
+    fn progress(lines: &[MetricLine], label: &str) -> Option<(f64, f64)> {
+        lines.iter().find_map(|l| match l {
+            MetricLine::Progress {
+                label: lab,
+                used,
+                limit,
+                ..
+            } if lab == label => Some((*used, *limit)),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn parses_windows_and_extra_usage() {
+        let data = serde_json::json!({
+            "five_hour": { "utilization": 25, "resets_at": "2026-01-28T15:00:00Z" },
+            "seven_day": { "utilization": 40, "resets_at": "2026-02-01T00:00:00Z" },
+            "seven_day_opus": { "utilization": 3, "resets_at": "2026-02-01T00:00:00Z" },
+            "extra_usage": { "is_enabled": true, "used_credits": 500, "monthly_limit": 10000 }
+        });
+        let lines = parse_usage(&data);
+        assert_eq!(progress(&lines, "Session"), Some((25.0, 100.0)));
+        assert_eq!(progress(&lines, "Weekly"), Some((40.0, 100.0)));
+        assert_eq!(progress(&lines, "Opus"), Some((3.0, 100.0)));
+        // extra usage: 500c used / 10000c limit -> $5 / $100
+        assert_eq!(progress(&lines, "Extra usage spent"), Some((5.0, 100.0)));
+        // resets_at carried through on Session
+        assert!(matches!(
+            lines
+                .iter()
+                .find(|l| matches!(l, MetricLine::Progress { label, .. } if label == "Session")),
+            Some(MetricLine::Progress {
+                resets_at: Some(_),
+                format: ProgressFormat::Percent,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn extra_usage_skipped_when_disabled() {
+        let data = serde_json::json!({
+            "five_hour": { "utilization": 1 },
+            "extra_usage": { "is_enabled": false, "used_credits": 500, "monthly_limit": 10000 }
+        });
+        let lines = parse_usage(&data);
+        assert!(progress(&lines, "Extra usage spent").is_none());
+    }
+
+    #[test]
+    fn plan_includes_rate_limit_tier() {
+        let oauth = Oauth {
+            access_token: "x".into(),
+            refresh_token: None,
+            expires_at_ms: None,
+            subscription_type: Some("max".into()),
+            rate_limit_tier: Some("default_20x".into()),
+        };
+        assert_eq!(build_plan(&oauth).as_deref(), Some("Max 20x"));
+    }
 }

@@ -1,11 +1,38 @@
 //! Small formatting helpers shared by providers.
 
+use std::sync::OnceLock;
 use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 
 /// Current unix time in milliseconds.
 pub fn now_ms() -> i64 {
     (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
+}
+
+static LOCAL_OFFSET: OnceLock<UtcOffset> = OnceLock::new();
+
+/// Capture the local UTC offset once, while the process is still
+/// single-threaded (call from `main` before spawning any threads). `time`
+/// refuses to read the local offset once other threads exist, so this is the
+/// only reliable point to determine it; daily cost buckets use it afterward.
+pub fn init_local_offset() {
+    let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+    let _ = LOCAL_OFFSET.set(offset);
+}
+
+/// The captured local offset (UTC if never initialized or unavailable).
+pub fn local_offset() -> UtcOffset {
+    *LOCAL_OFFSET.get().unwrap_or(&UtcOffset::UTC)
+}
+
+/// Format a unix-ms instant as `YYYY-MM-DD` in the captured local timezone.
+pub fn local_date_ymd(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let dt = OffsetDateTime::from_unix_timestamp(secs)
+        .unwrap_or(OffsetDateTime::UNIX_EPOCH)
+        .to_offset(local_offset());
+    let d = dt.date();
+    format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day())
 }
 
 /// Convert a JSON value that may be an ISO string, unix seconds, or unix ms
@@ -84,12 +111,33 @@ pub fn cents_to_dollars(cents: f64) -> f64 {
     (cents / 100.0 * 100.0).round() / 100.0
 }
 
-/// Decode a JWT's `exp` claim (unix seconds) without verifying the signature.
-pub fn jwt_exp_ms(token: &str) -> Option<i64> {
+/// Format a token count compactly: 1234 -> "1.2K", 4_500_000 -> "4.5M".
+pub fn fmt_tokens(n: u64) -> String {
+    let n = n as f64;
+    for (threshold, divisor, suffix) in [(1e9, 1e9, "B"), (1e6, 1e6, "M"), (1e3, 1e3, "K")] {
+        if n >= threshold {
+            let scaled = n / divisor;
+            return if scaled >= 10.0 {
+                format!("{}{}", scaled.round() as u64, suffix)
+            } else {
+                let s = format!("{scaled:.1}");
+                format!("{}{}", s.trim_end_matches(".0"), suffix)
+            };
+        }
+    }
+    format!("{}", n.round() as u64)
+}
+
+/// Decode a JWT's payload (claims) without verifying the signature.
+pub fn jwt_payload(token: &str) -> Option<serde_json::Value> {
     let payload_b64 = token.split('.').nth(1)?;
     let bytes = base64url_decode(payload_b64)?;
-    let json: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let exp = json.get("exp")?.as_f64()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Decode a JWT's `exp` claim (unix seconds) without verifying the signature.
+pub fn jwt_exp_ms(token: &str) -> Option<i64> {
+    let exp = jwt_payload(token)?.get("exp")?.as_f64()?;
     Some((exp * 1000.0) as i64)
 }
 
@@ -131,4 +179,79 @@ fn b64_decode_with(input: &str, alpha: &[u8; 64]) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_iso_passes_through_rfc3339() {
+        let v = serde_json::json!("2026-01-02T03:04:05Z");
+        assert_eq!(to_iso(&v).as_deref(), Some("2026-01-02T03:04:05Z"));
+    }
+
+    #[test]
+    fn to_iso_handles_unix_seconds_and_ms() {
+        // 1_700_000_000 s == 2023-11-14T22:13:20Z
+        let secs = to_iso(&serde_json::json!(1_700_000_000_i64)).unwrap();
+        assert!(secs.starts_with("2023-11-14T22:13:20"));
+        // same instant in ms
+        let ms = to_iso(&serde_json::json!(1_700_000_000_000_i64)).unwrap();
+        assert!(ms.starts_with("2023-11-14T22:13:20"));
+    }
+
+    #[test]
+    fn to_iso_assumes_utc_when_tz_missing() {
+        let v = serde_json::json!("2026-01-02T03:04:05");
+        assert_eq!(to_iso(&v).as_deref(), Some("2026-01-02T03:04:05Z"));
+    }
+
+    #[test]
+    fn plan_label_title_cases() {
+        assert_eq!(plan_label("pro"), "Pro");
+        assert_eq!(plan_label("team max"), "Team Max");
+        assert_eq!(plan_label(""), "");
+    }
+
+    #[test]
+    fn cents_to_dollars_rounds() {
+        assert_eq!(cents_to_dollars(12345.0), 123.45);
+        assert_eq!(cents_to_dollars(0.0), 0.0);
+    }
+
+    #[test]
+    fn fmt_tokens_scales() {
+        assert_eq!(fmt_tokens(500), "500");
+        assert_eq!(fmt_tokens(1500), "1.5K");
+        assert_eq!(fmt_tokens(4_500_000), "4.5M");
+        assert_eq!(fmt_tokens(1_100_000_000), "1.1B");
+        assert_eq!(fmt_tokens(12_000), "12K");
+    }
+
+    #[test]
+    fn jwt_decodes_payload_and_exp() {
+        // {"sub":"google-oauth2|user_abc","exp":1700000000} base64url, unsigned.
+        let token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJnb29nbGUtb2F1dGgyfHVzZXJfYWJjIiwiZXhwIjoxNzAwMDAwMDAwfQ.";
+        let payload = jwt_payload(token).expect("payload");
+        assert_eq!(
+            payload.get("sub").unwrap().as_str().unwrap(),
+            "google-oauth2|user_abc"
+        );
+        assert_eq!(jwt_exp_ms(token), Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn base64_decode_str_roundtrips_simple() {
+        // "hello" -> aGVsbG8=
+        assert_eq!(base64_decode_str("aGVsbG8=").as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn local_date_ymd_formats() {
+        // With UTC offset (default in tests), 1_700_000_000_000 ms == 2023-11-14.
+        let d = local_date_ymd(1_700_000_000_000);
+        // Allow for local offset shifting the date by a day either way.
+        assert!(d.starts_with("2023-11-1"), "got {d}");
+    }
 }
