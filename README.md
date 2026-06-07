@@ -13,6 +13,54 @@ no code; providers are written natively in Rust and credentials are read the
 Linux way (XDG paths, plaintext credential files, SQLite state DBs, and the
 Secret Service via `secret-tool`).
 
+## Install (Nix / NixOS)
+
+spanreed ships as a Nix flake with prebuilt closures on a public
+[Cachix](https://cachix.org) cache, so installing does **not** require building
+Rust locally. Prebuilt for `x86_64-linux` and `aarch64-linux`.
+
+Trust the binary cache once (otherwise Nix rebuilds from source):
+
+```nix
+# NixOS / nix.conf
+nix.settings = {
+  substituters = [ "https://0xfell.cachix.org" ];
+  trusted-public-keys = [
+    "0xfell.cachix.org-1:0VSPKbe/Eilt+WTT/0faSQeQnnhDOH7PxkUvoRtvPPo="
+  ];
+};
+```
+
+Or, with the Cachix CLI: `cachix use 0xfell`.
+
+Then run or install:
+
+```sh
+nix run github:0xfell/spanreed -- probe     # try it without installing
+nix profile install github:0xfell/spanreed
+```
+
+The flake also advertises the cache via `nixConfig.extra-substituters`, so
+`nix run github:0xfell/spanreed` offers to use it (accept the prompt or pass
+`--accept-flake-config`).
+
+### Home Manager
+
+```nix
+{
+  inputs.spanreed.url = "github:0xfell/spanreed";
+
+  # in your home-manager config:
+  imports = [ inputs.spanreed.homeManagerModules.default ];
+
+  programs.spanreed = {
+    enable = true;
+    serve.enable = true;     # run `spanreed serve` as a user service
+    serve.interval = 300;    # refresh seconds (min 30)
+  };
+}
+```
+
 ## Providers
 
 | Provider      | Source on Linux                                             | Status |
