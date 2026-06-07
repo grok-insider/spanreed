@@ -1,9 +1,9 @@
 //! Perplexity provider.
 //!
-//! Upstream reads the macOS Perplexity app's CFNetwork `Cache.db` to extract a
-//! bearer token. There is no Perplexity desktop app on Linux and therefore no
-//! local session cache to read, so this provider never detects on Linux. It is
-//! kept registered for parity and to give a clear message if force-probed.
+//! Perplexity exposes a usable bearer token only through its macOS desktop
+//! app's local CFNetwork cache. There is no Perplexity desktop app on Linux and
+//! therefore no local session cache to read, so this provider never detects on
+//! Linux. It is kept registered to give a clear message if force-probed.
 
 use crate::model::ProviderOutput;
 use crate::providers::Provider;
