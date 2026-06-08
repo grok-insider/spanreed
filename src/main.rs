@@ -121,7 +121,8 @@ fn cmd_probe(args: &[String]) -> ExitCode {
 }
 
 fn cmd_waybar() -> ExitCode {
-    let outputs = probe::probe_detected();
+    // Prefer the running daemon's cached data (instant); fall back to probing.
+    let outputs = api::fetch_cached().unwrap_or_else(probe::probe_detected);
     let json = output::waybar(&outputs);
     println!("{json}");
     ExitCode::SUCCESS

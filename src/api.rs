@@ -17,6 +17,26 @@ const CONN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Shared cache of the most recent outputs.
 type Cache = Arc<Mutex<Vec<ProviderOutput>>>;
 
+/// Fetch the cached outputs from a running daemon, if one is up.
+///
+/// Lets `spanreed waybar` reuse the daemon's already-refreshed data instead of
+/// re-probing on every status-bar poll. Returns None when the daemon is down or
+/// the response is empty/unusable.
+pub fn fetch_cached() -> Option<Vec<ProviderOutput>> {
+    let resp = crate::http::Request::get(format!("http://{BIND_ADDR}/usage"))
+        .send()
+        .ok()?;
+    if !(200..300).contains(&resp.status) {
+        return None;
+    }
+    let outputs: Vec<ProviderOutput> = serde_json::from_str(resp.body.trim()).ok()?;
+    if outputs.is_empty() {
+        None
+    } else {
+        Some(outputs)
+    }
+}
+
 pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
     let listener = TcpListener::bind(BIND_ADDR)?;
     log::info!("local API listening on http://{BIND_ADDR}");

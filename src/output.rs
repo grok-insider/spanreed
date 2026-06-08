@@ -31,6 +31,16 @@ fn fmt_progress(used: f64, limit: f64, format: &ProgressFormat) -> String {
     }
 }
 
+/// A ` · resets in 3h 12m` suffix for a progress line, or empty when there is
+/// no (future) reset time.
+fn reset_suffix(resets_at: &Option<String>) -> String {
+    resets_at
+        .as_deref()
+        .and_then(crate::util::reset_in)
+        .map(|s| format!(" · resets in {s}"))
+        .unwrap_or_default()
+}
+
 /// Percentage for a progress line (for bar/severity), or None.
 pub fn line_percent(line: &MetricLine) -> Option<f64> {
     match line {
@@ -76,11 +86,13 @@ pub fn plain(outputs: &[ProviderOutput]) -> String {
                     used,
                     limit,
                     format,
+                    resets_at,
                     ..
                 } => {
                     s.push_str(&format!(
-                        "  {label}: {}\n",
-                        fmt_progress(*used, *limit, format)
+                        "  {label}: {}{}\n",
+                        fmt_progress(*used, *limit, format),
+                        reset_suffix(resets_at)
                     ));
                 }
                 MetricLine::BarChart { label, points, .. } => {
@@ -126,12 +138,14 @@ pub fn waybar(outputs: &[ProviderOutput]) -> serde_json::Value {
                     used,
                     limit,
                     format,
+                    resets_at,
                     ..
                 } => {
                     let pct = line_percent(line).unwrap_or(0.0);
                     tooltip.push_str(&format!(
-                        "  {label}: {}\n",
-                        fmt_progress(*used, *limit, format)
+                        "  {label}: {}{}\n",
+                        fmt_progress(*used, *limit, format),
+                        reset_suffix(resets_at)
                     ));
                     let candidate = (format!("{} {:.0}%", out.provider_id, pct), pct);
                     if worst.as_ref().map(|(_, p)| pct > *p).unwrap_or(true) {
@@ -277,5 +291,53 @@ mod tests {
             ),
             "3/5 reqs"
         );
+    }
+
+    #[test]
+    fn reset_suffix_renders_for_future_only() {
+        let future =
+            time::OffsetDateTime::from_unix_timestamp((crate::util::now_ms() / 1000) + 7200)
+                .unwrap()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap();
+        assert!(reset_suffix(&Some(future)).contains("resets in"));
+        assert_eq!(reset_suffix(&Some("2000-01-01T00:00:00Z".into())), "");
+        assert_eq!(reset_suffix(&None), "");
+    }
+
+    #[test]
+    fn waybar_tooltip_renders_barchart_as_sparkline_not_null() {
+        let outputs = vec![ProviderOutput::new(
+            "claude",
+            "Claude",
+            vec![
+                MetricLine::text("Last 30 Days", "~$5.00 · 1M tokens"),
+                MetricLine::bar_chart(
+                    "Usage Trend",
+                    vec![
+                        BarChartPoint {
+                            label: "a".into(),
+                            value: 0.0,
+                            value_label: None,
+                        },
+                        BarChartPoint {
+                            label: "b".into(),
+                            value: 4.0,
+                            value_label: None,
+                        },
+                    ],
+                    None,
+                ),
+            ],
+        )];
+        let j = waybar(&outputs);
+        let tip = j["tooltip"].as_str().unwrap();
+        assert!(tip.contains("Usage Trend: ▁"), "tooltip: {tip}");
+        assert!(
+            !tip.contains("null"),
+            "tooltip must not contain null: {tip}"
+        );
+        let s = plain(&outputs);
+        assert!(s.contains("Usage Trend: ▁"));
     }
 }
