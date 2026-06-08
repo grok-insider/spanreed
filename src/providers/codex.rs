@@ -192,18 +192,23 @@ fn refresh_if_needed(
 
 fn window_progress(win: &serde_json::Value, label: &str, now_sec: i64) -> Option<MetricLine> {
     let used = win.get("used_percent")?.as_f64()?;
-    let resets = win.get("reset_at").and_then(|r| {
-        // reset_at is unix seconds; if missing, compute from window seconds.
-        if r.is_number() {
-            util::to_iso(r)
-        } else {
-            None
-        }
-    });
-    let resets = resets.or_else(|| {
-        let secs = win.get("limit_window_seconds")?.as_i64()?;
-        util::ms_to_iso((now_sec + secs) * 1000)
-    });
+
+    // `reset_at` is unix seconds. A rolling window can't reset further out than
+    // its own length, so cap the API value at `now + limit_window_seconds`
+    // (guards against the API returning an out-of-range reset for short
+    // windows, e.g. a monthly timestamp on a 5h window).
+    let api_reset = win.get("reset_at").and_then(|r| r.as_i64());
+    let window_end = win
+        .get("limit_window_seconds")
+        .and_then(|v| v.as_i64())
+        .map(|secs| now_sec + secs);
+    let resets_secs = match (api_reset, window_end) {
+        (Some(a), Some(w)) => Some(a.min(w)),
+        (Some(a), None) => Some(a),
+        (None, Some(w)) => Some(w),
+        (None, None) => None,
+    };
+    let resets = resets_secs.and_then(|s| util::ms_to_iso(s * 1000));
     Some(MetricLine::percent(label, used, resets))
 }
 

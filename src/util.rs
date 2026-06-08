@@ -25,6 +25,36 @@ pub fn local_offset() -> UtcOffset {
     *LOCAL_OFFSET.get().unwrap_or(&UtcOffset::UTC)
 }
 
+/// Format the time remaining until an RFC3339 `resets_at` as a short relative
+/// string: `2d 4h`, `3h 12m`, `5m`, or `<1m`. Returns `None` when the value is
+/// absent, unparseable, or already in the past.
+pub fn reset_in(resets_at: &str) -> Option<String> {
+    let reset = OffsetDateTime::parse(resets_at.trim(), &Rfc3339).ok()?;
+    let reset_ms = (reset.unix_timestamp_nanos() / 1_000_000) as i64;
+    let secs = (reset_ms - now_ms()) / 1000;
+    if secs < 0 {
+        return None;
+    }
+    Some(format_duration_secs(secs))
+}
+
+fn format_duration_secs(secs: i64) -> String {
+    let total_minutes = secs / 60;
+    let total_hours = total_minutes / 60;
+    let days = total_hours / 24;
+    let hours = total_hours % 24;
+    let minutes = total_minutes % 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if total_hours > 0 {
+        format!("{total_hours}h {minutes}m")
+    } else if total_minutes > 0 {
+        format!("{total_minutes}m")
+    } else {
+        "<1m".to_string()
+    }
+}
+
 /// Format a unix-ms instant as `YYYY-MM-DD` in the captured local timezone.
 pub fn local_date_ymd(ms: i64) -> String {
     let secs = ms.div_euclid(1000);
@@ -245,6 +275,25 @@ mod tests {
     fn base64_decode_str_roundtrips_simple() {
         // "hello" -> aGVsbG8=
         assert_eq!(base64_decode_str("aGVsbG8=").as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn reset_in_formats_future_and_rejects_past() {
+        assert_eq!(format_duration_secs(2 * 86400 + 4 * 3600), "2d 4h");
+        assert_eq!(format_duration_secs(3 * 3600 + 12 * 60), "3h 12m");
+        assert_eq!(format_duration_secs(5 * 60), "5m");
+        assert_eq!(format_duration_secs(30), "<1m");
+
+        // A timestamp ~2h in the future yields an "Xh" string.
+        let future = OffsetDateTime::from_unix_timestamp((now_ms() / 1000) + 7200)
+            .unwrap()
+            .format(&Rfc3339)
+            .unwrap();
+        assert!(reset_in(&future).unwrap().contains('h'));
+
+        // Past timestamps are not shown.
+        assert!(reset_in("2000-01-01T00:00:00Z").is_none());
+        assert!(reset_in("not-a-date").is_none());
     }
 
     #[test]

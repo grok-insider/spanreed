@@ -12,19 +12,19 @@ credential files, SQLite state DBs, the GitHub CLI, and the Secret Service via
 ```
 $ spanreed probe
 Claude (Max 20x)
-  Session: 15%
-  Weekly: 22%
-  Sonnet: 0%
+  Session: 15% · resets in 4h 47m
+  Weekly: 22% · resets in 3d 1h
+  Sonnet: 0% · resets in 3d 1h
   Last 30 Days: ~$681.84 · 1.1B tokens
   Usage Trend: ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▅█▂▁
 
 Codex (Free)
-  Session: 5%
+  Session: 5% · resets in 29d 23h
   Last 30 Days: ~$2413.06 · 3.4B tokens
   Usage Trend: ▁▃▃▁█▆▃▁▂▁▃▁█▅▁
 
 Grok (SuperGrok Heavy)
-  Credits used: 0%
+  Credits used: 0% · resets in 22d 12h
   Pay as you go: Disabled
 
 Copilot (Individual)
@@ -32,6 +32,11 @@ Copilot (Individual)
   Chat: 0%
   Completions: 0%
 ```
+
+Progress lines show when each window resets (`· resets in 3h 12m`) whenever the
+provider reports a reset time. The window length depends on your plan/model
+(5-hour, weekly, monthly, ...), so the countdown reflects whichever limit that
+line tracks.
 
 ## How it works
 
