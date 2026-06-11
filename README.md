@@ -53,9 +53,12 @@ line tracks.
 
 For **Claude** and **Codex**, spanreed estimates spend from the CLIs' local
 session logs (`~/.claude/projects`, `~/.codex/sessions`) — no API needed. It
-prices each message's token usage against an embedded model price table (a
-filtered snapshot of [LiteLLM](https://github.com/BerriAI/litellm)'s pricing),
-producing a `Last 30 Days` total and a `Usage Trend` daily sparkline.
+prices each message's token usage against a model price table built from
+[LiteLLM](https://github.com/BerriAI/litellm)'s pricing data — an embedded
+snapshot for offline use, refreshed from upstream at most once a week (cached
+in `~/.cache/spanreed/`, set `SPANREED_OFFLINE=1` to disable) so newly
+released models are priced without updating the binary — producing a
+`Last 30 Days` total and a `Usage Trend` daily sparkline.
 
 It's built to be cheap on repeated runs: append-only logs older than the window
 are skipped by mtime, only token-bearing lines are parsed (via a `memchr`

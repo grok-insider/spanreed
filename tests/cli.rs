@@ -26,6 +26,8 @@ fn run(args: &[&str]) -> (String, std::process::ExitStatus) {
         .env("XDG_CONFIG_HOME", tmp.join("config"))
         .env("XDG_DATA_HOME", tmp.join("data"))
         .env("XDG_CACHE_HOME", tmp.join("cache"))
+        // Never fetch the remote pricing table from tests/CI.
+        .env("SPANREED_OFFLINE", "1")
         // Strip provider env keys so detection is deterministic.
         .env_remove("ZAI_API_KEY")
         .env_remove("GLM_API_KEY")
