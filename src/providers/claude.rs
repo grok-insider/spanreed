@@ -234,6 +234,57 @@ fn window_line(data: &serde_json::Value, key: &str, label: &str) -> Option<Metri
     Some(MetricLine::percent(label, util_pct, resets))
 }
 
+/// Friendly labels for known per-model `seven_day_*` windows. Unknown ones
+/// (new model families) are still rendered, with a label derived from the
+/// key suffix (`seven_day_fable` -> "Fable").
+const MODEL_WINDOWS: &[(&str, &str)] = &[
+    ("seven_day_opus", "Opus"),
+    ("seven_day_sonnet", "Sonnet"),
+    ("seven_day_omelette", "Claude Design"),
+];
+
+fn window_label(suffix: &str) -> String {
+    suffix
+        .split('_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn model_window_lines(data: &serde_json::Value) -> Vec<MetricLine> {
+    let mut lines = Vec::new();
+    for (key, label) in MODEL_WINDOWS {
+        if let Some(l) = window_line(data, key, label) {
+            lines.push(l);
+        }
+    }
+    let Some(obj) = data.as_object() else {
+        return lines;
+    };
+    let mut unknown: Vec<&str> = obj
+        .keys()
+        .map(String::as_str)
+        .filter(|k| {
+            k.starts_with("seven_day_") && !MODEL_WINDOWS.iter().any(|(known, _)| known == k)
+        })
+        .collect();
+    unknown.sort_unstable();
+    for key in unknown {
+        let label = window_label(&key["seven_day_".len()..]);
+        if let Some(l) = window_line(data, key, &label) {
+            lines.push(l);
+        }
+    }
+    lines
+}
+
 fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
     let mut lines = Vec::new();
     if let Some(l) = window_line(data, "five_hour", "Session") {
@@ -242,15 +293,7 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
     if let Some(l) = window_line(data, "seven_day", "Weekly") {
         lines.push(l);
     }
-    if let Some(l) = window_line(data, "seven_day_opus", "Opus") {
-        lines.push(l);
-    }
-    if let Some(l) = window_line(data, "seven_day_sonnet", "Sonnet") {
-        lines.push(l);
-    }
-    if let Some(l) = window_line(data, "seven_day_omelette", "Claude Design") {
-        lines.push(l);
-    }
+    lines.extend(model_window_lines(data));
 
     if let Some(extra) = data.get("extra_usage") {
         if extra
@@ -390,6 +433,25 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn unknown_model_windows_render_with_derived_labels() {
+        let data = serde_json::json!({
+            "five_hour": { "utilization": 10 },
+            "seven_day": { "utilization": 20 },
+            "seven_day_sonnet": { "utilization": 0 },
+            "seven_day_fable": { "utilization": 47, "resets_at": "2026-06-15T00:00:00Z" },
+            "seven_day_omelette": { "utilization": 5 }
+        });
+        let lines = parse_usage(&data);
+        assert_eq!(progress(&lines, "Fable"), Some((47.0, 100.0)));
+        assert_eq!(progress(&lines, "Sonnet"), Some((0.0, 100.0)));
+        // Known keys keep their friendly labels.
+        assert_eq!(progress(&lines, "Claude Design"), Some((5.0, 100.0)));
+        assert!(progress(&lines, "Omelette").is_none());
+        // Multi-word suffixes title-case per word.
+        assert_eq!(window_label("fable_mini"), "Fable Mini");
     }
 
     #[test]

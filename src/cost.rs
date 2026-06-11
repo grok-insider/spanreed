@@ -122,6 +122,10 @@ pub fn estimate(source: Source) -> Option<CostSummary> {
 }
 
 fn compute(source: Source) -> Option<CostSummary> {
+    // Pull fresh model prices (TTL-cached, silent on failure) before the
+    // pricing table is first built, so new models are priced without a
+    // new binary.
+    pricing::ensure_fresh();
     let cutoff = util::now_ms() - WINDOW_DAYS * DAY_MS;
     let files = collect_files(source, cutoff);
     if files.is_empty() {

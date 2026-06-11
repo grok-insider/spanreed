@@ -6,6 +6,7 @@
 //!   spanreed waybar               Emit Waybar custom-module JSON (one shot).
 //!   spanreed json                 Emit raw JSON of all detected providers.
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
+//!   spanreed update-pricing [out] Fetch + filter the upstream price table.
 
 mod api;
 mod cost;
@@ -50,6 +51,7 @@ fn main() -> ExitCode {
         "waybar" => cmd_waybar(),
         "json" => cmd_json(),
         "serve" => cmd_serve(rest),
+        "update-pricing" => cmd_update_pricing(rest),
         "help" | "-h" | "--help" => {
             print_help();
             ExitCode::SUCCESS
@@ -70,7 +72,10 @@ fn print_help() {
          \tspanreed probe [id] [--force] Probe detected providers, or a single id\n\
          \tspanreed waybar               Waybar custom-module JSON (one shot)\n\
          \tspanreed json                 Raw JSON of detected provider outputs\n\
-         \tspanreed serve [--interval S] Local HTTP API on 127.0.0.1:6736\n\n\
+         \tspanreed serve [--interval S] Local HTTP API on 127.0.0.1:6736\n\
+         \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
+         \t                               (writes to stdout, or to [out]; used to\n\
+         \t                               refresh the embedded src/pricing-data.json)\n\n\
          PROVIDERS: claude, codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
          \t           synthetic, kimi, copilot, factory, devin,\n\
          \t           jetbrains-ai-assistant, kiro, antigravity, perplexity"
@@ -140,6 +145,27 @@ fn cmd_json() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn cmd_update_pricing(args: &[String]) -> ExitCode {
+    let json = match pricing::fetch_filtered() {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("update-pricing failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match args.first() {
+        Some(path) => {
+            if let Err(e) = std::fs::write(path, &json) {
+                eprintln!("write {path} failed: {e}");
+                return ExitCode::FAILURE;
+            }
+            eprintln!("wrote {path}");
+        }
+        None => println!("{json}"),
+    }
+    ExitCode::SUCCESS
 }
 
 fn cmd_serve(args: &[String]) -> ExitCode {
