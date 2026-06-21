@@ -63,6 +63,61 @@ pub fn line_percent(line: &MetricLine) -> Option<f64> {
     }
 }
 
+/// Providers allowed to drive the collapsed Waybar bar text. Everything else
+/// (Copilot, Cursor, ...) is still shown in the tooltip but never sets the bar.
+const BAR_PROVIDERS: &[&str] = &["claude", "codex", "grok"];
+
+/// Plan labels treated as non-paid; a provider on one of these never drives the
+/// bar. Matched case-insensitively against each whitespace-token of the plan.
+const FREE_PLAN_LABELS: &[&str] = &["free", "guest"];
+
+/// Weekly utilization (%) at/above which the bar escalates from the Session
+/// window to the Weekly window. Matches `severity()`'s warning band so the bar
+/// turns yellow exactly when it starts reflecting the weekly constraint.
+const WEEKLY_ESCALATE_PCT: f64 = 80.0;
+
+/// True when `plan` denotes an active paid subscription (Some, non-empty, and
+/// not a known free/guest tier). Stale/unknown plans (`None`) are not paid.
+fn is_paid_plan(plan: &Option<String>) -> bool {
+    match plan.as_deref().map(str::trim) {
+        Some(p) if !p.is_empty() => !p
+            .split_whitespace()
+            .any(|tok| FREE_PLAN_LABELS.iter().any(|f| tok.eq_ignore_ascii_case(f))),
+        _ => false,
+    }
+}
+
+/// True when a provider may contribute to the bar text: it's in the allow-list,
+/// on a paid plan, and didn't error.
+fn bar_eligible(out: &ProviderOutput) -> bool {
+    BAR_PROVIDERS.contains(&out.provider_id.as_str()) && is_paid_plan(&out.plan) && !out.has_error()
+}
+
+/// The percentage a provider contributes to the bar.
+///
+/// Anchored on the Session (5h) window so a freshly-reset session isn't masked
+/// by a higher long-window value. Escalates to the Weekly window only when
+/// Weekly is itself in the warning band (>= `WEEKLY_ESCALATE_PCT`) and higher
+/// than Session, so a near-exhausted weekly limit still surfaces. Providers
+/// without a Session window (e.g. Grok's single "Credits used") fall back to
+/// their first progress line.
+fn provider_bar_pct(out: &ProviderOutput) -> Option<f64> {
+    let labeled = |want: &str| {
+        out.lines.iter().find_map(|l| match l {
+            MetricLine::Progress { label, .. } if label == want => line_percent(l),
+            _ => None,
+        })
+    };
+    let session = labeled("Session");
+    let weekly = labeled("Weekly");
+    match (session, weekly) {
+        (Some(s), Some(w)) if w >= WEEKLY_ESCALATE_PCT && w > s => Some(w),
+        (Some(s), _) => Some(s),
+        (None, Some(w)) => Some(w),
+        (None, None) => out.lines.iter().find_map(line_percent),
+    }
+}
+
 /// Plain multi-line human output for the terminal.
 pub fn plain(outputs: &[ProviderOutput]) -> String {
     let mut s = String::new();
@@ -121,9 +176,9 @@ fn severity(pct: f64) -> &'static str {
 /// `text` is the single highest-utilization primary metric across providers
 /// (e.g. "claude 42%"). The tooltip lists every provider/line.
 pub fn waybar(outputs: &[ProviderOutput]) -> serde_json::Value {
-    let mut worst: Option<(String, f64)> = None;
     let mut tooltip = String::new();
 
+    // Tooltip: every detected provider and line, unchanged.
     for out in outputs {
         let plan = out
             .plan
@@ -141,16 +196,11 @@ pub fn waybar(outputs: &[ProviderOutput]) -> serde_json::Value {
                     resets_at,
                     ..
                 } => {
-                    let pct = line_percent(line).unwrap_or(0.0);
                     tooltip.push_str(&format!(
                         "  {label}: {}{}\n",
                         fmt_progress(*used, *limit, format),
                         reset_suffix(resets_at)
                     ));
-                    let candidate = (format!("{} {:.0}%", out.provider_id, pct), pct);
-                    if worst.as_ref().map(|(_, p)| pct > *p).unwrap_or(true) {
-                        worst = Some(candidate);
-                    }
                 }
                 MetricLine::Text { label, value, .. } => {
                     tooltip.push_str(&format!("  {label}: {value}\n"));
@@ -165,6 +215,19 @@ pub fn waybar(outputs: &[ProviderOutput]) -> serde_json::Value {
         }
         tooltip.push('\n');
     }
+
+    // Bar text: worst (highest) contribution among eligible providers only
+    // (allow-listed + paid plan), each using its Session-anchored window.
+    let worst = outputs
+        .iter()
+        .filter(|out| bar_eligible(out))
+        .filter_map(|out| provider_bar_pct(out).map(|pct| (out.provider_id.clone(), pct)))
+        .fold(None::<(String, f64)>, |acc, (id, pct)| {
+            match acc {
+                Some((_, p)) if p >= pct => acc,
+                _ => Some((format!("{id} {pct:.0}%"), pct)),
+            }
+        });
 
     let (text, pct) = worst.unwrap_or_else(|| ("no data".to_string(), 0.0));
     serde_json::json!({
@@ -225,6 +288,138 @@ mod tests {
         let j = waybar(&[]);
         assert_eq!(j["text"], "no data");
         assert_eq!(j["class"], "ok");
+    }
+
+    #[test]
+    fn is_paid_plan_excludes_free_and_none() {
+        assert!(is_paid_plan(&Some("Max 20x".into())));
+        assert!(is_paid_plan(&Some("Pro".into())));
+        assert!(is_paid_plan(&Some("SuperGrok Heavy".into())));
+        assert!(is_paid_plan(&Some("X Premium+".into())));
+        assert!(!is_paid_plan(&Some("Free".into())));
+        assert!(!is_paid_plan(&Some("free".into())));
+        assert!(!is_paid_plan(&Some("Free Workspace".into())));
+        assert!(!is_paid_plan(&Some("Guest".into())));
+        assert!(!is_paid_plan(&Some("".into())));
+        assert!(!is_paid_plan(&None));
+    }
+
+    #[test]
+    fn waybar_bar_anchors_on_session_not_higher_weekly() {
+        // The core bug: weekly 45% / session 0% (just reset) must show 0%,
+        // not the misleading 45%.
+        let outputs = vec![ProviderOutput::new(
+            "claude",
+            "Claude",
+            vec![
+                MetricLine::percent("Session", 0.0, None),
+                MetricLine::percent("Weekly", 45.0, None),
+            ],
+        )
+        .with_plan(Some("Max 20x".into()))];
+        let j = waybar(&outputs);
+        assert_eq!(j["text"], "claude 0%");
+        assert_eq!(j["percentage"], 0);
+        assert_eq!(j["class"], "ok");
+    }
+
+    #[test]
+    fn waybar_escalates_to_weekly_when_weekly_critical() {
+        // Weekly near-exhaustion still surfaces over a calm session.
+        let outputs = vec![ProviderOutput::new(
+            "claude",
+            "Claude",
+            vec![
+                MetricLine::percent("Session", 10.0, None),
+                MetricLine::percent("Weekly", 92.0, None),
+            ],
+        )
+        .with_plan(Some("Max 20x".into()))];
+        let j = waybar(&outputs);
+        assert_eq!(j["text"], "claude 92%");
+        assert_eq!(j["class"], "warning");
+    }
+
+    #[test]
+    fn waybar_excludes_free_plan_from_bar_but_keeps_tooltip() {
+        // Codex on Free with a high session must not drive the bar; when it's
+        // the only provider the bar is "no data" but the tooltip still lists it.
+        let outputs = vec![ProviderOutput::new(
+            "codex",
+            "Codex",
+            vec![MetricLine::percent("Session", 88.0, None)],
+        )
+        .with_plan(Some("Free".into()))];
+        let j = waybar(&outputs);
+        assert_eq!(j["text"], "no data");
+        assert!(j["tooltip"]
+            .as_str()
+            .unwrap()
+            .contains("<b>Codex (Free)</b>"));
+        assert!(j["tooltip"].as_str().unwrap().contains("Session: 88%"));
+    }
+
+    #[test]
+    fn waybar_excludes_non_allowlisted_providers() {
+        // Copilot is not in the allow-list and must never set the bar, even at
+        // 99%; an eligible paid grok at 11% wins instead.
+        let outputs = vec![
+            ProviderOutput::new(
+                "copilot",
+                "Copilot",
+                vec![MetricLine::percent("Premium", 99.0, None)],
+            )
+            .with_plan(Some("Individual".into())),
+            ProviderOutput::new(
+                "grok",
+                "Grok",
+                vec![MetricLine::percent("Credits used", 11.0, None)],
+            )
+            .with_plan(Some("X Premium+".into())),
+        ];
+        let j = waybar(&outputs);
+        assert_eq!(j["text"], "grok 11%");
+        assert!(j["tooltip"].as_str().unwrap().contains("<b>Copilot"));
+    }
+
+    #[test]
+    fn waybar_grok_uses_single_window_fallback() {
+        let outputs = vec![ProviderOutput::new(
+            "grok",
+            "Grok",
+            vec![MetricLine::percent("Credits used", 11.0, None)],
+        )
+        .with_plan(Some("SuperGrok Heavy".into()))];
+        let j = waybar(&outputs);
+        assert_eq!(j["text"], "grok 11%");
+    }
+
+    #[test]
+    fn waybar_picks_worst_among_eligible_providers() {
+        // Two paid allow-listed providers: the higher Session-anchored value wins.
+        let outputs = vec![
+            ProviderOutput::new(
+                "claude",
+                "Claude",
+                vec![MetricLine::percent("Session", 20.0, None)],
+            )
+            .with_plan(Some("Max 20x".into())),
+            ProviderOutput::new(
+                "codex",
+                "Codex",
+                vec![MetricLine::percent("Session", 60.0, None)],
+            )
+            .with_plan(Some("Pro".into())),
+        ];
+        let j = waybar(&outputs);
+        assert_eq!(j["text"], "codex 60%");
+    }
+
+    #[test]
+    fn waybar_skips_errored_eligible_provider() {
+        let outputs = vec![ProviderOutput::error("claude", "Claude", "boom")];
+        let j = waybar(&outputs);
+        assert_eq!(j["text"], "no data");
     }
 
     #[test]
