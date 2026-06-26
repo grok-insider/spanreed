@@ -21,18 +21,23 @@ mod util;
 
 use std::process::ExitCode;
 
-/// Restore the default SIGPIPE disposition.
+/// Restore the default SIGPIPE disposition (Unix only).
 ///
 /// Rust ignores SIGPIPE at startup, which turns a closed downstream pipe
 /// (e.g. `spanreed json | head`) into a write error that the `print!` macros
 /// surface as a panic. Resetting it to `SIG_DFL` makes the process exit quietly
-/// on a broken pipe, like a well-behaved Unix CLI.
+/// on a broken pipe, like a well-behaved Unix CLI. Non-Unix targets (Windows)
+/// have no SIGPIPE, so this is a no-op there.
+#[cfg(unix)]
 fn reset_sigpipe() {
     // SAFETY: a single libc::signal call at startup, before any threads spawn.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 }
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
 
 fn main() -> ExitCode {
     reset_sigpipe();

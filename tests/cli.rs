@@ -2,8 +2,7 @@
 //!
 //! Cargo provides the built binary path via `CARGO_BIN_EXE_spanreed`.
 
-use std::io::Read;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_spanreed")
@@ -106,9 +105,13 @@ fn help_lists_subcommands() {
 
 /// The SIGPIPE fix: piping output into a reader that closes early must not
 /// panic; the process should terminate cleanly (killed by SIGPIPE or exit 0),
-/// never with a Rust panic (exit code 101).
+/// never with a Rust panic (exit code 101). Unix-only: Windows has no SIGPIPE.
+#[cfg(unix)]
 #[test]
 fn does_not_panic_on_broken_pipe() {
+    use std::io::Read;
+    use std::process::Stdio;
+
     let mut child = Command::new(bin())
         .arg("list")
         .stdout(Stdio::piped())
