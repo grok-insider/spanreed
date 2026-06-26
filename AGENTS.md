@@ -165,7 +165,19 @@ Logic is split so it's testable without network or real credentials:
 push to `master` (and `v*` tags) and pushes every store path to the
 `grok-insider.cachix.org` binary cache, then runs `nix flake check`. Consumers that
 pin the flake input get prebuilt closures (no local compile) after bumping their
-lock.
+lock. `ci.yml` also runs a `cross` job that compiles + tests on native macOS and
+Windows runners.
+
+**Releases are automated** (`release-plz.yml` + `release.yml`). Every push to
+`master` keeps a standing **Release PR**: [release-plz](https://release-plz.dev)
+bumps the version and an LLM writes the user-facing `CHANGELOG.md`
+(`scripts/gen-changelog.sh`, model `deepseek/deepseek-v4-flash` via OpenRouter).
+Merging the Release PR creates the `vX.Y.Z` tag + GitHub Release, which triggers
+`release.yml` to build the static musl binaries and attach them (release body =
+the `CHANGELOG.md` section). Nothing publishes until that PR is merged.
+`CHANGELOG.md` is **generated** — never hand-edit it outside the Release PR. Needs
+repo secrets `RELEASE_PLZ_TOKEN` (PAT) and `OPENROUTER_API_KEY`. See
+`CONTRIBUTING.md` → "Releases".
 
 ## Validation status
 
