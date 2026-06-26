@@ -222,11 +222,9 @@ pub fn waybar(outputs: &[ProviderOutput]) -> serde_json::Value {
         .iter()
         .filter(|out| bar_eligible(out))
         .filter_map(|out| provider_bar_pct(out).map(|pct| (out.provider_id.clone(), pct)))
-        .fold(None::<(String, f64)>, |acc, (id, pct)| {
-            match acc {
-                Some((_, p)) if p >= pct => acc,
-                _ => Some((format!("{id} {pct:.0}%"), pct)),
-            }
+        .fold(None::<(String, f64)>, |acc, (id, pct)| match acc {
+            Some((_, p)) if p >= pct => acc,
+            _ => Some((format!("{id} {pct:.0}%"), pct)),
         });
 
     let (text, pct) = worst.unwrap_or_else(|| ("no data".to_string(), 0.0));
