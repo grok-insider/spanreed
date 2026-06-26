@@ -33,13 +33,13 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
 
-      # Configures the 0xfell cache as a substituter AND pushes every newly
+      # Configures the grok-insider cache as a substituter AND pushes every newly
       # built store path to it (using the CACHIX_AUTH_TOKEN secret). nix-community
       # is pulled so build dependencies come from cache where possible.
       - name: Set up Cachix
         uses: cachix/cachix-action@v17
         with:
-          name: 0xfell
+          name: grok-insider
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           extraPullNames: nix-community
 

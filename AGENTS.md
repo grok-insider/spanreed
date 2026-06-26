@@ -163,7 +163,7 @@ Logic is split so it's testable without network or real credentials:
 
 `.github/workflows/ci.yml` builds `x86_64-linux` and `aarch64-linux` on every
 push to `master` (and `v*` tags) and pushes every store path to the
-`0xfell.cachix.org` binary cache, then runs `nix flake check`. Consumers that
+`grok-insider.cachix.org` binary cache, then runs `nix flake check`. Consumers that
 pin the flake input get prebuilt closures (no local compile) after bumping their
 lock.
 

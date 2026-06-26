@@ -84,31 +84,31 @@ Trust the binary cache once (otherwise Nix rebuilds from source):
 ```nix
 # NixOS / nix.conf
 nix.settings = {
-  substituters = [ "https://0xfell.cachix.org" ];
+  substituters = [ "https://grok-insider.cachix.org" ];
   trusted-public-keys = [
-    "0xfell.cachix.org-1:0VSPKbe/Eilt+WTT/0faSQeQnnhDOH7PxkUvoRtvPPo="
+    "grok-insider.cachix.org-1:ZxLVOxJ1CjdY3vQl1I99qCtwNZwIU4+/QwqSvntB/5w="
   ];
 };
 ```
 
-Or, with the Cachix CLI: `cachix use 0xfell`.
+Or, with the Cachix CLI: `cachix use grok-insider`.
 
 Then run or install:
 
 ```sh
-nix run github:0xfell/spanreed -- probe     # try it without installing
-nix profile install github:0xfell/spanreed
+nix run github:grok-insider/spanreed -- probe     # try it without installing
+nix profile install github:grok-insider/spanreed
 ```
 
 The flake also advertises the cache via `nixConfig.extra-substituters`, so
-`nix run github:0xfell/spanreed` offers to use it (accept the prompt or pass
+`nix run github:grok-insider/spanreed` offers to use it (accept the prompt or pass
 `--accept-flake-config`).
 
 ### Home Manager
 
 ```nix
 {
-  inputs.spanreed.url = "github:0xfell/spanreed";
+  inputs.spanreed.url = "github:grok-insider/spanreed";
 
   # in your home-manager config:
   imports = [ inputs.spanreed.homeManagerModules.default ];
@@ -257,4 +257,4 @@ for a step-by-step guide to adding a provider.
 
 ## License
 
-[MIT](LICENSE) © 2026 0xfell.
+[MIT](LICENSE) © 2026 Grok Insider.

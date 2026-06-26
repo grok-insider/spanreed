@@ -5,16 +5,16 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
-  # Advertise the binary cache so `nix run/build github:0xfell/spanreed` can
+  # Advertise the binary cache so `nix run/build github:grok-insider/spanreed` can
   # pull prebuilt closures instead of compiling. Users must trust these (Nix
   # will prompt, or add them to nix.settings on NixOS).
   nixConfig = {
     extra-substituters = [
-      "https://0xfell.cachix.org"
+      "https://grok-insider.cachix.org"
       "https://nix-community.cachix.org"
     ];
     extra-trusted-public-keys = [
-      "0xfell.cachix.org-1:0VSPKbe/Eilt+WTT/0faSQeQnnhDOH7PxkUvoRtvPPo="
+      "grok-insider.cachix.org-1:ZxLVOxJ1CjdY3vQl1I99qCtwNZwIU4+/QwqSvntB/5w="
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
     ];
   };
