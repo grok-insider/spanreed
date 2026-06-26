@@ -56,7 +56,8 @@ fn client_with(insecure: bool) -> reqwest::Result<reqwest::blocking::Client> {
         .timeout(Duration::from_secs(15))
         .connect_timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent("spanreed/0.1 (+linux)");
+        // OS tag follows the build target (linux/macos/windows/...).
+        .user_agent(format!("spanreed/0.1 (+{})", std::env::consts::OS));
     if let Some(proxy) = resolved_proxy() {
         builder = builder.proxy(proxy.clone());
     }

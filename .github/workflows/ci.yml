@@ -31,6 +31,29 @@ jobs:
         env:
           SPANREED_OFFLINE: "1"
 
+  # Cross-platform compile + test on GitHub's native macOS and Windows runners.
+  # spanreed is Linux-native today, but the cross-platform port keeps the crate
+  # building everywhere; this proves it on real mac/Windows (the Linux dev host
+  # can't cross-compile the bundled C deps). Informational on PRs, not the
+  # required gate.
+  cross:
+    name: cross (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Proves the crate (bin + tests) compiles on this OS.
+      - run: cargo check --all-targets
+      # Proves the existing tests pass; the broken-pipe test is Unix-gated out.
+      - run: cargo test --all
+        env:
+          SPANREED_OFFLINE: "1"
+
   build:
     name: build (${{ matrix.system }})
     runs-on: ${{ matrix.runner }}
