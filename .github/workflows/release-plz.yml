@@ -20,11 +20,33 @@ on:
 permissions: {}
 
 jobs:
+  # Gate the whole pipeline on the PAT being configured, so the workflow skips
+  # cleanly (rather than failing) on repos/forks without RELEASE_PLZ_TOKEN.
+  # secrets.* can't be used in a job-level `if:`, hence this preflight job.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'grok-insider'
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          RELEASE_PLZ_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          if [ -n "$RELEASE_PLZ_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RELEASE_PLZ_TOKEN not set — skipping release-plz. Add the secret to enable automated releases."
+          fi
+
   # Maintain the standing Release PR: version bump (release-plz) + AI CHANGELOG.md.
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'grok-insider'
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
     permissions:
       contents: write
       pull-requests: write
@@ -89,7 +111,8 @@ jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'grok-insider'
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
     permissions:
       contents: write
     steps:
