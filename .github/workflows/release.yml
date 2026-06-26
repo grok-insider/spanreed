@@ -1,22 +1,55 @@
 name: Release
 
-# On a pushed `v*` tag: build the `spanreed` binary for each supported target
-# and attach a tar.gz (+ sha256) to the GitHub Release. spanreed is a single
-# crate with no async runtime; TLS is rustls and SQLite is bundled, so the Linux
-# targets build fully static via cargo-zigbuild with no system libraries.
+# Triggered when a GitHub Release is published (by release-plz, via release-plz.yml).
+# Builds the `spanreed` binary for each supported target and attaches a tar.gz
+# (+ sha256), and syncs the release notes from the matching CHANGELOG.md section.
 #
-# spanreed is Linux-native today (it reads /proc and the Secret Service). When
-# the cross-platform port (macOS Keychain / Windows Credential Manager) lands,
-# add the darwin/windows targets to the matrix below.
+# spanreed is a single crate with no async runtime; TLS is rustls and SQLite is
+# bundled, so the Linux targets build fully static via cargo-zigbuild with no system
+# libraries. spanreed's runtime credential discovery is still Linux-native, so only
+# the Linux targets are shipped today; add darwin/windows here once Phase 1 lands.
+#
+# `workflow_dispatch` lets you rebuild/attach binaries for an existing tag manually.
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build & attach binaries to, e.g. v0.1.0"
+        required: true
 
 permissions:
   contents: write
 
 jobs:
+  # Set the GitHub Release body from the AI-written CHANGELOG.md section.
+  notes:
+    name: Sync release notes
+    if: github.repository_owner == 'grok-insider' && github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set release body from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # Extract the body of the `## <version>` section (without the heading).
+          awk -v version="$version" '
+            /^## / { if (found) exit; if ($2 == version) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md || true
+          if [ -s notes.md ]; then
+            echo "Updating $TAG notes from CHANGELOG.md"
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            echo "No CHANGELOG.md section for $version; leaving the release body as-is."
+          fi
+
   artifacts:
     name: ${{ matrix.target }}
     if: github.repository_owner == 'grok-insider'
@@ -29,8 +62,11 @@ jobs:
           - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, cross: zig }
     env:
       TARGET: ${{ matrix.target }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -69,7 +105,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           stage="spanreed-${version}-${TARGET}"
           mkdir -p "$stage"
           cp "target/$TARGET/release/spanreed" "$stage/"
@@ -77,4 +113,4 @@ jobs:
           archive="$stage.tar.gz"
           tar -czf "$archive" "$stage"
           sha256sum "$archive" > "$archive.sha256"
-          gh release upload "$GITHUB_REF_NAME" "$archive" "$archive.sha256" --clobber
+          gh release upload "$RELEASE_TAG" "$archive" "$archive.sha256" --clobber

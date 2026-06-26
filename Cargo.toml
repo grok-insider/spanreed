@@ -5,6 +5,9 @@ description = "Linux-native AI coding subscription usage tracker (daemon + CLI +
 edition = "2021"
 license = "MIT"
 authors = ["Grok Insider <admin@grokinsider.net>"]
+# Application crate, not a library: never publish to crates.io. release-plz also
+# reads this to skip the registry step and only tag + create the GitHub Release.
+publish = false
 
 [[bin]]
 name = "spanreed"

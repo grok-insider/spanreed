@@ -1,0 +1,17 @@
+# release-plz configuration.
+#
+# spanreed uses release-plz to maintain a single standing "Release PR" (version
+# bump + tag + GitHub Release), while the human-facing CHANGELOG.md is written by
+# an LLM (see scripts/gen-changelog.sh) in the Release PR. The release itself only
+# happens when that PR is merged.
+
+[workspace]
+# Only release when the Release PR is merged (not on every push to master).
+release_always = false
+
+# Don't let release-plz (git-cliff) manage the changelog — gen-changelog.sh owns
+# CHANGELOG.md and writes user-facing notes into the Release PR instead.
+changelog_update = false
+
+# crates.io publishing is disabled via `publish = false` in Cargo.toml; release-plz
+# still creates the git tag and the GitHub Release.

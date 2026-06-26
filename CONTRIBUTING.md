@@ -126,6 +126,33 @@ spanreed probe example     # forces the provider even if undetected
   `x86_64-linux` and `aarch64-linux`.
 - Write clear, human commit messages. No AI-generated commit slop.
 
+## Releases
+
+Releases are automated with [release-plz](https://release-plz.dev) plus an
+LLM-written changelog — you never tag or hand-edit `CHANGELOG.md`:
+
+1. Merge feature/fix PRs to `master` as usual (Conventional Commit titles; commit
+   messages stay human-written).
+2. A standing **Release PR** (`chore: release vX.Y.Z`) is kept up to date
+   automatically: release-plz bumps the version and `scripts/gen-changelog.sh`
+   writes a user-facing `CHANGELOG.md` section (model `deepseek/deepseek-v4-flash`
+   via OpenRouter) into it. Review and edit those notes in the Release PR.
+3. **Merge the Release PR** to ship. release-plz creates the `vX.Y.Z` tag + GitHub
+   Release; `release.yml` then builds the static musl binaries (x86_64 + aarch64)
+   and attaches them, with the release body taken from the `CHANGELOG.md` section.
+
+Nothing is published until the Release PR is merged.
+
+Regenerate a changelog section locally (e.g. to preview):
+
+```sh
+OPENROUTER_API_KEY=... scripts/gen-changelog.sh 0.2.0 v0.1.0..HEAD
+```
+
+Maintainer one-time setup: repo secrets `RELEASE_PLZ_TOKEN` (fine-grained PAT with
+Contents + Pull requests: read/write) and `OPENROUTER_API_KEY`, plus the "Allow
+GitHub Actions to create and approve pull requests" setting enabled.
+
 ## Reporting issues
 
 Open an issue with:

@@ -1,0 +1,111 @@
+name: Release-plz
+
+# On every push to master, keep a single standing "Release PR" up to date:
+# release-plz bumps the version, and an LLM (scripts/gen-changelog.sh) writes the
+# user-facing CHANGELOG.md into that PR. Nothing is published until the Release PR
+# is merged (release_always = false), at which point release-plz tags + creates the
+# GitHub Release, which triggers release.yml to attach the binaries.
+#
+# Requires two repo secrets:
+#   RELEASE_PLZ_TOKEN  fine-grained PAT (Contents + Pull requests: RW). Needed so
+#                      the Release PR runs the required CI check and so the created
+#                      release triggers release.yml (the default GITHUB_TOKEN can do
+#                      neither on a branch-protected repo).
+#   OPENROUTER_API_KEY OpenRouter key for the changelog model (deepseek/deepseek-v4-flash).
+
+on:
+  push:
+    branches: [master]
+
+permissions: {}
+
+jobs:
+  # Maintain the standing Release PR: version bump (release-plz) + AI CHANGELOG.md.
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'grok-insider'
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Persist the PAT so the AI step can push a commit to the Release PR branch.
+          persist-credentials: true
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz (open/update the Release PR)
+        id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Write AI-generated CHANGELOG into the Release PR
+        if: ${{ steps.release-plz.outputs.pr != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PR_JSON: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          set -euo pipefail
+          pr_number="$(jq -r '.number // empty' <<<"$PR_JSON")"
+          version="$(jq -r '.releases[0].version // empty' <<<"$PR_JSON")"
+          if [ -z "$pr_number" ] || [ -z "$version" ]; then
+            echo "No Release PR / version in output; nothing to do."
+            exit 0
+          fi
+          echo "Release PR #$pr_number prepares v$version"
+          gh pr checkout "$pr_number"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Commits since the previous release tag (whole history on the first release).
+          prev_tag="$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)"
+          if [ -n "$prev_tag" ]; then range="${prev_tag}..HEAD"; else range="HEAD"; fi
+          echo "Generating changelog for range: $range"
+          scripts/gen-changelog.sh "$version" "$range" > /tmp/section.md
+          echo "----- generated section -----"; cat /tmp/section.md; echo "-----------------------------"
+          scripts/update-changelog.sh "$version" /tmp/section.md
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "CHANGELOG.md already up to date."
+          else
+            git add CHANGELOG.md
+            git commit -m "docs(changelog): generate release notes for v${version}"
+            git push
+          fi
+
+  # On Release PR merge: tag + create the GitHub Release (release_always = false
+  # means nothing is released on ordinary pushes).
+  release-plz-release:
+    name: Release-plz release
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'grok-insider'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz (tag + GitHub Release)
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          # PAT so the created release/tag triggers release.yml to attach binaries.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
