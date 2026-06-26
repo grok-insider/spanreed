@@ -10,6 +10,10 @@
 # otherwise the new section is inserted at the top (newest first). The file's
 # preamble (everything before the first `## ` heading) is preserved.
 #
+# Heading version matching is normalized, so this replaces release-plz/git-cliff
+# headings like `## [0.1.0] - 2026-06-26` or `## [0.1.0](url) - date` as well as a
+# plain `## 0.1.0`.
+#
 # Override the target file with CHANGELOG_FILE (default: CHANGELOG.md).
 
 set -euo pipefail
@@ -25,12 +29,24 @@ if [ ! -f "$file" ]; then
 fi
 
 new_file="$(SECTION="$(cat "$section_file")" awk -v version="$version" '
+  # Extract a normalized version from a "## ..." heading: strips a leading
+  # "[", a "](url)" markdown link, and any trailing " - date", leaving the bare
+  # version token. Handles "## 0.1.0", "## [0.1.0] - 2026-06-26", and
+  # "## [0.1.0](https://...) - 2026-06-26".
+  function hver(line,   s) {
+    s = line
+    sub(/^##+[ \t]+/, "", s)
+    sub(/^\[/, "", s)
+    sub(/\].*/, "", s)
+    sub(/[ \t].*/, "", s)
+    return s
+  }
   BEGIN { mode = "pre" }
   # Everything before the first "## " heading is the preamble.
   mode == "pre" && /^## / { mode = "body" }
   mode == "pre" { pre = pre $0 ORS; next }
-  # In the body, drop any existing section for this version.
-  /^## / { skip = ($2 == version) ? 1 : 0 }
+  # In the body, drop any existing section for this version (any heading format).
+  /^## / { skip = (hver($0) == version) ? 1 : 0 }
   { if (!skip) body = body $0 ORS }
   END {
     sub(/\n+$/, "", pre)
