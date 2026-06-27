@@ -12,6 +12,7 @@ use crate::creds;
 use crate::http::Request;
 use crate::model::{MetricLine, ProviderOutput};
 use crate::providers::Provider;
+use crate::secret;
 use crate::util;
 
 const ID: &str = "codex";
@@ -60,7 +61,7 @@ fn load_auth() -> Option<(serde_json::Value, Source, std::path::PathBuf)> {
             }
         }
     }
-    if let Some(text) = creds::secret_tool_lookup(&[("service", KEYCHAIN_SERVICE)]) {
+    if let Some(text) = secret::lookup(KEYCHAIN_SERVICE) {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim()) {
             if has_token_like(&value) {
                 return Some((value, Source::Secret, std::path::PathBuf::new()));
@@ -96,23 +97,7 @@ fn save_auth(auth: &serde_json::Value, source: Source, path: &std::path::Path) {
             let _ = std::fs::write(path, text);
         }
         Source::Secret => {
-            use std::io::Write;
-            if let Ok(mut child) = std::process::Command::new("secret-tool")
-                .args([
-                    "store",
-                    "--label",
-                    "Codex Auth",
-                    "service",
-                    KEYCHAIN_SERVICE,
-                ])
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-            {
-                if let Some(stdin) = child.stdin.as_mut() {
-                    let _ = stdin.write_all(text.as_bytes());
-                }
-                let _ = child.wait();
-            }
+            let _ = secret::store(KEYCHAIN_SERVICE, "Codex Auth", &text);
         }
     }
 }
@@ -290,8 +275,7 @@ impl Provider for Codex {
     }
 
     fn detect(&self) -> bool {
-        auth_paths().iter().any(|p| p.exists())
-            || creds::secret_tool_lookup(&[("service", KEYCHAIN_SERVICE)]).is_some()
+        auth_paths().iter().any(|p| p.exists()) || secret::exists(KEYCHAIN_SERVICE)
     }
 
     fn probe(&self) -> ProviderOutput {
