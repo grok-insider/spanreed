@@ -1,8 +1,9 @@
 //! JetBrains AI Assistant provider.
 //!
-//! Reads the local IDE quota cache `AIAssistantQuotaManager2.xml` from
-//! `~/.config/JetBrains/<IDE>/options/` (Linux path). Picks the IDE directory
-//! with the latest quota window.
+//! Reads the local IDE quota cache `AIAssistantQuotaManager2.xml` from the
+//! per-OS config dir's `JetBrains/<IDE>/options/` (Linux `~/.config`, macOS
+//! `~/Library/Application Support`, Windows `%APPDATA%`, resolved via `dirs`).
+//! Picks the IDE directory with the latest quota window.
 
 use crate::creds;
 use crate::model::{MetricLine, ProviderOutput};

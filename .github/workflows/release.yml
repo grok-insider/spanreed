@@ -6,8 +6,10 @@ name: Release
 #
 # spanreed is a single crate with no async runtime; TLS is rustls and SQLite is
 # bundled, so the Linux targets build fully static via cargo-zigbuild with no system
-# libraries. spanreed's runtime credential discovery is still Linux-native, so only
-# the Linux targets are shipped today; add darwin/windows here once Phase 1 lands.
+# libraries. macOS and Windows are built natively on their matching runners. The
+# cross-platform credential/process seams (SecretStore, ProcessList) landed in
+# Phase 1, so darwin (x86_64 + aarch64) and windows (x86_64-msvc) ship alongside
+# Linux. Linux/macOS are packaged as tar.gz; Windows as zip.
 #
 # `workflow_dispatch` lets you rebuild/attach binaries for an existing tag manually.
 
@@ -58,8 +60,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, cross: zig }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, cross: zig }
+          # Linux: fully static musl via cargo-zigbuild.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, cross: zig, archive: tar }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, cross: zig, archive: tar }
+          # macOS: native build on the matching runner (Intel + Apple Silicon).
+          - { os: macos-13, target: x86_64-apple-darwin, archive: tar }
+          - { os: macos-latest, target: aarch64-apple-darwin, archive: tar }
+          # Windows: native MSVC build.
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
     env:
       TARGET: ${{ matrix.target }}
       RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
@@ -88,10 +96,18 @@ jobs:
         with:
           shared-key: release-${{ matrix.target }}
 
-      - name: Build (static)
+      # Linux uses cargo-zigbuild for a fully static musl binary; macOS/Windows
+      # build natively on their matching runner.
+      - name: Build (static, Linux)
+        if: matrix.cross == 'zig'
         run: cargo zigbuild --release --target "$TARGET"
+      - name: Build (native)
+        if: matrix.cross != 'zig'
+        run: cargo build --release --target "$TARGET"
 
-      - name: Verify static
+      # Static-linking guarantee only applies to the musl Linux binaries.
+      - name: Verify static (Linux)
+        if: matrix.cross == 'zig'
         run: |
           set -euo pipefail
           f="target/$TARGET/release/spanreed"
@@ -100,7 +116,10 @@ jobs:
             echo "::error::spanreed is dynamically linked against glibc"; exit 1
           fi
 
+      # tar.gz for Linux/macOS; zip for Windows. Bash is available on all three
+      # GitHub runners (Git Bash on Windows), so one shell script covers both.
       - name: Package + upload
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -108,9 +127,24 @@ jobs:
           version="${RELEASE_TAG#v}"
           stage="spanreed-${version}-${TARGET}"
           mkdir -p "$stage"
-          cp "target/$TARGET/release/spanreed" "$stage/"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            bin="spanreed.exe"
+          else
+            bin="spanreed"
+          fi
+          cp "target/$TARGET/release/$bin" "$stage/"
           cp README.md LICENSE "$stage/" 2>/dev/null || true
-          archive="$stage.tar.gz"
-          tar -czf "$archive" "$stage"
-          sha256sum "$archive" > "$archive.sha256"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            archive="$stage.zip"
+            7z a -tzip "$archive" "$stage" >/dev/null
+          else
+            archive="$stage.tar.gz"
+            tar -czf "$archive" "$stage"
+          fi
+          # sha256sum on Linux; shasum on macOS; certutil-free fallback elsewhere.
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
+          fi
           gh release upload "$RELEASE_TAG" "$archive" "$archive.sha256" --clobber
