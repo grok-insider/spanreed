@@ -1,9 +1,11 @@
 //! Kiro provider.
 //!
-//! Reads Kiro's local usage cache from its SQLite state DB (Linux path
-//! `~/.config/Kiro/User/globalStorage/state.vscdb`), key `kiro.kiroAgent`,
-//! nested `kiro.resourceNotifications.usageState.usageBreakdowns`. Shows the
-//! primary CREDIT pool. Detection also accepts the AWS SSO token file.
+//! Reads Kiro's local usage cache from its SQLite state DB at the per-OS
+//! config dir's `Kiro/User/globalStorage/state.vscdb` (VS Code-style layout:
+//! Linux `~/.config`, macOS `~/Library/Application Support`, Windows
+//! `%APPDATA%`, resolved via `dirs`), key `kiro.kiroAgent`, nested
+//! `kiro.resourceNotifications.usageState.usageBreakdowns`. Shows the primary
+//! CREDIT pool. Detection also accepts the AWS SSO token file (`~/.aws`).
 
 use crate::creds;
 use crate::model::{MetricLine, ProgressFormat, ProviderOutput};

@@ -1,8 +1,9 @@
 //! Cursor provider.
 //!
-//! Token source (Linux): Cursor desktop SQLite state DB
-//!   `~/.config/Cursor/User/globalStorage/state.vscdb`
-//! reading `ItemTable` rows `cursorAuth/accessToken` etc.
+//! Token source: Cursor desktop SQLite state DB at the per-OS config dir's
+//!   `Cursor/User/globalStorage/state.vscdb` (VS Code-style layout: Linux
+//!   `~/.config`, macOS `~/Library/Application Support`, Windows `%APPDATA%`,
+//!   resolved via `dirs`), reading `ItemTable` rows `cursorAuth/accessToken` etc.
 //!
 //! Usage via Connect-RPC over HTTPS to `api2.cursor.sh`
 //! (`GetCurrentPeriodUsage`, `GetPlanInfo`, `GetCreditGrantsBalance`) plus the
@@ -29,7 +30,7 @@ struct Auth {
     membership: Option<String>,
 }
 
-/// Candidate Cursor state DB paths on Linux.
+/// Candidate Cursor state DB paths (per-OS config dir via `dirs`).
 fn state_db_paths() -> Vec<std::path::PathBuf> {
     let cfg = creds::config_home();
     vec![
