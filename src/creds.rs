@@ -2,10 +2,11 @@
 //! - XDG paths (`~/.config`, `~/.local/share`)
 //! - plain credential files (JSON)
 //! - app SQLite state DBs (via rusqlite, read-only)
-//! - the Secret Service via `secret-tool` (libsecret CLI) as a keyring fallback
+//!
+//! The OS keyring fallback lives in [`crate::secret`] (the cross-platform
+//! SecretStore seam).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Expand a leading `~` to the user's home directory.
 pub fn expand(path: &str) -> PathBuf {
@@ -88,30 +89,6 @@ pub fn sqlite_query_rows_i64_f64(db_path: &Path, sql: &str) -> Option<Vec<(i64, 
         .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)))
         .ok()?;
     Some(rows.filter_map(Result::ok).collect())
-}
-
-/// Read a secret from the Secret Service via `secret-tool` (libsecret).
-///
-/// `attributes` are key/value pairs, e.g. `[("service", "Codex Auth")]`.
-/// Returns None if `secret-tool` is missing or no matching item exists.
-pub fn secret_tool_lookup(attributes: &[(&str, &str)]) -> Option<String> {
-    let mut cmd = Command::new("secret-tool");
-    cmd.arg("lookup");
-    for (k, v) in attributes {
-        cmd.arg(k).arg(v);
-    }
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout)
-        .trim_end_matches('\n')
-        .to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
 }
 
 /// Read a whitelisted environment variable, trimmed.

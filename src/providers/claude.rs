@@ -13,6 +13,7 @@ use crate::creds;
 use crate::http::Request;
 use crate::model::{MetricLine, ProviderOutput};
 use crate::providers::Provider;
+use crate::secret;
 use crate::util;
 
 const ID: &str = "claude";
@@ -85,8 +86,8 @@ fn load_credentials() -> Option<(serde_json::Value, Oauth, Source)> {
             return Some((value, oauth, Source::File));
         }
     }
-    // 2) Secret Service fallback (some setups store the JSON blob there)
-    if let Some(text) = creds::secret_tool_lookup(&[("service", KEYCHAIN_SERVICE)]) {
+    // 2) OS keyring fallback (some setups store the JSON blob there)
+    if let Some(text) = secret::lookup(KEYCHAIN_SERVICE) {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim()) {
             if let Some(oauth) = parse_oauth(&value) {
                 return Some((value, oauth, Source::Secret));
@@ -115,23 +116,7 @@ fn save_credentials(full: &serde_json::Value, source: Source) {
         }
         Source::Secret => {
             // best-effort store; ignore failures
-            use std::io::Write;
-            if let Ok(mut child) = std::process::Command::new("secret-tool")
-                .args([
-                    "store",
-                    "--label",
-                    "Claude Code",
-                    "service",
-                    KEYCHAIN_SERVICE,
-                ])
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-            {
-                if let Some(stdin) = child.stdin.as_mut() {
-                    let _ = stdin.write_all(text.as_bytes());
-                }
-                let _ = child.wait();
-            }
+            let _ = secret::store(KEYCHAIN_SERVICE, "Claude Code", &text);
         }
     }
 }
@@ -329,7 +314,7 @@ impl Provider for Claude {
     fn detect(&self) -> bool {
         credentials_path().exists()
             || creds::env("CLAUDE_CODE_OAUTH_TOKEN").is_some()
-            || creds::secret_tool_lookup(&[("service", KEYCHAIN_SERVICE)]).is_some()
+            || secret::exists(KEYCHAIN_SERVICE)
     }
 
     fn probe(&self) -> ProviderOutput {

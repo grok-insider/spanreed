@@ -17,6 +17,7 @@ mod output;
 mod pricing;
 mod probe;
 mod providers;
+mod secret;
 mod util;
 
 use std::process::ExitCode;

@@ -1,8 +1,8 @@
 //! GitHub Copilot provider.
 //!
-//! Token discovery (Linux):
+//! Token discovery:
 //!   1. `gh auth token` (GitHub CLI)
-//!   2. Secret Service item `gh:github.com` (via secret-tool)
+//!   2. OS keyring item `gh:github.com` (via crate::secret)
 //!   3. file fallback `~/.config/gh/hosts.yml` oauth_token
 //!
 //! Usage: `GET https://api.github.com/copilot_internal/user`.
@@ -11,6 +11,7 @@ use crate::creds;
 use crate::http::Request;
 use crate::model::{MetricLine, ProviderOutput};
 use crate::providers::Provider;
+use crate::secret;
 use crate::util;
 
 const ID: &str = "copilot";
@@ -36,9 +37,9 @@ fn token_from_gh_cli() -> Option<String> {
     }
 }
 
-/// Secret Service fallback (gh stores under `gh:github.com`).
+/// OS keyring fallback (gh stores under `gh:github.com`).
 fn token_from_secret() -> Option<String> {
-    let raw = creds::secret_tool_lookup(&[("service", "gh:github.com")])?;
+    let raw = secret::lookup("gh:github.com")?;
     // gh sometimes prefixes go-keyring-base64: on stored secrets.
     if let Some(b64) = raw.strip_prefix("go-keyring-base64:") {
         return util::base64_decode_str(b64).filter(|s| !s.is_empty());
