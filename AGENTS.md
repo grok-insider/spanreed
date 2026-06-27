@@ -4,18 +4,20 @@ Instructions for AI agents and contributors working on spanreed.
 
 ## Project overview
 
-spanreed is a Linux-native AI coding subscription usage tracker: one Rust
-binary (`spanreed`) that acts as a CLI, a background daemon, and a data source
-for status bars. It reads local AI-CLI credentials, queries each provider's
-usage API, and renders the result.
+spanreed is a cross-platform (Linux-first) AI coding subscription usage
+tracker: one Rust binary (`spanreed`) that acts as a CLI, a background daemon,
+and a data source for status bars. It reads local AI-CLI credentials, queries
+each provider's usage API, and renders the result.
 
 - Single crate, no workspace. Binary target `spanreed` (`src/main.rs`).
 - No async runtime: probes are blocking I/O fanned out over threads.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.
-- Credentials are read the Linux way: XDG paths, plaintext files, SQLite state
-  DBs (`rusqlite`, read-only), the GitHub CLI, `/proc`, and the Secret Service
-  via `secret-tool`.
+- Credentials are read from where each CLI stores them: XDG paths, plaintext
+  files, SQLite state DBs (`rusqlite`, read-only), the GitHub CLI, `/proc`, and
+  the OS secret store — Secret Service via `secret-tool` on Linux, Keychain on
+  macOS, Credential Manager on Windows. Linux/Wayland is the primary target; the
+  same code compiles, tests, and ships binaries for macOS and Windows.
 
 ## Module layout
 
