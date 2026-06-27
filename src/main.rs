@@ -16,6 +16,7 @@ mod model;
 mod output;
 mod pricing;
 mod probe;
+mod proc;
 mod providers;
 mod secret;
 mod util;
