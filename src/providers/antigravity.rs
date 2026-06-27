@@ -1,14 +1,15 @@
 //! Antigravity (Google, "Jetski") provider.
 //!
 //! Antigravity runs a local Codeium-derived language server. We discover it
-//! from `/proc` (process name `language_server*`, marker `antigravity`),
-//! extract the `--csrf_token` and listening ports, then probe each port's
-//! Connect-RPC `GetUserStatus` endpoint (self-signed HTTPS) for per-model
-//! `remainingFraction` quota.
+//! via the process list (process name `language_server*`, marker
+//! `antigravity`), extract the `--csrf_token` and listening ports, then probe
+//! each port's Connect-RPC `GetUserStatus` endpoint (self-signed HTTPS) for
+//! per-model `remainingFraction` quota. Local-process discovery is Linux/macOS
+//! only; on other platforms the provider simply reports "not detected".
 
-use crate::creds;
 use crate::http::Request;
 use crate::model::{MetricLine, ProviderOutput};
+use crate::proc;
 use crate::providers::Provider;
 use crate::util;
 
@@ -25,12 +26,12 @@ struct Discovered {
 
 fn discover() -> Option<Discovered> {
     // language_server process carrying an antigravity marker.
-    let procs = creds::find_processes(&["language_server", "antigravity"]);
+    let procs = proc::find_processes(&["language_server", "antigravity"]);
     for p in procs {
-        let csrf = creds::extract_flag(&p.cmdline, "--csrf_token");
-        let mut ports = creds::listening_ports(p.pid);
+        let csrf = proc::extract_flag(&p.cmdline, "--csrf_token");
+        let mut ports = proc::listening_ports(p.pid);
         // Prefer the explicit extension server port if advertised.
-        if let Some(port) = creds::extract_flag(&p.cmdline, "--extension_server_port")
+        if let Some(port) = proc::extract_flag(&p.cmdline, "--extension_server_port")
             .and_then(|v| v.parse::<u16>().ok())
         {
             if !ports.contains(&port) {
@@ -99,7 +100,7 @@ impl Provider for Antigravity {
     }
 
     fn detect(&self) -> bool {
-        !creds::find_processes(&["language_server", "antigravity"]).is_empty()
+        !proc::find_processes(&["language_server", "antigravity"]).is_empty()
     }
 
     fn probe(&self) -> ProviderOutput {
