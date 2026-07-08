@@ -4,8 +4,12 @@
 //! keyed by an account/client identifier. Each entry has `key` (the access
 //! token, a JWT), optional `refresh_token`, and `expires_at`. We pick the first
 //! usable entry, refresh proactively (or on 401), then query
-//! `GET https://cli-chat-proxy.grok.com/v1/billing` with the special
-//! `X-XAI-Token-Auth: xai-grok-cli` header.
+//! `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` with the
+//! special `X-XAI-Token-Auth: xai-grok-cli` header.
+//!
+//! SuperGrok plans use a shared **weekly** usage pool (`format=credits`). The
+//! bare `/v1/billing` response is a legacy monthly allotment and must not be
+//! used for the progress line.
 
 use crate::creds;
 use crate::http::Request;
@@ -15,7 +19,7 @@ use crate::util;
 
 const ID: &str = "grok";
 const NAME: &str = "Grok";
-const BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing";
+const BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
 const REFRESH_URL: &str = "https://auth.x.ai/oauth2/token";
 const TOKEN_AUTH_HEADER: &str = "xai-grok-cli";
@@ -343,9 +347,48 @@ impl Provider for Grok {
     }
 }
 
-/// Parse the billing `config` into Credits-used + Pay-as-you-go lines.
-/// Returns None when required fields are missing/invalid.
-fn parse_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> {
+fn payg_badge(on_demand_cap: f64) -> MetricLine {
+    let payg = if on_demand_cap > 0.0 {
+        format!("{} cap", on_demand_cap as i64)
+    } else {
+        "Disabled".to_string()
+    };
+    MetricLine::Badge {
+        label: "Pay as you go".into(),
+        text: payg,
+        color: Some(if on_demand_cap > 0.0 {
+            "#22c55e".into()
+        } else {
+            "#a3a3a3".into()
+        }),
+        subtitle: None,
+    }
+}
+
+fn period_end_iso(config: &serde_json::Value) -> Option<String> {
+    config
+        .get("currentPeriod")
+        .and_then(|p| p.get("end"))
+        .and_then(util::to_iso)
+        .or_else(|| config.get("billingPeriodEnd").and_then(util::to_iso))
+}
+
+/// Unified weekly SuperGrok pool (`?format=credits`).
+fn parse_credits_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> {
+    let used_pct = config
+        .get("creditUsagePercent")?
+        .as_f64()?
+        .clamp(0.0, 100.0);
+    let resets_at = period_end_iso(config)?;
+    let on_demand_cap = units(config.get("onDemandCap")).unwrap_or(0.0);
+
+    let mut lines = vec![MetricLine::percent("Weekly", used_pct, Some(resets_at))];
+    lines.push(payg_badge(on_demand_cap));
+    Some(lines)
+}
+
+/// Legacy monthly allotment (bare `/v1/billing` without `format=credits`).
+fn parse_legacy_monthly_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> {
     let used = units(config.get("used"))?;
     let limit = units(config.get("monthlyLimit"))?;
     let on_demand_cap = units(config.get("onDemandCap"))?;
@@ -360,23 +403,15 @@ fn parse_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> {
         used_pct,
         Some(resets_at),
     )];
-
-    let payg = if on_demand_cap > 0.0 {
-        format!("{} cap", on_demand_cap as i64)
-    } else {
-        "Disabled".to_string()
-    };
-    lines.push(MetricLine::Badge {
-        label: "Pay as you go".into(),
-        text: payg,
-        color: Some(if on_demand_cap > 0.0 {
-            "#22c55e".into()
-        } else {
-            "#a3a3a3".into()
-        }),
-        subtitle: None,
-    });
+    lines.push(payg_badge(on_demand_cap));
     Some(lines)
+}
+
+/// Parse the billing `config` into progress + Pay-as-you-go lines.
+/// Prefers the weekly credits shape; falls back to legacy monthly.
+/// Returns None when required fields are missing/invalid.
+fn parse_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> {
+    parse_credits_billing(config).or_else(|| parse_legacy_monthly_billing(config))
 }
 
 fn urlencode(s: &str) -> String {
@@ -397,7 +432,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_credits_used_and_payg_disabled() {
+    fn parses_weekly_credits_format() {
+        let config = serde_json::json!({
+            "currentPeriod": {
+                "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                "start": "2026-07-03T22:41:23.340272+00:00",
+                "end": "2026-07-10T22:41:23.340272+00:00"
+            },
+            "creditUsagePercent": 1.0,
+            "onDemandCap": { "val": 0 },
+            "onDemandUsed": { "val": 0 },
+            "productUsage": [
+                { "product": "Api", "usagePercent": 1.0 },
+                { "product": "GrokBuild" },
+                { "product": "GrokChat" }
+            ],
+            "isUnifiedBillingUser": true,
+            "prepaidBalance": { "val": 0 },
+            "billingPeriodStart": "2026-07-03T22:41:23.340272+00:00",
+            "billingPeriodEnd": "2026-07-10T22:41:23.340272+00:00"
+        });
+        let lines = parse_billing(&config).unwrap();
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Progress { label, used, resets_at, .. }
+            if label == "Weekly"
+                && (*used - 1.0).abs() < f64::EPSILON
+                && resets_at.as_deref() == Some("2026-07-10T22:41:23.340272+00:00")
+        )));
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Badge { label, text, .. }
+            if label == "Pay as you go" && text == "Disabled"
+        )));
+    }
+
+    #[test]
+    fn weekly_prefers_current_period_end_over_billing_period_end() {
+        let config = serde_json::json!({
+            "currentPeriod": {
+                "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                "end": "2026-07-10T00:00:00+00:00"
+            },
+            "creditUsagePercent": 42.5,
+            "billingPeriodEnd": "2026-08-01T00:00:00+00:00"
+        });
+        let lines = parse_billing(&config).unwrap();
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Progress { label, used, resets_at, .. }
+            if label == "Weekly"
+                && (*used - 42.5).abs() < f64::EPSILON
+                && resets_at.as_deref() == Some("2026-07-10T00:00:00+00:00")
+        )));
+    }
+
+    #[test]
+    fn parses_legacy_monthly_credits_used_and_payg_disabled() {
         let config = serde_json::json!({
             "monthlyLimit": { "val": 60000 },
             "used": { "val": 15000 },
@@ -412,8 +503,9 @@ mod tests {
     #[test]
     fn payg_cap_when_enabled() {
         let config = serde_json::json!({
-            "monthlyLimit": { "val": 100 }, "used": { "val": 0 }, "onDemandCap": { "val": 500 },
-            "billingPeriodEnd": "2026-06-01T00:00:00+00:00"
+            "creditUsagePercent": 0.0,
+            "onDemandCap": { "val": 500 },
+            "billingPeriodEnd": "2026-07-10T00:00:00+00:00"
         });
         let lines = parse_billing(&config).unwrap();
         assert!(lines

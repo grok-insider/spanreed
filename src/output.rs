@@ -99,7 +99,7 @@ fn bar_eligible(out: &ProviderOutput) -> bool {
 /// by a higher long-window value. Escalates to the Weekly window only when
 /// Weekly is itself in the warning band (>= `WEEKLY_ESCALATE_PCT`) and higher
 /// than Session, so a near-exhausted weekly limit still surfaces. Providers
-/// without a Session window (e.g. Grok's single "Credits used") fall back to
+/// without a Session window (e.g. Grok's single "Weekly") fall back to
 /// their first progress line.
 fn provider_bar_pct(out: &ProviderOutput) -> Option<f64> {
     let labeled = |want: &str| {
@@ -371,7 +371,7 @@ mod tests {
             ProviderOutput::new(
                 "grok",
                 "Grok",
-                vec![MetricLine::percent("Credits used", 11.0, None)],
+                vec![MetricLine::percent("Weekly", 11.0, None)],
             )
             .with_plan(Some("X Premium+".into())),
         ];
@@ -385,7 +385,7 @@ mod tests {
         let outputs = vec![ProviderOutput::new(
             "grok",
             "Grok",
-            vec![MetricLine::percent("Credits used", 11.0, None)],
+            vec![MetricLine::percent("Weekly", 11.0, None)],
         )
         .with_plan(Some("SuperGrok Heavy".into()))];
         let j = waybar(&outputs);
