@@ -31,7 +31,7 @@ Codex (Free)
   Usage Trend: ▁▃▃▁█▆▃▁▂▁▃▁█▅▁
 
 Grok (SuperGrok Heavy)
-  Credits used: 0% · resets in 22d 12h
+  Weekly: 1% · resets in 2d 2h
   Pay as you go: Disabled
 
 Copilot (Individual)
@@ -178,7 +178,7 @@ maintenance command used to refresh the embedded `src/pricing-data.json`.
 |--------------------------|-----------------------------------------------------------------|----------|
 | `claude`                 | `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`; Keychain on macOS) | live     |
 | `codex`                  | `$CODEX_HOME` / `~/.config/codex` / `~/.codex` `auth.json`       | live     |
-| `grok`                   | `~/.grok/auth.json` (Grok CLI / SuperGrok Build)                 | live     |
+| `grok`                   | `~/.grok/auth.json` (weekly SuperGrok pool via billing?format=credits) | live |
 | `copilot`                | `gh auth token` / secret store / `~/.config/gh/hosts.yml`        | live     |
 | `cursor`                 | `~/.config/Cursor/.../state.vscdb` (SQLite)                      | code     |
 | `opencode-go`            | `~/.local/share/opencode/opencode.db` (SQLite)                 | code     |
