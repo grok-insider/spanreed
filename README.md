@@ -89,17 +89,26 @@ per-product %). It does **not** write per-call `input_tokens` / `output_tokens`
 into `~/.grok/sessions/` — so spanreed never invents token totals from
 context-size telemetry (that double-counts badly).
 
-For accurate **Last 30 Days** token/cost lines, run a local capture proxy that
-records official Responses API `usage` objects:
+For accurate **Last 30 Days** token/cost lines, run the dual capture service
+(records official API `usage` into `~/.local/share/spanreed/grok-usage.jsonl`):
 
 ```sh
-spanreed grok-proxy                          # listens on 127.0.0.1:18736
-GROK_CLI_CHAT_PROXY_BASE_URL=http://127.0.0.1:18736/v1 grok
+spanreed capture serve
+#   127.0.0.1:18736 → cli-chat-proxy.grok.com  (Grok CLI)
+#   127.0.0.1:18737 → api.x.ai                 (OpenCode xAI)
 ```
 
-Records go to `~/.local/share/spanreed/grok-usage.jsonl`. Until capture has
-seen traffic, `spanreed probe grok` shows how to enable it instead of a fake
-total. Weekly pool % works without the proxy.
+Wire clients **once** (not per invocation):
+
+| Client | Setting |
+|--------|---------|
+| Grok CLI | `GROK_CLI_CHAT_PROXY_BASE_URL=http://127.0.0.1:18736/v1` in your wrapper / session env |
+| OpenCode | `provider.xai.options.baseURL`: `http://127.0.0.1:18737/v1` in `opencode.json` |
+
+Home Manager: `programs.spanreed.capture.enable = true` (optional
+`egressProxy = "http://127.0.0.1:7897"` so upstream still uses a geo VPN).
+Until capture has seen traffic, probe shows an enable hint instead of a fake
+total. Weekly pool % works without capture.
 
 ## Install
 

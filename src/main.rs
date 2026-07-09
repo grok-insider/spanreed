@@ -6,7 +6,8 @@
 //!   spanreed waybar               Emit Waybar custom-module JSON (one shot).
 //!   spanreed json                 Emit raw JSON of all detected providers.
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
-//!   spanreed grok-proxy [--bind A] Capture official Grok API usage to a ledger.
+//!   spanreed capture serve        Dual capture proxy (Grok CLI + api.x.ai).
+//!   spanreed grok-proxy [...]     Single-listener capture (compat alias).
 //!   spanreed update-pricing [out] Fetch + filter the upstream price table.
 
 mod activity;
@@ -62,6 +63,7 @@ fn main() -> ExitCode {
         "waybar" => cmd_waybar(),
         "json" => cmd_json(),
         "serve" => cmd_serve(rest),
+        "capture" => cmd_capture(rest),
         "grok-proxy" => cmd_grok_proxy(rest),
         "update-pricing" => cmd_update_pricing(rest),
         "help" | "-h" | "--help" => {
@@ -85,9 +87,10 @@ fn print_help() {
          \tspanreed waybar               Waybar custom-module JSON (one shot)\n\
          \tspanreed json                 Raw JSON of detected provider outputs\n\
          \tspanreed serve [--interval S] Local HTTP API on 127.0.0.1:6736\n\
+         \tspanreed capture serve        Dual capture: Grok CLI :18736 + api.x.ai :18737\n\
+         \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
-         \t                               Capture official Grok API usage into a local\n\
-         \t                               ledger (for accurate Last 30 Days on probe)\n\
+         \t                               Single-listener capture (compat)\n\
          \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
          \t                               (writes to stdout, or to [out]; used to\n\
          \t                               refresh the embedded src/pricing-data.json)\n\n\
@@ -195,6 +198,48 @@ fn cmd_serve(args: &[String]) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("server error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_capture(args: &[String]) -> ExitCode {
+    match args.first().map(String::as_str) {
+        Some("serve") | None => {
+            // Optional overrides: --grok-cli-bind, --xai-api-bind
+            let grok_bind = args
+                .iter()
+                .position(|a| a == "--grok-cli-bind")
+                .and_then(|i| args.get(i + 1))
+                .cloned();
+            let xai_bind = args
+                .iter()
+                .position(|a| a == "--xai-api-bind")
+                .and_then(|i| args.get(i + 1))
+                .cloned();
+            let listeners = vec![
+                grok_proxy::ListenerConfig {
+                    bind: grok_bind.unwrap_or_else(|| grok_proxy::DEFAULT_GROK_CLI_BIND.into()),
+                    upstream: grok_proxy::UPSTREAM_GROK_CLI.into(),
+                    label: "grok-cli".into(),
+                },
+                grok_proxy::ListenerConfig {
+                    bind: xai_bind.unwrap_or_else(|| grok_proxy::DEFAULT_XAI_API_BIND.into()),
+                    upstream: grok_proxy::UPSTREAM_XAI_API.into(),
+                    label: "xai-api".into(),
+                },
+            ];
+            match grok_proxy::run_capture(&listeners) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("capture error: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Some(other) => {
+            eprintln!("unknown capture subcommand: {other}");
+            eprintln!("usage: spanreed capture serve [--grok-cli-bind A] [--xai-api-bind B]");
             ExitCode::FAILURE
         }
     }
