@@ -5,6 +5,24 @@ first. Release sections are generated from the commit history by an LLM (see
 `scripts/gen-changelog.sh`) and finalized in the release pull request — edit the
 notes there rather than by hand.
 
+## [0.1.1](https://github.com/grok-insider/spanreed/compare/v0.1.0...v0.1.1) - 2026-07-09
+
+### Added
+
+- *(waybar)* show last-used provider instead of worst utilization
+- *(release)* ship macOS + Windows binaries; clarify per-OS paths ([#9](https://github.com/grok-insider/spanreed/pull/9))
+- *(platform)* add cross-platform ProcessList seam ([#10](https://github.com/grok-insider/spanreed/pull/10))
+- *(platform)* add cross-platform SecretStore seam ([#7](https://github.com/grok-insider/spanreed/pull/7))
+
+### Fixed
+
+- *(release)* make release-plz open Release PRs for this app crate
+- *(grok)* use weekly SuperGrok usage pool via billing?format=credits
+
+### Other
+
+- cross-platform framing, prebuilt install, accurate Waybar text ([#11](https://github.com/grok-insider/spanreed/pull/11))
+
 ## 0.1.0
 
 - Added support for 17 AI coding subscription providers including Claude, Codex, Cursor, Grok, and more.
