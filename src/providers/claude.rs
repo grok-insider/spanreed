@@ -565,7 +565,8 @@ mod tests {
         )));
         let anchor = util::parse_iso_dt(created).unwrap();
         let (last, next) = util::monthly_cycle_bounds(anchor, time::OffsetDateTime::now_utc());
-        let expect_last = util::format_plan_last_value(&util::offset_dt_to_iso(last).unwrap(), true);
+        let expect_last =
+            util::format_plan_last_value(&util::offset_dt_to_iso(last).unwrap(), true);
         let expect_renew =
             util::format_plan_renew_value(&util::offset_dt_to_iso(next).unwrap(), true);
         assert!(
