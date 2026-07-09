@@ -82,6 +82,25 @@ with `~/.config/spanreed/pricing.json` (same shape as the LiteLLM data, e.g.
 Other providers surface dollar figures wherever their API returns them (Cursor
 credits/on-demand, Amp balance, Claude extra usage, OpenCode Go local spend).
 
+### Grok (SuperGrok) Last 30 Days
+
+Grok's subscription endpoint only exposes a **weekly usage pool** (and optional
+per-product %). It does **not** write per-call `input_tokens` / `output_tokens`
+into `~/.grok/sessions/` — so spanreed never invents token totals from
+context-size telemetry (that double-counts badly).
+
+For accurate **Last 30 Days** token/cost lines, run a local capture proxy that
+records official Responses API `usage` objects:
+
+```sh
+spanreed grok-proxy                          # listens on 127.0.0.1:18736
+GROK_CLI_CHAT_PROXY_BASE_URL=http://127.0.0.1:18736/v1 grok
+```
+
+Records go to `~/.local/share/spanreed/grok-usage.jsonl`. Until capture has
+seen traffic, `spanreed probe grok` shows how to enable it instead of a fake
+total. Weekly pool % works without the proxy.
+
 ## Install
 
 ### Prebuilt binaries
@@ -178,7 +197,7 @@ maintenance command used to refresh the embedded `src/pricing-data.json`.
 |--------------------------|-----------------------------------------------------------------|----------|
 | `claude`                 | `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`; Keychain on macOS) | live     |
 | `codex`                  | `$CODEX_HOME` / `~/.config/codex` / `~/.codex` `auth.json`       | live     |
-| `grok`                   | `~/.grok/auth.json` (weekly SuperGrok pool via billing?format=credits) | live |
+| `grok`                   | `~/.grok/auth.json` (weekly SuperGrok pool); optional local capture ledger for Last 30 Days | live |
 | `copilot`                | `gh auth token` / secret store / `~/.config/gh/hosts.yml`        | live     |
 | `cursor`                 | `~/.config/Cursor/.../state.vscdb` (SQLite)                      | code     |
 | `opencode-go`            | `~/.local/share/opencode/opencode.db` (SQLite)                 | code     |

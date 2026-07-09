@@ -12,6 +12,8 @@ mod activity;
 mod api;
 mod cost;
 mod creds;
+mod grok_ledger;
+mod grok_proxy;
 mod http;
 mod model;
 mod output;
@@ -59,6 +61,7 @@ fn main() -> ExitCode {
         "waybar" => cmd_waybar(),
         "json" => cmd_json(),
         "serve" => cmd_serve(rest),
+        "grok-proxy" => cmd_grok_proxy(rest),
         "update-pricing" => cmd_update_pricing(rest),
         "help" | "-h" | "--help" => {
             print_help();
@@ -81,6 +84,9 @@ fn print_help() {
          \tspanreed waybar               Waybar custom-module JSON (one shot)\n\
          \tspanreed json                 Raw JSON of detected provider outputs\n\
          \tspanreed serve [--interval S] Local HTTP API on 127.0.0.1:6736\n\
+         \tspanreed grok-proxy [--bind HOST:PORT]\n\
+         \t                               Capture official Grok API usage into a local\n\
+         \t                               ledger (for accurate Last 30 Days on probe)\n\
          \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
          \t                               (writes to stdout, or to [out]; used to\n\
          \t                               refresh the embedded src/pricing-data.json)\n\n\
@@ -188,6 +194,26 @@ fn cmd_serve(args: &[String]) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("server error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_grok_proxy(args: &[String]) -> ExitCode {
+    let bind = args
+        .iter()
+        .position(|a| a == "--bind")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str);
+    let upstream = args
+        .iter()
+        .position(|a| a == "--upstream")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str);
+    match grok_proxy::run(bind, upstream) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("grok-proxy error: {e}");
             ExitCode::FAILURE
         }
     }
