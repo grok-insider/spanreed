@@ -113,6 +113,47 @@
                 description = "Refresh interval in seconds for the serve daemon (min 30).";
               };
             };
+
+            capture = {
+              enable = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Run `spanreed capture serve` as a user service: dual reverse
+                  proxies that record official Grok/xAI API usage for Last 30 Days.
+
+                  Default binds:
+                    127.0.0.1:18736 → cli-chat-proxy.grok.com  (Grok CLI)
+                    127.0.0.1:18737 → api.x.ai                 (OpenCode xAI)
+
+                  Point clients at those base URLs (wrappers / OpenCode baseURL).
+                  Set egressProxy so upstream still uses your geo VPN (e.g. sing-box).
+                '';
+              };
+
+              grokCliBind = lib.mkOption {
+                type = lib.types.str;
+                default = "127.0.0.1:18736";
+                description = "Local bind for Grok CLI capture (upstream cli-chat-proxy.grok.com).";
+              };
+
+              xaiApiBind = lib.mkOption {
+                type = lib.types.str;
+                default = "127.0.0.1:18737";
+                description = "Local bind for OpenCode/api.x.ai capture.";
+              };
+
+              egressProxy = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                example = "http://127.0.0.1:7897";
+                description = ''
+                  Optional HTTP(S) proxy for capture→upstream egress (e.g. domain-only
+                  sing-box for xAI). When set, the service exports HTTP_PROXY and
+                  HTTPS_PROXY. Null means inherit ambient environment only.
+                '';
+              };
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -129,6 +170,35 @@
                 ExecStart = "${cfg.package}/bin/spanreed serve --interval ${toString cfg.serve.interval}";
                 Restart = "on-failure";
                 RestartSec = 5;
+              };
+
+              Install.WantedBy = [ "default.target" ];
+            };
+
+            systemd.user.services.spanreed-capture = lib.mkIf cfg.capture.enable {
+              Unit = {
+                Description = "spanreed Grok/xAI usage capture proxy";
+                After = [ "network-online.target" ];
+                Wants = [ "network-online.target" ];
+              };
+
+              Service = {
+                ExecStart = lib.concatStringsSep " " [
+                  "${cfg.package}/bin/spanreed"
+                  "capture"
+                  "serve"
+                  "--grok-cli-bind"
+                  cfg.capture.grokCliBind
+                  "--xai-api-bind"
+                  cfg.capture.xaiApiBind
+                ];
+                Restart = "on-failure";
+                RestartSec = 3;
+                Environment = lib.mkIf (cfg.capture.egressProxy != null) [
+                  "HTTP_PROXY=${cfg.capture.egressProxy}"
+                  "HTTPS_PROXY=${cfg.capture.egressProxy}"
+                  "NO_PROXY=127.0.0.1,localhost,::1"
+                ];
               };
 
               Install.WantedBy = [ "default.target" ];

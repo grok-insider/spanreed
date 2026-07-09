@@ -1,26 +1,28 @@
 //! Local reverse proxy that captures official Grok/xAI API `usage` objects.
 //!
-//! Listens on `127.0.0.1` and forwards to `https://cli-chat-proxy.grok.com`,
-//! streaming the response through while extracting usage from completed
-//! Responses events into the grok ledger.
+//! Dual listeners (typical setup):
+//! - `127.0.0.1:18736` → `https://cli-chat-proxy.grok.com`  (Grok CLI)
+//! - `127.0.0.1:18737` → `https://api.x.ai`                 (OpenCode xAI)
 //!
-//! Enable for the Grok CLI:
-//! ```text
-//! spanreed grok-proxy
-//! GROK_CLI_CHAT_PROXY_BASE_URL=http://127.0.0.1:18736/v1 grok
-//! ```
+//! Upstream HTTPS honors `HTTP(S)_PROXY` so geo/VPN (e.g. sing-box :7897) still
+//! applies. Clients talk to localhost in clear HTTP — no one-shot env needed if
+//! wrappers/config permanently point at these ports.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::grok_ledger;
 use crate::util;
 
-const DEFAULT_BIND: &str = "127.0.0.1:18736";
-const DEFAULT_UPSTREAM: &str = "https://cli-chat-proxy.grok.com";
+pub const DEFAULT_GROK_CLI_BIND: &str = "127.0.0.1:18736";
+pub const DEFAULT_XAI_API_BIND: &str = "127.0.0.1:18737";
+pub const UPSTREAM_GROK_CLI: &str = "https://cli-chat-proxy.grok.com";
+pub const UPSTREAM_XAI_API: &str = "https://api.x.ai";
+
 const HOP_BY_HOP: &[&str] = &[
     "connection",
     "keep-alive",
@@ -31,59 +33,111 @@ const HOP_BY_HOP: &[&str] = &[
     "transfer-encoding",
     "upgrade",
     "host",
-    "content-length", // re-set from body
+    "content-length",
 ];
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Run the proxy until the process is killed. Never returns Ok on success path
-/// (blocks forever); Err on bind failure.
-pub fn run(bind: Option<&str>, upstream: Option<&str>) -> Result<(), String> {
-    let bind = bind.unwrap_or(DEFAULT_BIND);
-    let upstream = upstream.unwrap_or(DEFAULT_UPSTREAM).trim_end_matches('/');
-    let listener = TcpListener::bind(bind).map_err(|e| format!("bind {bind}: {e}"))?;
-    eprintln!("spanreed grok-proxy listening on http://{bind}");
-    eprintln!("upstream: {upstream}");
-    eprintln!("ledger:   {}", grok_ledger::ledger_path().display());
-    eprintln!();
-    eprintln!("Point Grok at this proxy:");
-    eprintln!("  GROK_CLI_CHAT_PROXY_BASE_URL=http://{bind}/v1 grok");
+/// One capture listener: local bind → fixed HTTPS upstream.
+#[derive(Clone, Debug)]
+pub struct ListenerConfig {
+    pub bind: String,
+    pub upstream: String,
+    pub label: String,
+}
+
+/// Run dual (or custom) capture listeners until process exit.
+pub fn run_capture(listeners: &[ListenerConfig]) -> Result<(), String> {
+    if listeners.is_empty() {
+        return Err("no capture listeners configured".into());
+    }
+
+    let client = build_client(None)?;
+    let client = Arc::new(client);
+
+    eprintln!("spanreed capture listening:");
+    for l in listeners {
+        eprintln!("  {}  http://{}  →  {}", l.label, l.bind, l.upstream);
+    }
+    eprintln!("ledger: {}", grok_ledger::ledger_path().display());
+    eprintln!("upstream HTTP(S)_PROXY: honored from environment (if set)");
     eprintln!();
 
-    let client = reqwest::blocking::Client::builder()
+    let mut handles = Vec::new();
+    for l in listeners {
+        let cfg = l.clone();
+        let client = Arc::clone(&client);
+        let listener =
+            TcpListener::bind(&cfg.bind).map_err(|e| format!("bind {}: {e}", cfg.bind))?;
+        handles.push(std::thread::spawn(move || {
+            accept_loop(listener, client, cfg)
+        }));
+    }
+
+    // Block forever (or until a listener thread dies).
+    for h in handles {
+        let _ = h.join();
+    }
+    Ok(())
+}
+
+/// Single-listener mode (backward-compatible `grok-proxy` CLI).
+pub fn run(bind: Option<&str>, upstream: Option<&str>) -> Result<(), String> {
+    let bind = bind.unwrap_or(DEFAULT_GROK_CLI_BIND).to_string();
+    let upstream = upstream
+        .unwrap_or(UPSTREAM_GROK_CLI)
+        .trim_end_matches('/')
+        .to_string();
+    run_capture(&[ListenerConfig {
+        bind,
+        upstream,
+        label: "grok-cli".into(),
+    }])
+}
+
+fn build_client(extra_proxy: Option<&str>) -> Result<reqwest::blocking::Client, String> {
+    // Default: use system/env proxies (HTTP_PROXY/HTTPS_PROXY) so sing-box
+    // egress still works when the capture unit sets those env vars.
+    let mut builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(format!(
-            "spanreed-grok-proxy/0.1 (+{})",
+            "spanreed-capture/0.1 (+{})",
             std::env::consts::OS
-        ))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
+        ));
+    if let Some(url) = extra_proxy {
+        let p = reqwest::Proxy::all(url).map_err(|e| format!("invalid egress proxy: {e}"))?;
+        let no_proxy = reqwest::NoProxy::from_string("localhost,127.0.0.1,::1");
+        builder = builder.proxy(p.no_proxy(no_proxy));
+    }
+    builder.build().map_err(|e| format!("http client: {e}"))
+}
 
+fn accept_loop(listener: TcpListener, client: Arc<reqwest::blocking::Client>, cfg: ListenerConfig) {
     for conn in listener.incoming() {
         let stream = match conn {
             Ok(s) => s,
             Err(e) => {
-                log::warn!("accept: {e}");
+                log::warn!("[{}] accept: {e}", cfg.label);
                 continue;
             }
         };
-        let client = client.clone();
-        let upstream = upstream.to_string();
+        let client = Arc::clone(&client);
+        let cfg = cfg.clone();
         std::thread::spawn(move || {
-            if let Err(e) = handle_client(stream, &client, &upstream) {
-                log::warn!("proxy request failed: {e}");
+            if let Err(e) = handle_client(stream, &client, &cfg.upstream, &cfg.label) {
+                log::warn!("[{}] request failed: {e}", cfg.label);
             }
         });
     }
-    Ok(())
 }
 
 fn handle_client(
     mut client: TcpStream,
     http: &reqwest::blocking::Client,
     upstream_base: &str,
+    label: &str,
 ) -> Result<(), String> {
     client.set_read_timeout(Some(Duration::from_secs(600))).ok();
     client
@@ -94,6 +148,7 @@ fn handle_client(
     let (method, path, headers, body) = read_http_request(&mut reader)?;
 
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let upstream_base = upstream_base.trim_end_matches('/');
     let url = format!("{upstream_base}{path}");
 
     let mut req = http.request(
@@ -135,10 +190,8 @@ fn handle_client(
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
 
-    // Capture full body while streaming to client (needed for SSE usage parse).
     let mut captured = Vec::new();
     let mut buf = [0u8; 16 * 1024];
-    // Write status + headers first with Transfer-Encoding: chunked so we can stream.
     {
         write!(
             client,
@@ -158,7 +211,6 @@ fn handle_client(
             Ok(0) => break,
             Ok(n) => {
                 captured.extend_from_slice(&buf[..n]);
-                // chunked encode
                 write!(client, "{n:x}\r\n").map_err(|e| e.to_string())?;
                 client.write_all(&buf[..n]).map_err(|e| e.to_string())?;
                 client.write_all(b"\r\n").map_err(|e| e.to_string())?;
@@ -166,12 +218,11 @@ fn handle_client(
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => {
-                log::warn!("upstream read: {e}");
+                log::warn!("[{label}] upstream read: {e}");
                 break;
             }
         }
     }
-    // end chunked
     let _ = write!(client, "0\r\n\r\n");
     let _ = client.flush();
 
@@ -179,10 +230,10 @@ fn handle_client(
     if let Some(partial) = grok_ledger::usage_from_response_body(&text) {
         let rec = partial.into_record(util::now_ms(), session_id);
         if let Err(e) = grok_ledger::append(&rec) {
-            log::warn!("ledger append: {e}");
+            log::warn!("[{label}] ledger append: {e}");
         } else {
             log::info!(
-                "captured usage #{seq}: in={} out={} total={} ticks={}",
+                "[{label}] captured #{seq}: in={} out={} total={} ticks={}",
                 rec.input_tokens,
                 rec.output_tokens,
                 rec.total_tokens,

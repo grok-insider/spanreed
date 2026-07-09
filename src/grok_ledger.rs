@@ -144,7 +144,7 @@ pub fn cost_lines() -> Vec<MetricLine> {
     if recs.is_empty() {
         return vec![MetricLine::text(
             "Last 30 Days",
-            "no capture yet — run `spanreed grok-proxy`",
+            "no capture yet — enable `spanreed capture serve` (or HM capture.enable)",
         )];
     }
 
