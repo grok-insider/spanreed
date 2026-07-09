@@ -5,23 +5,18 @@ first. Release sections are generated from the commit history by an LLM (see
 `scripts/gen-changelog.sh`) and finalized in the release pull request — edit the
 notes there rather than by hand.
 
-## [0.1.1](https://github.com/grok-insider/spanreed/compare/v0.1.0...v0.1.1) - 2026-07-09
+## 0.1.1
 
-### Added
-
-- *(waybar)* show last-used provider instead of worst utilization
-- *(release)* ship macOS + Windows binaries; clarify per-OS paths ([#9](https://github.com/grok-insider/spanreed/pull/9))
-- *(platform)* add cross-platform ProcessList seam ([#10](https://github.com/grok-insider/spanreed/pull/10))
-- *(platform)* add cross-platform SecretStore seam ([#7](https://github.com/grok-insider/spanreed/pull/7))
-
-### Fixed
-
-- *(release)* make release-plz open Release PRs for this app crate
-- *(grok)* use weekly SuperGrok usage pool via billing?format=credits
-
-### Other
-
-- cross-platform framing, prebuilt install, accurate Waybar text ([#11](https://github.com/grok-insider/spanreed/pull/11))
+- Added cross-platform support for macOS and Windows, including OS-specific credential storage (Keychain, Credential Manager) and process discovery
+- Added Waybar module that shows the last-used paid provider (Claude, Codex, or Grok) based on recent activity, falling back to highest utilization when no recent signal is found
+- Added weekly SuperGrok usage pool detection via `billing?format=credits` for accurate reset countdowns
+- Added prebuilt binary install instructions for Linux, macOS, and Windows with SHA-256 checksums
+- Added `probe --force` and `update-pricing` subcommands to the Usage module
+- Changed Waybar text semantics to show the highest window of paid Claude/Codex/Grok usage, session-anchored, escalating to Weekly at 80% or higher
+- Changed documentation to reflect cross-platform support (Linux, macOS, Windows) with per-OS credential paths
+- Changed credential storage to use OS-native keychains (secret-tool on Linux, security CLI on macOS, cmdkey/PowerShell on Windows)
+- Changed process discovery to use platform-specific backends (ps/lsof on macOS, empty stubs on Windows)
+- Fixed Grok billing endpoint to use the weekly SuperGrok usage pool instead of legacy monthly allotment
 
 ## 0.1.0
 
