@@ -2,7 +2,7 @@
 
 use std::sync::OnceLock;
 use time::format_description::well_known::Rfc3339;
-use time::{OffsetDateTime, UtcOffset};
+use time::{Date, Month, OffsetDateTime, UtcOffset};
 
 /// Current unix time in milliseconds.
 pub fn now_ms() -> i64 {
@@ -63,6 +63,110 @@ pub fn local_date_ymd(ms: i64) -> String {
         .to_offset(local_offset());
     let d = dt.date();
     format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day())
+}
+
+/// Parse an RFC3339 instant and format as local `YYYY-MM-DD`.
+pub fn iso_local_date(iso: &str) -> Option<String> {
+    let dt = OffsetDateTime::parse(iso.trim(), &Rfc3339).ok()?;
+    let ms = (dt.unix_timestamp_nanos() / 1_000_000) as i64;
+    Some(local_date_ymd(ms))
+}
+
+/// Format a future plan-period ISO as `YYYY-MM-DD · in 2d 4h` (relative omitted
+/// when past/unparseable). When `estimated`, append ` · est.`.
+pub fn format_plan_renew_value(iso: &str, estimated: bool) -> String {
+    let date = iso_local_date(iso).unwrap_or_else(|| iso.trim().to_string());
+    let mut s = date;
+    if let Some(rel) = reset_in(iso) {
+        s.push_str(&format!(" · in {rel}"));
+    }
+    if estimated {
+        s.push_str(" · est.");
+    }
+    s
+}
+
+/// Format a past plan-period ISO as `YYYY-MM-DD` (optional ` · est.`).
+pub fn format_plan_last_value(iso: &str, estimated: bool) -> String {
+    let date = iso_local_date(iso).unwrap_or_else(|| iso.trim().to_string());
+    if estimated {
+        format!("{date} · est.")
+    } else {
+        date
+    }
+}
+
+/// Advance by one calendar month, clamping day-of-month to the target month's
+/// length (Jan 31 → Feb 28/29). Preserves time-of-day and offset.
+pub fn add_calendar_month(dt: OffsetDateTime) -> OffsetDateTime {
+    shift_calendar_months(dt, 1)
+}
+
+/// Go back one calendar month (clamping day-of-month).
+pub fn sub_calendar_month(dt: OffsetDateTime) -> OffsetDateTime {
+    shift_calendar_months(dt, -1)
+}
+
+fn shift_calendar_months(dt: OffsetDateTime, delta: i32) -> OffsetDateTime {
+    let d = dt.date();
+    let mut year = d.year();
+    let mut month = d.month() as i32 + delta;
+    while month > 12 {
+        month -= 12;
+        year += 1;
+    }
+    while month < 1 {
+        month += 12;
+        year -= 1;
+    }
+    let month = Month::try_from(month as u8).expect("month 1-12");
+    let day = d.day();
+    let new_date = (1..=day)
+        .rev()
+        .find_map(|dom| Date::from_calendar_date(year, month, dom).ok())
+        .unwrap_or(d);
+    OffsetDateTime::new_in_offset(new_date, dt.time(), dt.offset())
+}
+
+/// Given a monthly billing anchor (first charge / subscription create) and
+/// `now`, return `(last_period_start, next_period_end)` by walking calendar
+/// months (Stripe-style fixed day-of-month with clamp).
+pub fn monthly_cycle_bounds(
+    anchor: OffsetDateTime,
+    now: OffsetDateTime,
+) -> (OffsetDateTime, OffsetDateTime) {
+    if now < anchor {
+        return (sub_calendar_month(anchor), anchor);
+    }
+    let mut last = anchor;
+    let mut next = add_calendar_month(anchor);
+    // Cap iterations so a pathological clock cannot hang.
+    for _ in 0..2400 {
+        if next > now {
+            return (last, next);
+        }
+        last = next;
+        next = add_calendar_month(next);
+    }
+    (last, next)
+}
+
+/// Format `OffsetDateTime` as RFC3339, or `None` on failure.
+pub fn offset_dt_to_iso(dt: OffsetDateTime) -> Option<String> {
+    dt.format(&Rfc3339).ok()
+}
+
+/// Parse RFC3339 (or ISO with assumed Z) into `OffsetDateTime`.
+pub fn parse_iso_dt(iso: &str) -> Option<OffsetDateTime> {
+    let s = iso.trim();
+    if let Ok(dt) = OffsetDateTime::parse(s, &Rfc3339) {
+        return Some(dt);
+    }
+    if s.contains('T') && !s.ends_with('Z') && !s.contains('+') {
+        let withz = format!("{s}Z");
+        return OffsetDateTime::parse(&withz, &Rfc3339).ok();
+    }
+    None
 }
 
 /// Convert a JSON value that may be an ISO string, unix seconds, or unix ms
@@ -302,5 +406,66 @@ mod tests {
         let d = local_date_ymd(1_700_000_000_000);
         // Allow for local offset shifting the date by a day either way.
         assert!(d.starts_with("2023-11-1"), "got {d}");
+    }
+
+    fn dt(iso: &str) -> OffsetDateTime {
+        parse_iso_dt(iso).expect(iso)
+    }
+
+    #[test]
+    fn add_calendar_month_clamps_day() {
+        // Jan 31 → Feb 28 (non-leap)
+        let feb = add_calendar_month(dt("2025-01-31T15:18:17Z"));
+        assert_eq!(feb.date().to_string(), "2025-02-28");
+        assert_eq!(feb.time().hour(), 15);
+        // Jan 31 → Feb 29 (leap)
+        let leap = add_calendar_month(dt("2024-01-31T12:00:00Z"));
+        assert_eq!(leap.date().to_string(), "2024-02-29");
+        // Jul 17 → Aug 17
+        let aug = add_calendar_month(dt("2025-07-17T15:18:17Z"));
+        assert_eq!(aug.date().to_string(), "2025-08-17");
+        // Dec → next year
+        let jan = add_calendar_month(dt("2025-12-17T00:00:00Z"));
+        assert_eq!(jan.date().to_string(), "2026-01-17");
+    }
+
+    #[test]
+    fn sub_calendar_month_clamps() {
+        let jan = sub_calendar_month(dt("2025-03-31T10:00:00Z"));
+        assert_eq!(jan.date().to_string(), "2025-02-28");
+    }
+
+    #[test]
+    fn monthly_cycle_bounds_walks_forward() {
+        let anchor = dt("2025-07-17T15:18:17Z");
+        let now = dt("2026-07-10T12:00:00Z");
+        let (last, next) = monthly_cycle_bounds(anchor, now);
+        assert_eq!(last.date().to_string(), "2026-06-17");
+        assert_eq!(next.date().to_string(), "2026-07-17");
+    }
+
+    #[test]
+    fn monthly_cycle_bounds_on_exact_boundary() {
+        // When now is exactly a period start, next should be one month later.
+        let anchor = dt("2025-07-17T15:18:17Z");
+        let now = dt("2026-06-17T15:18:17Z");
+        let (last, next) = monthly_cycle_bounds(anchor, now);
+        assert_eq!(last.date().to_string(), "2026-06-17");
+        assert_eq!(next.date().to_string(), "2026-07-17");
+    }
+
+    #[test]
+    fn format_plan_values_estimated() {
+        let past = "2026-06-17T15:18:17Z";
+        assert_eq!(format_plan_last_value(past, true), "2026-06-17 · est.");
+        assert_eq!(format_plan_last_value(past, false), "2026-06-17");
+
+        let future = OffsetDateTime::from_unix_timestamp((now_ms() / 1000) + 3 * 86400)
+            .unwrap()
+            .format(&Rfc3339)
+            .unwrap();
+        let renew = format_plan_renew_value(&future, true);
+        assert!(renew.contains(" · in "), "{renew}");
+        assert!(renew.ends_with(" · est."), "{renew}");
     }
 }

@@ -4,6 +4,11 @@
 //! `$CLAUDE_CONFIG_DIR`), refreshes if near expiry, then queries
 //! `GET https://api.anthropic.com/api/oauth/usage`.
 //!
+//! Paid plan renew dates are **estimated**: Anthropic's OAuth profile exposes
+//! `subscription_created_at` but not `current_period_end`. We assume a monthly
+//! calendar cycle (30/31-day clamp) anchored on that create time and suffix
+//! values with `est.`.
+//!
 //! On Linux, Claude Code stores credentials in the plaintext
 //! `.credentials.json` file. When a Secret Service is available the credentials
 //! may instead live under a `Claude Code-credentials` item, which we read via
@@ -19,6 +24,7 @@ use crate::util;
 const ID: &str = "claude";
 const NAME: &str = "Claude";
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
 const REFRESH_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const SCOPES: &str =
@@ -371,9 +377,84 @@ fn fetch_and_build(access_token: &str) -> Result<(Option<String>, Vec<MetricLine
     if lines.is_empty() {
         return Err("no usage windows returned".into());
     }
+    // Estimated plan renew / last (soft-fail; OAuth has no period-end field).
+    lines.extend(fetch_plan_period_lines(access_token));
     // Append local-log cost estimate (Last 30 Days + Usage Trend).
     lines.extend(crate::cost::cost_lines(crate::cost::Source::Claude));
     Ok((None, lines))
+}
+
+fn fetch_plan_period_lines(access_token: &str) -> Vec<MetricLine> {
+    let resp = Request::get(PROFILE_URL)
+        .bearer(access_token.trim())
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .header("User-Agent", "claude-code/2.1.69")
+        .send()
+        .ok();
+    let Some(resp) = resp else {
+        return Vec::new();
+    };
+    if !(200..300).contains(&resp.status) {
+        return Vec::new();
+    }
+    let Some(data) = resp.json() else {
+        return Vec::new();
+    };
+    parse_plan_period_lines(&data)
+}
+
+/// Infer monthly Plan renews / Last renew from oauth/profile (estimated).
+fn parse_plan_period_lines(profile: &serde_json::Value) -> Vec<MetricLine> {
+    let org = match profile.get("organization") {
+        Some(o) => o,
+        None => return Vec::new(),
+    };
+    let status = org
+        .get("subscription_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !status.eq_ignore_ascii_case("active") {
+        return Vec::new();
+    }
+    let billing = org
+        .get("billing_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    // stripe_subscription is the normal Pro/Max path; skip pure prepaid/API.
+    if !billing.is_empty()
+        && !billing.contains("subscription")
+        && !billing.eq_ignore_ascii_case("stripe_subscription")
+    {
+        // Still allow empty billing_type if status is active.
+        if billing == "prepaid" || billing == "invoice" {
+            return Vec::new();
+        }
+    }
+    let Some(created) = org
+        .get("subscription_created_at")
+        .and_then(util::to_iso)
+        .and_then(|iso| util::parse_iso_dt(&iso))
+    else {
+        return Vec::new();
+    };
+    let now = time::OffsetDateTime::now_utc();
+    let (last, next) = util::monthly_cycle_bounds(created, now);
+    let mut lines = Vec::new();
+    if let Some(next_iso) = util::offset_dt_to_iso(next) {
+        lines.push(MetricLine::text(
+            "Plan renews",
+            util::format_plan_renew_value(&next_iso, true),
+        ));
+    }
+    if let Some(last_iso) = util::offset_dt_to_iso(last) {
+        lines.push(MetricLine::text(
+            "Last renew",
+            util::format_plan_last_value(&last_iso, true),
+        ));
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -459,5 +540,61 @@ mod tests {
             rate_limit_tier: Some("default_20x".into()),
         };
         assert_eq!(build_plan(&oauth).as_deref(), Some("Max 20x"));
+    }
+
+    #[test]
+    fn plan_period_estimated_from_profile() {
+        let created = "2025-07-17T15:18:17.382884Z";
+        let profile = serde_json::json!({
+            "organization": {
+                "billing_type": "stripe_subscription",
+                "subscription_status": "active",
+                "subscription_created_at": created
+            }
+        });
+        let lines = parse_plan_period_lines(&profile);
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Text { label, value, .. }
+            if label == "Plan renews" && value.contains(" · est.")
+        )));
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Text { label, value, .. }
+            if label == "Last renew" && value.ends_with(" · est.")
+        )));
+        let anchor = util::parse_iso_dt(created).unwrap();
+        let (last, next) = util::monthly_cycle_bounds(anchor, time::OffsetDateTime::now_utc());
+        let expect_last = util::format_plan_last_value(&util::offset_dt_to_iso(last).unwrap(), true);
+        let expect_renew =
+            util::format_plan_renew_value(&util::offset_dt_to_iso(next).unwrap(), true);
+        assert!(
+            lines.iter().any(|l| matches!(
+                l,
+                MetricLine::Text { label, value, .. }
+                if label == "Last renew" && value == &expect_last
+            )),
+            "lines={lines:?} expect_last={expect_last}"
+        );
+        assert!(
+            lines.iter().any(|l| matches!(
+                l,
+                MetricLine::Text { label, value, .. }
+                if label == "Plan renews" && value == &expect_renew
+            )),
+            "lines={lines:?} expect_renew={expect_renew}"
+        );
+    }
+
+    #[test]
+    fn plan_period_skipped_when_inactive() {
+        let profile = serde_json::json!({
+            "organization": {
+                "billing_type": "stripe_subscription",
+                "subscription_status": "canceled",
+                "subscription_created_at": "2025-07-17T15:18:17Z"
+            }
+        });
+        assert!(parse_plan_period_lines(&profile).is_empty());
     }
 }

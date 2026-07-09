@@ -21,6 +21,7 @@ const ID: &str = "grok";
 const NAME: &str = "Grok";
 const BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
+const SUBS_URL: &str = "https://grok.com/rest/subscriptions";
 const REFRESH_URL: &str = "https://auth.x.ai/oauth2/token";
 const TOKEN_AUTH_HEADER: &str = "xai-grok-cli";
 const DEFAULT_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
@@ -265,6 +266,128 @@ fn fetch_plan(token: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Soft-fail fetch of paid plan billing period (renew / cancel-at-end).
+fn fetch_subscriptions(token: &str) -> Option<serde_json::Value> {
+    let resp = Request::get(SUBS_URL)
+        .bearer(token)
+        .header("Accept", "application/json")
+        .header("User-Agent", "spanreed")
+        .send()
+        .ok()?;
+    if !(200..300).contains(&resp.status) {
+        return None;
+    }
+    resp.json()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct PlanPeriod {
+    period_end_iso: String,
+    cancel_at_period_end: bool,
+    /// Monthly / yearly / unknown — used to derive last renew.
+    monthly: bool,
+    create_time_iso: Option<String>,
+}
+
+/// Pick the best SuperGrok (or other paid) subscription row that has a period end.
+fn parse_plan_period(root: &serde_json::Value) -> Option<PlanPeriod> {
+    let arr = root
+        .get("subscriptions")
+        .and_then(|v| v.as_array())
+        .or_else(|| root.as_array())?;
+
+    let mut best: Option<(i32, PlanPeriod)> = None;
+    for sub in arr {
+        let status = sub.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let active = status.ends_with("_ACTIVE") || status.eq_ignore_ascii_case("ACTIVE");
+        if !active {
+            continue;
+        }
+        let Some(period_end) = sub
+            .get("billingPeriodEnd")
+            .or_else(|| sub.get("currentPeriodEnd"))
+            .and_then(util::to_iso)
+        else {
+            continue;
+        };
+        let tier = sub.get("tier").and_then(|v| v.as_str()).unwrap_or("");
+        // Prefer SuperGrok tiers; X Premium often has no period and is lower score.
+        let score = if tier.contains("SUPER_GROK") {
+            100
+        } else if tier.contains("GROK") {
+            50
+        } else {
+            10
+        };
+        let cancel = sub
+            .get("cancelAtPeriodEnd")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let interval = sub
+            .get("billingInterval")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let monthly = interval.contains("MONTHLY") || interval.eq_ignore_ascii_case("month");
+        let create_time = sub
+            .get("createTime")
+            .or_else(|| sub.get("createdAt"))
+            .and_then(util::to_iso);
+        let period = PlanPeriod {
+            period_end_iso: period_end,
+            cancel_at_period_end: cancel,
+            monthly,
+            create_time_iso: create_time,
+        };
+        match &best {
+            Some((s, _)) if *s >= score => {}
+            _ => best = Some((score, period)),
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+fn plan_period_lines(period: &PlanPeriod) -> Vec<MetricLine> {
+    let mut lines = Vec::new();
+    let renew_label = if period.cancel_at_period_end {
+        "Plan ends"
+    } else {
+        "Plan renews"
+    };
+    lines.push(MetricLine::text(
+        renew_label,
+        util::format_plan_renew_value(&period.period_end_iso, false),
+    ));
+
+    // Last renew: for monthly, period_end − 1 calendar month; prefer createTime
+    // when it is later (new sub / first cycle).
+    let last_iso = if period.monthly {
+        util::parse_iso_dt(&period.period_end_iso)
+            .map(util::sub_calendar_month)
+            .and_then(util::offset_dt_to_iso)
+            .map(|derived| {
+                if let Some(create) = &period.create_time_iso {
+                    if let (Some(c), Some(d)) =
+                        (util::parse_iso_dt(create), util::parse_iso_dt(&derived))
+                    {
+                        if c > d {
+                            return create.clone();
+                        }
+                    }
+                }
+                derived
+            })
+    } else {
+        period.create_time_iso.clone()
+    };
+    if let Some(iso) = last_iso {
+        lines.push(MetricLine::text(
+            "Last renew",
+            util::format_plan_last_value(&iso, false),
+        ));
+    }
+    lines
+}
+
 impl Provider for Grok {
     fn id(&self) -> &'static str {
         ID
@@ -341,6 +464,13 @@ impl Provider for Grok {
             Some(l) => l,
             None => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
         };
+
+        // Paid plan renew / ends (monthly Stripe period — not weekly usage reset).
+        if let Some(subs) = fetch_subscriptions(&auth.token) {
+            if let Some(period) = parse_plan_period(&subs) {
+                lines.extend(plan_period_lines(&period));
+            }
+        }
 
         // Accurate Last-30-Days tokens/cost from the local capture ledger only
         // (populated by `spanreed grok-proxy`). Never invents usage from sessions.
@@ -561,5 +691,82 @@ mod tests {
     #[test]
     fn none_when_limit_missing() {
         assert!(parse_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none());
+    }
+
+    #[test]
+    fn plan_period_picks_active_supergrok_renews() {
+        let root = serde_json::json!({
+            "subscriptions": [
+                {
+                    "tier": "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+                    "status": "SUBSCRIPTION_STATUS_INACTIVE",
+                    "billingPeriodEnd": "2026-06-15T22:40:11Z",
+                    "cancelAtPeriodEnd": true
+                },
+                {
+                    "tier": "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+                    "status": "SUBSCRIPTION_STATUS_ACTIVE",
+                    "createTime": "2026-06-21T05:34:05.760304Z",
+                    "billingInterval": "BILLING_INTERVAL_MONTHLY",
+                    "billingPeriodEnd": "2026-07-21T05:34:01Z",
+                    "cancelAtPeriodEnd": false
+                },
+                {
+                    "tier": "SUBSCRIPTION_TIER_X_PREMIUM_PLUS",
+                    "status": "SUBSCRIPTION_STATUS_ACTIVE"
+                }
+            ]
+        });
+        let p = parse_plan_period(&root).unwrap();
+        assert_eq!(p.period_end_iso, "2026-07-21T05:34:01Z");
+        assert!(!p.cancel_at_period_end);
+        assert!(p.monthly);
+
+        let lines = plan_period_lines(&p);
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Text { label, value, .. }
+            if label == "Plan renews" && value.starts_with("2026-07-21")
+        )));
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Text { label, value, .. }
+            if label == "Last renew" && value.starts_with("2026-06-21")
+        )));
+    }
+
+    #[test]
+    fn plan_period_cancel_at_end_labels_ends() {
+        let root = serde_json::json!({
+            "subscriptions": [{
+                "tier": "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+                "status": "SUBSCRIPTION_STATUS_ACTIVE",
+                "billingInterval": "BILLING_INTERVAL_MONTHLY",
+                "billingPeriodEnd": "2026-08-01T00:00:00Z",
+                "cancelAtPeriodEnd": true,
+                "createTime": "2026-07-01T00:00:00Z"
+            }]
+        });
+        let p = parse_plan_period(&root).unwrap();
+        let lines = plan_period_lines(&p);
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Text { label, .. } if label == "Plan ends"
+        )));
+        assert!(!lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Text { label, .. } if label == "Plan renews"
+        )));
+    }
+
+    #[test]
+    fn plan_period_none_without_period_end() {
+        let root = serde_json::json!({
+            "subscriptions": [{
+                "tier": "SUBSCRIPTION_TIER_X_PREMIUM_PLUS",
+                "status": "SUBSCRIPTION_STATUS_ACTIVE"
+            }]
+        });
+        assert!(parse_plan_period(&root).is_none());
     }
 }
