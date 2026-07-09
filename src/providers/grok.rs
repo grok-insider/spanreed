@@ -337,10 +337,14 @@ impl Provider for Grok {
             _ => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
         };
 
-        let lines = match parse_billing(config) {
+        let mut lines = match parse_billing(config) {
             Some(l) => l,
             None => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
         };
+
+        // Accurate Last-30-Days tokens/cost from the local capture ledger only
+        // (populated by `spanreed grok-proxy`). Never invents usage from sessions.
+        lines.extend(crate::grok_ledger::cost_lines());
 
         let plan = fetch_plan(&auth.token);
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
@@ -382,9 +386,40 @@ fn parse_credits_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> 
     let resets_at = period_end_iso(config)?;
     let on_demand_cap = units(config.get("onDemandCap")).unwrap_or(0.0);
 
-    let mut lines = vec![MetricLine::percent("Weekly", used_pct, Some(resets_at))];
+    let mut lines = vec![MetricLine::percent(
+        "Weekly",
+        used_pct,
+        Some(resets_at.clone()),
+    )];
+    // Product breakdown of the shared weekly pool (official fields only).
+    if let Some(arr) = config.get("productUsage").and_then(|v| v.as_array()) {
+        for item in arr {
+            let Some(pct) = item.get("usagePercent").and_then(|v| v.as_f64()) else {
+                continue;
+            };
+            let raw = item
+                .get("product")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Product");
+            let label = product_label(raw);
+            lines.push(MetricLine::percent(
+                label,
+                pct.clamp(0.0, 100.0),
+                Some(resets_at.clone()),
+            ));
+        }
+    }
     lines.push(payg_badge(on_demand_cap));
     Some(lines)
+}
+
+fn product_label(raw: &str) -> String {
+    match raw {
+        "GrokBuild" => "Build".into(),
+        "GrokChat" => "Chat".into(),
+        "Api" => "Api".into(),
+        other => other.to_string(),
+    }
 }
 
 /// Legacy monthly allotment (bare `/v1/billing` without `format=credits`).
@@ -459,6 +494,16 @@ mod tests {
             if label == "Weekly"
                 && (*used - 1.0).abs() < f64::EPSILON
                 && resets_at.as_deref() == Some("2026-07-10T22:41:23.340272+00:00")
+        )));
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Progress { label, used, .. }
+            if label == "Api" && (*used - 1.0).abs() < f64::EPSILON
+        )));
+        // Products without usagePercent are skipped.
+        assert!(!lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Progress { label, .. } if label == "Build" || label == "Chat"
         )));
         assert!(lines.iter().any(|l| matches!(
             l,

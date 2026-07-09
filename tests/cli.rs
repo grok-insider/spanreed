@@ -98,7 +98,7 @@ fn waybar_emits_object_with_required_keys() {
 fn help_lists_subcommands() {
     let (stdout, status) = run(&["help"]);
     assert!(status.success());
-    for word in ["list", "probe", "waybar", "json", "serve"] {
+    for word in ["list", "probe", "waybar", "json", "serve", "grok-proxy"] {
         assert!(stdout.contains(word), "help missing '{word}'");
     }
 }
