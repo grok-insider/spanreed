@@ -218,8 +218,11 @@ response. It binds to `127.0.0.1` only.
 ## Waybar
 
 `spanreed waybar` prints `{text, tooltip, class, percentage}`. The `text` is the
-highest-utilization window of your **paid** Claude/Codex/Grok plans — anchored on
-the Session (5h) window, escalating to the Weekly window once Weekly crosses 80%.
+**last-used** **paid** Claude/Codex/Grok plan (cheap local activity signals:
+Claude/Codex `history.jsonl` mtime, Grok `active_sessions.json` mtime — a few
+`stat`s, no session-tree walk). For that provider, the shown window is Session
+(5h), escalating to Weekly once Weekly crosses 80%. If no activity signal is
+available, the bar falls back to the highest-utilization eligible provider.
 Other providers (Copilot, Cursor, …) and free/guest plans still appear in the
 tooltip but never drive the bar text. `class` is `ok` / `warning` / `critical`
 (≥80% → warning, ≥95% → critical) for CSS styling; it shows `no data` when nothing
