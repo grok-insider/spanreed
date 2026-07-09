@@ -141,7 +141,11 @@ LLM-written changelog — you never tag or hand-edit `CHANGELOG.md`:
    Release; `release.yml` then builds the static musl binaries (x86_64 + aarch64)
    and attaches them, with the release body taken from the `CHANGELOG.md` section.
 
-Nothing is published until the Release PR is merged.
+Nothing is published until the Release PR is merged. Delivery is the GitHub
+Release (prebuilt binaries) and the Cachix cache — not crates.io. Do **not** set
+`publish = false` in `Cargo.toml` (release-plz would skip the package and open no
+Release PR); crates.io is disabled in `release-plz.toml` via `git_only = true`
+and `publish = false`.
 
 Regenerate a changelog section locally (e.g. to preview):
 

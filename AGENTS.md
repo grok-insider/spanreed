@@ -179,7 +179,8 @@ Merging the Release PR creates the `vX.Y.Z` tag + GitHub Release, which triggers
 the `CHANGELOG.md` section). Nothing publishes until that PR is merged.
 `CHANGELOG.md` is **generated** — never hand-edit it outside the Release PR. Needs
 repo secrets `RELEASE_PLZ_TOKEN` (PAT) and `OPENROUTER_API_KEY`. See
-`CONTRIBUTING.md` → "Releases".
+`CONTRIBUTING.md` → "Releases". Version baseline is git tags (`git_only` in
+`release-plz.toml`); never set Cargo `publish = false` (that skips Release PRs).
 
 ## Validation status
 
