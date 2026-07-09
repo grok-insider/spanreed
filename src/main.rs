@@ -6,6 +6,7 @@
 //!   spanreed waybar               Emit Waybar custom-module JSON (one shot).
 //!   spanreed json                 Emit raw JSON of all detected providers.
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
+//!   spanreed grok-proxy [--bind A] Capture official Grok API usage to a ledger.
 //!   spanreed update-pricing [out] Fetch + filter the upstream price table.
 
 mod activity;
