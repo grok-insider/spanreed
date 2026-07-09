@@ -8,6 +8,7 @@
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
 //!   spanreed update-pricing [out] Fetch + filter the upstream price table.
 
+mod activity;
 mod api;
 mod cost;
 mod creds;

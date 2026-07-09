@@ -173,9 +173,18 @@ fn severity(pct: f64) -> &'static str {
 
 /// Waybar custom-module JSON: a compact `{text, tooltip, class, percentage}`.
 ///
-/// `text` is the single highest-utilization primary metric across providers
-/// (e.g. "claude 42%"). The tooltip lists every provider/line.
+/// `text` is the last-used paid Claude/Codex/Grok provider's primary metric
+/// (e.g. "claude 42%"), falling back to highest utilization when no local
+/// activity signal is available. The tooltip lists every provider/line.
 pub fn waybar(outputs: &[ProviderOutput]) -> serde_json::Value {
+    waybar_with_activity(outputs, crate::activity::last_activity_ms)
+}
+
+/// Like [`waybar`], but activity timestamps come from `activity` (test seam).
+pub fn waybar_with_activity(
+    outputs: &[ProviderOutput],
+    activity: impl Fn(&str) -> Option<i64>,
+) -> serde_json::Value {
     let mut tooltip = String::new();
 
     // Tooltip: every detected provider and line, unchanged.
@@ -216,18 +225,37 @@ pub fn waybar(outputs: &[ProviderOutput]) -> serde_json::Value {
         tooltip.push('\n');
     }
 
-    // Bar text: worst (highest) contribution among eligible providers only
-    // (allow-listed + paid plan), each using its Session-anchored window.
-    let worst = outputs
+    // Bar text: last-used eligible provider when an activity signal exists;
+    // otherwise highest Session-anchored utilization (legacy fallback).
+    let candidates: Vec<(&ProviderOutput, f64, Option<i64>)> = outputs
         .iter()
         .filter(|out| bar_eligible(out))
-        .filter_map(|out| provider_bar_pct(out).map(|pct| (out.provider_id.clone(), pct)))
-        .fold(None::<(String, f64)>, |acc, (id, pct)| match acc {
-            Some((_, p)) if p >= pct => acc,
-            _ => Some((format!("{id} {pct:.0}%"), pct)),
+        .filter_map(|out| {
+            provider_bar_pct(out).map(|pct| {
+                let act = activity(out.provider_id.as_str());
+                (out, pct, act)
+            })
+        })
+        .collect();
+
+    let pick = candidates
+        .iter()
+        .filter_map(|(out, pct, act)| act.map(|ms| (*out, *pct, ms)))
+        .max_by_key(|(_, _, ms)| *ms)
+        .map(|(out, pct, _)| (out, pct))
+        .or_else(|| {
+            candidates
+                .iter()
+                .max_by(|(_, a, _), (_, b, _)| {
+                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(out, pct, _)| (*out, *pct))
         });
 
-    let (text, pct) = worst.unwrap_or_else(|| ("no data".to_string(), 0.0));
+    let (text, pct) = match pick {
+        Some((out, pct)) => (format!("{} {pct:.0}%", out.provider_id), pct),
+        None => ("no data".to_string(), 0.0),
+    };
     serde_json::json!({
         "text": text,
         "tooltip": tooltip.trim_end(),
@@ -269,9 +297,14 @@ mod tests {
         assert_eq!(severity(100.0), "critical");
     }
 
+    /// Deterministic bar selection: ignore local activity signals.
+    fn waybar_no_activity(outputs: &[ProviderOutput]) -> serde_json::Value {
+        waybar_with_activity(outputs, |_| None)
+    }
+
     #[test]
     fn waybar_picks_worst_metric_and_class() {
-        let j = waybar(&sample());
+        let j = waybar_no_activity(&sample());
         assert_eq!(j["text"], "claude 81%");
         assert_eq!(j["class"], "warning");
         assert_eq!(j["percentage"], 81);
@@ -283,7 +316,7 @@ mod tests {
 
     #[test]
     fn waybar_empty_is_no_data() {
-        let j = waybar(&[]);
+        let j = waybar_no_activity(&[]);
         assert_eq!(j["text"], "no data");
         assert_eq!(j["class"], "ok");
     }
@@ -315,7 +348,7 @@ mod tests {
             ],
         )
         .with_plan(Some("Max 20x".into()))];
-        let j = waybar(&outputs);
+        let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "claude 0%");
         assert_eq!(j["percentage"], 0);
         assert_eq!(j["class"], "ok");
@@ -333,7 +366,7 @@ mod tests {
             ],
         )
         .with_plan(Some("Max 20x".into()))];
-        let j = waybar(&outputs);
+        let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "claude 92%");
         assert_eq!(j["class"], "warning");
     }
@@ -348,7 +381,7 @@ mod tests {
             vec![MetricLine::percent("Session", 88.0, None)],
         )
         .with_plan(Some("Free".into()))];
-        let j = waybar(&outputs);
+        let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "no data");
         assert!(j["tooltip"]
             .as_str()
@@ -375,7 +408,7 @@ mod tests {
             )
             .with_plan(Some("X Premium+".into())),
         ];
-        let j = waybar(&outputs);
+        let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "grok 11%");
         assert!(j["tooltip"].as_str().unwrap().contains("<b>Copilot"));
     }
@@ -388,13 +421,14 @@ mod tests {
             vec![MetricLine::percent("Weekly", 11.0, None)],
         )
         .with_plan(Some("SuperGrok Heavy".into()))];
-        let j = waybar(&outputs);
+        let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "grok 11%");
     }
 
     #[test]
     fn waybar_picks_worst_among_eligible_providers() {
-        // Two paid allow-listed providers: the higher Session-anchored value wins.
+        // Two paid allow-listed providers: the higher Session-anchored value wins
+        // when no activity signals are available.
         let outputs = vec![
             ProviderOutput::new(
                 "claude",
@@ -409,14 +443,93 @@ mod tests {
             )
             .with_plan(Some("Pro".into())),
         ];
-        let j = waybar(&outputs);
+        let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "codex 60%");
+    }
+
+    #[test]
+    fn waybar_prefers_last_used_over_worst_utilization() {
+        let outputs = vec![
+            ProviderOutput::new(
+                "claude",
+                "Claude",
+                vec![
+                    MetricLine::percent("Session", 10.0, None),
+                    MetricLine::percent("Weekly", 85.0, None),
+                ],
+            )
+            .with_plan(Some("Max 20x".into())),
+            ProviderOutput::new(
+                "grok",
+                "Grok",
+                vec![MetricLine::percent("Weekly", 1.0, None)],
+            )
+            .with_plan(Some("SuperGrok Heavy".into())),
+        ];
+        // Grok used more recently despite lower utilization.
+        let j = waybar_with_activity(&outputs, |id| match id {
+            "claude" => Some(1_000),
+            "grok" => Some(9_000),
+            _ => None,
+        });
+        assert_eq!(j["text"], "grok 1%");
+        assert_eq!(j["percentage"], 1);
+        assert_eq!(j["class"], "ok");
+        // Tooltip still lists both.
+        let tip = j["tooltip"].as_str().unwrap();
+        assert!(tip.contains("Claude"));
+        assert!(tip.contains("Grok"));
+    }
+
+    #[test]
+    fn waybar_falls_back_to_worst_when_no_activity() {
+        let outputs = vec![
+            ProviderOutput::new(
+                "claude",
+                "Claude",
+                vec![MetricLine::percent("Session", 20.0, None)],
+            )
+            .with_plan(Some("Max 20x".into())),
+            ProviderOutput::new(
+                "grok",
+                "Grok",
+                vec![MetricLine::percent("Weekly", 50.0, None)],
+            )
+            .with_plan(Some("SuperGrok Heavy".into())),
+        ];
+        let j = waybar_no_activity(&outputs);
+        assert_eq!(j["text"], "grok 50%");
+    }
+
+    #[test]
+    fn waybar_ignores_activity_for_ineligible_providers() {
+        // Free codex is more "recent" but must not drive the bar.
+        let outputs = vec![
+            ProviderOutput::new(
+                "codex",
+                "Codex",
+                vec![MetricLine::percent("Session", 99.0, None)],
+            )
+            .with_plan(Some("Free".into())),
+            ProviderOutput::new(
+                "claude",
+                "Claude",
+                vec![MetricLine::percent("Session", 15.0, None)],
+            )
+            .with_plan(Some("Max 20x".into())),
+        ];
+        let j = waybar_with_activity(&outputs, |id| match id {
+            "codex" => Some(99_000),
+            "claude" => Some(1_000),
+            _ => None,
+        });
+        assert_eq!(j["text"], "claude 15%");
     }
 
     #[test]
     fn waybar_skips_errored_eligible_provider() {
         let outputs = vec![ProviderOutput::error("claude", "Claude", "boom")];
-        let j = waybar(&outputs);
+        let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "no data");
     }
 
