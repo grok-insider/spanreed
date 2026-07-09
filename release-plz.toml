@@ -1,19 +1,27 @@
 # release-plz configuration.
 #
 # spanreed uses release-plz to maintain a single standing "Release PR" (version
-# bump + tag + GitHub Release), while the human-facing CHANGELOG.md is rewritten by
-# an LLM (see scripts/gen-changelog.sh) into that PR. The release itself only
-# happens when the PR is merged.
+# bump + CHANGELOG), while the human-facing CHANGELOG.md is rewritten by an LLM
+# (see scripts/gen-changelog.sh) into that PR. The git tag + GitHub Release only
+# happen when the Release PR is merged (`release_always = false`).
+#
+# App binary, not crates.io — same pattern as open-sessionbar / open-recorder:
+# version baseline from git tags; never cargo publish. Guard publish in THIS
+# file, not Cargo.toml (manifest `publish = false` makes release-plz skip the
+# package entirely → empty Release PRs).
 
 [workspace]
-# Only release when the Release PR is merged (not on every push to master).
+# Not on crates.io: resolve current version from `v*` tags, not the registry.
+git_only = true
+# Never run `cargo publish` (git_only alone is not always enough).
+publish = false
+# Only cut tag/GitHub Release when the Release PR is merged.
 release_always = false
-
-# Keep changelog updates ON so release-plz always opens a Release PR (even for the
-# first release, where the version isn't bumped). release-plz writes a baseline
-# changelog entry; the workflow's AI step then overwrites that section in the PR
-# with user-facing notes (scripts/gen-changelog.sh + update-changelog.sh).
+# Keep changelog updates ON so release-plz opens a Release PR. It writes a
+# baseline section; the workflow AI step overwrites it with user-facing notes.
 changelog_update = true
-
-# crates.io publishing is disabled via `publish = false` in Cargo.toml; release-plz
-# still creates the git tag and the GitHub Release.
+# Binary app, not a published library API.
+semver_check = false
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
+pr_labels = ["release"]
