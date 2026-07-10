@@ -5,18 +5,11 @@ first. Release sections are generated from the commit history by an LLM (see
 `scripts/gen-changelog.sh`) and finalized in the release pull request — edit the
 notes there rather than by hand.
 
-## [0.1.2](https://github.com/grok-insider/spanreed/compare/v0.1.1...v0.1.2) - 2026-07-10
+## 0.1.2
 
-### Added
-
-- show paid plan renew / last period dates
-- *(capture)* dual-listen system capture + HM capture.enable
-- *(grok)* product usage breakdown + accurate token capture path
-
-### Other
-
-- rustfmt claude plan-period test
-- mention grok-proxy in main module header
+- Added display of paid plan renew and last period dates for subscription tracking.
+- Added dual-listen capture mode for Grok CLI and OpenCode, with HTTP(S)_PROXY support and Home Manager integration.
+- Added product usage breakdown and accurate token capture path for Grok, including input/output/cached/cost ticks.
 
 ## 0.1.1
 
