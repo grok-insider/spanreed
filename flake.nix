@@ -38,7 +38,8 @@
         in
         pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed";
-          version = "0.1.0";
+          # Single source of truth: Cargo.toml (release-plz bumps it).
+          version = (lib.importTOML ./Cargo.toml).package.version;
           src = ./.;
 
           cargoLock = {
