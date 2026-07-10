@@ -5,6 +5,19 @@ first. Release sections are generated from the commit history by an LLM (see
 `scripts/gen-changelog.sh`) and finalized in the release pull request — edit the
 notes there rather than by hand.
 
+## [0.1.2](https://github.com/grok-insider/spanreed/compare/v0.1.1...v0.1.2) - 2026-07-10
+
+### Added
+
+- show paid plan renew / last period dates
+- *(capture)* dual-listen system capture + HM capture.enable
+- *(grok)* product usage breakdown + accurate token capture path
+
+### Other
+
+- rustfmt claude plan-period test
+- mention grok-proxy in main module header
+
 ## 0.1.1
 
 - Added cross-platform support for macOS and Windows, including OS-specific credential storage (Keychain, Credential Manager) and process discovery
