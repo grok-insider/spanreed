@@ -125,13 +125,7 @@ mod platform {
     pub fn store_user(service: &str, username: &str, label: &str, secret: &str) -> bool {
         let child = Command::new("secret-tool")
             .args([
-                "store",
-                "--label",
-                label,
-                "service",
-                service,
-                "username",
-                username,
+                "store", "--label", label, "service", service, "username", username,
             ])
             .stdin(Stdio::piped())
             .spawn();
@@ -194,14 +188,7 @@ mod platform {
 
     pub fn lookup_user(service: &str, username: &str) -> Option<String> {
         let out = Command::new("security")
-            .args([
-                "find-generic-password",
-                "-s",
-                service,
-                "-a",
-                username,
-                "-w",
-            ])
+            .args(["find-generic-password", "-s", service, "-a", username, "-w"])
             .output()
             .ok()?;
         if !out.status.success() {
