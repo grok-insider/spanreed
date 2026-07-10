@@ -116,7 +116,10 @@ fn help_lists_subcommands() {
 fn auth_without_target_fails_cleanly() {
     let (stdout, status) = run(&["auth"]);
     // help/usage on stderr; exit non-zero
-    assert!(!status.success(), "auth with no target should fail\n{stdout}");
+    assert!(
+        !status.success(),
+        "auth with no target should fail\n{stdout}"
+    );
 }
 
 #[test]

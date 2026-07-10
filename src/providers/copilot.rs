@@ -13,6 +13,7 @@
 //! Storage (first hit wins on read):
 //!   1. keyring service `spanreed:copilot`
 //!   2. file `~/.config/spanreed/copilot.token` (mode 0600)
+//!
 //! Metadata (login only, no secret): `~/.config/spanreed/copilot.json`
 //!
 //! Usage API: `GET https://api.github.com/copilot_internal/user`.
@@ -69,7 +70,8 @@ fn write_token_file(token: &str) -> Result<(), String> {
     let dir = config_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let path = token_path();
-    std::fs::write(&path, format!("{token}\n")).map_err(|e| format!("write {}: {e}", path.display()))?;
+    std::fs::write(&path, format!("{token}\n"))
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -83,7 +85,8 @@ fn write_meta(login: &str) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let path = meta_path();
     let body = serde_json::json!({ "login": login });
-    std::fs::write(&path, format!("{body}\n")).map_err(|e| format!("write {}: {e}", path.display()))?;
+    std::fs::write(&path, format!("{body}\n"))
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(())
 }
 
@@ -319,9 +322,7 @@ pub fn cmd_auth(args: &[String]) -> Result<(), String> {
         t
     } else if let Some(u) = user {
         token_for_gh_user(u).ok_or_else(|| {
-            format!(
-                "no token for gh user '{u}'. Run `gh auth login -u {u}` or pass --token-stdin."
-            )
+            format!("no token for gh user '{u}'. Run `gh auth login -u {u}` or pass --token-stdin.")
         })?
     } else if let Some(t) = creds::env("SPANREED_GITHUB_TOKEN").or_else(|| creds::env("GH_TOKEN"))
     {
@@ -335,14 +336,14 @@ pub fn cmd_auth(args: &[String]) -> Result<(), String> {
     let plan_s = plan.as_deref().unwrap_or("linked");
     println!("Copilot linked as {login} ({plan_s})");
     for line in &lines {
-        match line {
-            MetricLine::Progress {
-                label,
-                used,
-                format: crate::model::ProgressFormat::Percent,
-                ..
-            } => println!("  {label}: {used:.0}%"),
-            _ => {}
+        if let MetricLine::Progress {
+            label,
+            used,
+            format: crate::model::ProgressFormat::Percent,
+            ..
+        } = line
+        {
+            println!("  {label}: {used:.0}%");
         }
     }
     Ok(())
@@ -425,11 +426,7 @@ impl Provider for Copilot {
         let token = match stored_token() {
             Some(t) => t,
             None => {
-                return ProviderOutput::error(
-                    ID,
-                    NAME,
-                    "Not linked. Run `spanreed auth copilot`.",
-                )
+                return ProviderOutput::error(ID, NAME, "Not linked. Run `spanreed auth copilot`.")
             }
         };
 
@@ -473,7 +470,10 @@ github.com:
     user: grok-insider
 "#;
         let users = parse_gh_hosts_users(yml);
-        assert_eq!(users, vec!["0xfell".to_string(), "grok-insider".to_string()]);
+        assert_eq!(
+            users,
+            vec!["0xfell".to_string(), "grok-insider".to_string()]
+        );
     }
 
     #[test]
