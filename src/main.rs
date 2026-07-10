@@ -8,6 +8,8 @@
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
 //!   spanreed capture serve        Dual capture proxy (Grok CLI + api.x.ai).
 //!   spanreed grok-proxy [...]     Single-listener capture (compat alias).
+//!   spanreed auth copilot [...]   Opt-in link a GitHub token for Copilot.
+//!   spanreed auth logout copilot  Forget the stored Copilot credential.
 //!   spanreed update-pricing [out] Fetch + filter the upstream price table.
 
 mod activity;
@@ -65,6 +67,7 @@ fn main() -> ExitCode {
         "serve" => cmd_serve(rest),
         "capture" => cmd_capture(rest),
         "grok-proxy" => cmd_grok_proxy(rest),
+        "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),
         "help" | "-h" | "--help" => {
             print_help();
@@ -91,13 +94,53 @@ fn print_help() {
          \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
          \t                               Single-listener capture (compat)\n\
+         \tspanreed auth copilot         Link Copilot (opt-in; pick gh user or paste)\n\
+         \t  --user LOGIN                 Import token for that gh account\n\
+         \t  --token-stdin                Read token from stdin\n\
+         \tspanreed auth logout copilot  Remove the stored Copilot credential\n\
          \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
          \t                               (writes to stdout, or to [out]; used to\n\
          \t                               refresh the embedded src/pricing-data.json)\n\n\
          PROVIDERS: claude, codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
          \t           synthetic, kimi, copilot, factory, devin,\n\
-         \t           jetbrains-ai-assistant, kiro, antigravity, perplexity"
+         \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
+         \t           (copilot requires `spanreed auth copilot`)"
     );
+}
+
+fn cmd_auth(args: &[String]) -> ExitCode {
+    match args.first().map(String::as_str) {
+        Some("copilot") => match providers::copilot::cmd_auth(&args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("auth copilot: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("logout") => match args.get(1).map(String::as_str) {
+            Some("copilot") => match providers::copilot::cmd_logout() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("auth logout copilot: {e}");
+                    ExitCode::FAILURE
+                }
+            },
+            other => {
+                eprintln!(
+                    "unknown auth logout target: {}\nusage: spanreed auth logout copilot",
+                    other.unwrap_or("(none)")
+                );
+                ExitCode::FAILURE
+            }
+        },
+        other => {
+            eprintln!(
+                "unknown auth target: {}\nusage:\n  spanreed auth copilot [--user LOGIN | --token-stdin]\n  spanreed auth logout copilot",
+                other.unwrap_or("(none)")
+            );
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn cmd_list() -> ExitCode {
