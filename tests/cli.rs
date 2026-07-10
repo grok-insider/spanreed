@@ -106,9 +106,32 @@ fn help_lists_subcommands() {
         "serve",
         "capture",
         "grok-proxy",
+        "auth",
     ] {
         assert!(stdout.contains(word), "help missing '{word}'");
     }
+}
+
+#[test]
+fn auth_without_target_fails_cleanly() {
+    let (stdout, status) = run(&["auth"]);
+    // help/usage on stderr; exit non-zero
+    assert!(!status.success(), "auth with no target should fail\n{stdout}");
+}
+
+#[test]
+fn copilot_not_detected_without_auth() {
+    let (stdout, status) = run(&["list"]);
+    assert!(status.success());
+    // "copilot" line should show em-dash (not detected), not "detected"
+    let line = stdout
+        .lines()
+        .find(|l| l.starts_with("copilot"))
+        .expect("copilot row");
+    assert!(
+        !line.contains("detected"),
+        "copilot must not auto-detect without auth\n{line}"
+    );
 }
 
 /// The SIGPIPE fix: piping output into a reader that closes early must not

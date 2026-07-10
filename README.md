@@ -192,6 +192,8 @@ spanreed probe --force        # probe ALL providers, detected or not
 spanreed waybar               # emit Waybar custom-module JSON (one shot)
 spanreed json                 # raw JSON of all detected provider outputs
 spanreed serve [--interval S] # run the local HTTP API on 127.0.0.1:6736
+spanreed auth copilot         # opt-in: link a GitHub token for Copilot
+spanreed auth logout copilot  # forget the stored Copilot credential
 spanreed update-pricing [out] # fetch + filter the LiteLLM price table (advanced)
 ```
 
@@ -200,6 +202,24 @@ providers it detects on this machine; pass an id (e.g. `spanreed probe cursor`)
 to force a specific one, or `--force` to run them all. `update-pricing` is a
 maintenance command used to refresh the embedded `src/pricing-data.json`.
 
+### Copilot (opt-in)
+
+Copilot is **not** auto-detected from `gh`. Being logged into GitHub is not the
+same as having Copilot, and multi-account `gh` setups often have the wrong
+account active. Link once:
+
+```sh
+spanreed auth copilot                 # interactive: pick a gh user or paste a token
+spanreed auth copilot --user 0xfell   # import that gh account's token
+spanreed auth copilot --token-stdin   # non-interactive token on stdin
+# or: SPANREED_GITHUB_TOKEN=… / GH_TOKEN=… spanreed auth copilot
+spanreed auth logout copilot
+```
+
+Auth validates against the Copilot usage API (rejects `no_access`) and stores the
+token under spanreed's own keyring item (`spanreed:copilot`) plus a mode-0600
+fallback file at `~/.config/spanreed/copilot.token`.
+
 ## Providers
 
 | Provider                 | Credential source                                                | Verified |
@@ -207,7 +227,7 @@ maintenance command used to refresh the embedded `src/pricing-data.json`.
 | `claude`                 | `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`; Keychain on macOS) | live     |
 | `codex`                  | `$CODEX_HOME` / `~/.config/codex` / `~/.codex` `auth.json`       | live     |
 | `grok`                   | `~/.grok/auth.json` (weekly SuperGrok pool); optional local capture ledger for Last 30 Days | live |
-| `copilot`                | `gh auth token` / secret store / `~/.config/gh/hosts.yml`        | live     |
+| `copilot`                | **opt-in** via `spanreed auth copilot` (own keyring/file token) | live     |
 | `cursor`                 | `~/.config/Cursor/.../state.vscdb` (SQLite)                      | code     |
 | `opencode-go`            | `~/.local/share/opencode/opencode.db` (SQLite)                 | code     |
 | `amp`                    | `~/.local/share/amp/secrets.json`                               | code     |
