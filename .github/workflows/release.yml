@@ -14,13 +14,11 @@ name: Release
 # `workflow_dispatch` lets you rebuild/attach binaries for an existing tag manually.
 
 on:
-  release:
-    types: [published]
+  pull_request:
+    types: [closed]
+    branches: [master]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing release tag to build & attach binaries to, e.g. v0.1.0"
-        required: true
+
 
 permissions:
   contents: write
@@ -29,7 +27,11 @@ jobs:
   # Set the GitHub Release body from the AI-written CHANGELOG.md section.
   notes:
     name: Sync release notes
-    if: github.repository_owner == 'grok-insider' && github.event_name == 'release'
+    if: >
+      github.repository_owner == 'grok-insider'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'pull_request'
+              && github.event.pull_request.merged == true))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +56,11 @@ jobs:
 
   artifacts:
     name: ${{ matrix.target }}
-    if: github.repository_owner == 'grok-insider'
+    if: >
+      github.repository_owner == 'grok-insider'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'pull_request'
+              && github.event.pull_request.merged == true))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
