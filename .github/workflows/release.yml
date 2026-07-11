@@ -12,12 +12,17 @@ name: Release
 # Linux. Linux/macOS are packaged as tar.gz; Windows as zip.
 #
 # `workflow_dispatch` lets you rebuild/attach binaries for an existing tag manually.
+# Ordinary PR merges into master do NOT run this workflow (avoids empty RELEASE_TAG).
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [master]
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (e.g. v0.0.2) to rebuild/upload binaries for
+        required: true
+        type: string
 
 
 permissions:
@@ -29,18 +34,23 @@ jobs:
     name: Sync release notes
     if: >
       github.repository_owner == 'grok-insider'
-      && (github.event_name == 'workflow_dispatch'
-          || (github.event_name == 'pull_request'
-              && github.event.pull_request.merged == true))
+      && (github.event_name == 'release'
+          || (github.event_name == 'workflow_dispatch' && inputs.tag != ''))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
       - name: Set release body from CHANGELOG.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
+          if [ -z "${TAG:-}" ]; then
+            echo "No tag; skipping notes sync."
+            exit 0
+          fi
           version="${TAG#v}"
           # Extract the body of the `## <version>` section (without the heading).
           awk -v version="$version" '
@@ -58,9 +68,8 @@ jobs:
     name: ${{ matrix.target }}
     if: >
       github.repository_owner == 'grok-insider'
-      && (github.event_name == 'workflow_dispatch'
-          || (github.event_name == 'pull_request'
-              && github.event.pull_request.merged == true))
+      && (github.event_name == 'release'
+          || (github.event_name == 'workflow_dispatch' && inputs.tag != ''))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -76,11 +85,20 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
     env:
       TARGET: ${{ matrix.target }}
-      RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
+      - name: Require non-empty release tag
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_TAG:-}" ]; then
+            echo "::error::RELEASE_TAG is empty; refusing to build/upload"
+            exit 1
+          fi
+          echo "Building for $RELEASE_TAG"
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
