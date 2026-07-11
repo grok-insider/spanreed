@@ -169,3 +169,7 @@ Open an issue with:
 
 By contributing you agree that your contributions are licensed under the
 project's [MIT License](LICENSE).
+
+## Branch policy
+
+Open feature/fix PRs against **`dev`**, not `master`. When a batch is ready, open a single **`dev` → `master`** integration PR.
