@@ -65,7 +65,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
+          # Branch tip (master), not the merge commit SHA. release-plz needs a real
+          # branch for @{upstream} when computing next versions (detached HEAD fails
+          # with "cannot determine current branch").
+          ref: ${{ github.event.pull_request.base.ref || github.ref_name }}
           # Persist the PAT so the AI step can push a commit to the Release PR branch.
           persist-credentials: true
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
