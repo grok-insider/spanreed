@@ -188,3 +188,12 @@ Only `claude`, `codex`, `grok`, and `copilot` have been validated against live
 APIs. The other providers are implemented to the documented API shapes but are
 not yet confirmed against real accounts — treat field parsing as unverified
 until someone runs `spanreed probe <id>` against a live account.
+
+## Branch model (Model A)
+
+- Human feature/fix/docs PRs target **`dev`**, not `master`.
+- **`master`:** released line. Protected; required checks include CI + **`only dev into master`**.
+- **`dev`:** integration branch. Land work here first.
+- **Guard:** `.github/workflows/guard-master.yml` allowlists `dev` and release-bot heads.
+- **Flow:** `feat/*` → PR into `dev` → batch via `dev`→`master` PR → release on merge to `master`.
+- Org QC: `~/dev/opensource/docs/comparison.md`.
