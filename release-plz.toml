@@ -22,6 +22,7 @@ release_always = false
 changelog_update = true
 # Binary app, not a published library API.
 semver_check = false
+features_always_increment_minor = false
 git_tag_name = "v{{ version }}"
 git_release_name = "v{{ version }}"
 pr_labels = ["release"]
