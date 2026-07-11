@@ -1,14 +1,15 @@
 name: CI
 
 on:
-  push:
-    branches: [master]
-    tags: ["v*"]
   pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -17,6 +18,10 @@ jobs:
   # is skipped on PRs).
   rust:
     name: fmt + clippy + test
+    if: >
+      github.event_name == 'workflow_dispatch'
+      || github.event_name == 'push'
+      || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +43,10 @@ jobs:
   # required gate.
   cross:
     name: cross (${{ matrix.os }})
+    if: >
+      github.event_name == 'workflow_dispatch'
+      || github.event_name == 'push'
+      || (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -56,6 +65,19 @@ jobs:
 
   build:
     name: build (${{ matrix.system }})
+    if: >
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'pull_request'
+          && github.event.action == 'closed'
+          && github.event.pull_request.merged == true
+          && github.event.pull_request.base.ref == 'master')
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'pull_request'
+          && github.event.action == 'closed'
+          && github.event.pull_request.merged == true
+          && github.event.pull_request.base.ref == 'master')
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
