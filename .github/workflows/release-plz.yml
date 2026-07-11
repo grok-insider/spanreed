@@ -1,7 +1,7 @@
 name: Release-plz
 
-# On every push to master, keep a single standing "Release PR" up to date:
-# release-plz bumps the version, and an LLM (scripts/gen-changelog.sh) writes the
+# When a PR into master is merged, keep a single standing "Release PR" up to date:
+# release-plz bumps the version, and release-changelog-action@v1 writes the
 # user-facing CHANGELOG.md into that PR. Nothing is published until the Release PR
 # is merged (release_always = false), at which point release-plz tags + creates the
 # GitHub Release, which triggers release.yml to attach the binaries.
@@ -81,11 +81,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-      - name: Write AI-generated CHANGELOG into the Release PR
+      - name: Check out the Release PR
         if: ${{ steps.release-plz.outputs.pr != '' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PR_JSON: ${{ steps.release-plz.outputs.pr }}
         run: |
           set -euo pipefail
@@ -97,20 +96,36 @@ jobs:
           fi
           echo "Release PR #$pr_number prepares v$version"
           gh pr checkout "$pr_number"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Commits since the previous release tag (whole history on the first release).
           prev_tag="$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)"
           if [ -n "$prev_tag" ]; then range="${prev_tag}..HEAD"; else range="HEAD"; fi
-          echo "Generating changelog for range: $range"
-          scripts/gen-changelog.sh "$version" "$range" > /tmp/section.md
-          echo "----- generated section -----"; cat /tmp/section.md; echo "-----------------------------"
-          scripts/update-changelog.sh "$version" /tmp/section.md
+          {
+            echo "RP_PR=$pr_number"
+            echo "RP_VER=$version"
+            echo "RP_RANGE=$range"
+          } >> "$GITHUB_ENV"
+
+      - name: Write AI-generated CHANGELOG into the Release PR
+        if: ${{ env.RP_PR != '' }}
+        uses: grok-insider/release-changelog-action@v1
+        with:
+          version: ${{ env.RP_VER }}
+          range: ${{ env.RP_RANGE }}
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          project-description: "spanreed multi-provider usage monitor: daemon, CLI, and Waybar for paid AI quotas"
+
+      - name: Commit AI changelog to the Release PR
+        if: ${{ env.RP_PR != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git diff --quiet -- CHANGELOG.md; then
             echo "CHANGELOG.md already up to date."
           else
             git add CHANGELOG.md
-            git commit -m "docs(changelog): generate release notes for v${version}"
+            git commit -m "docs(changelog): generate release notes for v${RP_VER}"
             git push
           fi
 
