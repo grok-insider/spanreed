@@ -692,7 +692,9 @@ mod tests {
 
     #[test]
     fn none_when_limit_missing() {
-        assert!(parse_legacy_monthly_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none());
+        assert!(
+            parse_legacy_monthly_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none()
+        );
         assert!(parse_credits_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none());
     }
 
