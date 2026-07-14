@@ -3,13 +3,13 @@
 //! Reads the Grok CLI auth file `~/.grok/auth.json`, which is a map of entries
 //! keyed by an account/client identifier. Each entry has `key` (the access
 //! token, a JWT), optional `refresh_token`, and `expires_at`. We pick the first
-//! usable entry, refresh proactively (or on 401), then query
-//! `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` with the
+//! usable entry, refresh proactively (or on 401), then query billing with the
 //! special `X-XAI-Token-Auth: xai-grok-cli` header.
 //!
-//! SuperGrok plans use a shared **weekly** usage pool (`format=credits`). The
-//! bare `/v1/billing` response is a legacy monthly allotment and must not be
-//! used for the progress line.
+//! Prefer `GET .../v1/billing?format=credits` for the shared **weekly** SuperGrok
+//! pool (`creditUsagePercent` + `currentPeriod`). Some accounts currently get a
+//! credits payload with period / PAYG metadata but no usage percent; in that
+//! case fall back to bare `GET .../v1/billing` (monthly `used` / `monthlyLimit`).
 
 use crate::creds;
 use crate::http::Request;
@@ -19,7 +19,8 @@ use crate::util;
 
 const ID: &str = "grok";
 const NAME: &str = "Grok";
-const BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const BILLING_CREDITS_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+const BILLING_LEGACY_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
 const SUBS_URL: &str = "https://grok.com/rest/subscriptions";
 const REFRESH_URL: &str = "https://auth.x.ai/oauth2/token";
@@ -238,13 +239,58 @@ fn units(obj: Option<&serde_json::Value>) -> Option<f64> {
     obj?.get("val")?.as_f64()
 }
 
-fn fetch_billing(token: &str) -> Result<crate::http::Response, String> {
-    Request::get(BILLING_URL)
+fn fetch_billing(token: &str, url: &str) -> Result<crate::http::Response, String> {
+    Request::get(url)
         .bearer(token)
         .header("X-XAI-Token-Auth", TOKEN_AUTH_HEADER)
         .header("Accept", "application/json")
         .header("User-Agent", "spanreed")
         .send()
+}
+
+/// GET a billing URL and return the `config` object, refreshing once on auth error.
+/// Updates `auth.token` in place when a refresh succeeds.
+fn load_billing_config(auth: &mut AuthState, url: &str) -> Result<serde_json::Value, String> {
+    let mut resp = match fetch_billing(&auth.token, url) {
+        Ok(r) => r,
+        Err(_) => {
+            return Err("Grok billing request failed. Check your connection.".into());
+        }
+    };
+    if resp.is_auth_error() {
+        match refresh(&mut auth.doc, &auth.entry_key) {
+            Ok(Some(new_token)) => {
+                auth.token = new_token;
+                match fetch_billing(&auth.token, url) {
+                    Ok(r) => resp = r,
+                    Err(_) => {
+                        return Err("Grok billing request failed. Check your connection.".into());
+                    }
+                }
+            }
+            Ok(None) => return Err(LOGIN_HINT.into()),
+            Err(msg) => return Err(msg),
+        }
+    }
+
+    if resp.is_auth_error() {
+        return Err(LOGIN_HINT.into());
+    }
+    if !(200..300).contains(&resp.status) {
+        return Err(format!(
+            "Grok billing request failed (HTTP {}). Try again later.",
+            resp.status
+        ));
+    }
+
+    let data = match resp.json() {
+        Some(d) => d,
+        None => return Err("Grok billing response changed.".into()),
+    };
+    match data.get("config") {
+        Some(c) if c.is_object() => Ok(c.clone()),
+        _ => Err("Grok billing response changed.".into()),
+    }
 }
 
 fn fetch_plan(token: &str) -> Option<String> {
@@ -406,63 +452,26 @@ impl Provider for Grok {
             Err(msg) => return ProviderOutput::error(ID, NAME, msg),
         };
 
-        // Fetch billing, retrying once on auth error after a refresh.
-        let mut resp = match fetch_billing(&auth.token) {
-            Ok(r) => r,
-            Err(_) => {
-                return ProviderOutput::error(
-                    ID,
-                    NAME,
-                    "Grok billing request failed. Check your connection.",
-                )
-            }
-        };
-        if resp.is_auth_error() {
-            match refresh(&mut auth.doc, &auth.entry_key) {
-                Ok(Some(new_token)) => {
-                    auth.token = new_token;
-                    match fetch_billing(&auth.token) {
-                        Ok(r) => resp = r,
-                        Err(_) => {
+        // Prefer weekly credits pool; fall back to bare monthly allotment when
+        // the credits payload omits usage fields (seen on SuperGrok Heavy).
+        let mut lines = match load_billing_config(&mut auth, BILLING_CREDITS_URL) {
+            Ok(config) => match parse_credits_billing(&config) {
+                Some(l) => l,
+                None => match load_billing_config(&mut auth, BILLING_LEGACY_URL) {
+                    Ok(legacy) => match parse_legacy_monthly_billing(&legacy) {
+                        Some(l) => l,
+                        None => {
                             return ProviderOutput::error(
                                 ID,
                                 NAME,
-                                "Grok billing request failed. Check your connection.",
+                                "Grok billing response changed.",
                             )
                         }
-                    }
-                }
-                Ok(None) => return ProviderOutput::error(ID, NAME, LOGIN_HINT),
-                Err(msg) => return ProviderOutput::error(ID, NAME, msg),
-            }
-        }
-
-        if resp.is_auth_error() {
-            return ProviderOutput::error(ID, NAME, LOGIN_HINT);
-        }
-        if !(200..300).contains(&resp.status) {
-            return ProviderOutput::error(
-                ID,
-                NAME,
-                format!(
-                    "Grok billing request failed (HTTP {}). Try again later.",
-                    resp.status
-                ),
-            );
-        }
-
-        let data = match resp.json() {
-            Some(d) => d,
-            None => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
-        };
-        let config = match data.get("config") {
-            Some(c) if c.is_object() => c,
-            _ => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
-        };
-
-        let mut lines = match parse_billing(config) {
-            Some(l) => l,
-            None => return ProviderOutput::error(ID, NAME, "Grok billing response changed."),
+                    },
+                    Err(msg) => return ProviderOutput::error(ID, NAME, msg),
+                },
+            },
+            Err(msg) => return ProviderOutput::error(ID, NAME, msg),
         };
 
         // Paid plan renew / ends (monthly Stripe period — not weekly usage reset).
@@ -572,13 +581,6 @@ fn parse_legacy_monthly_billing(config: &serde_json::Value) -> Option<Vec<Metric
     Some(lines)
 }
 
-/// Parse the billing `config` into progress + Pay-as-you-go lines.
-/// Prefers the weekly credits shape; falls back to legacy monthly.
-/// Returns None when required fields are missing/invalid.
-fn parse_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> {
-    parse_credits_billing(config).or_else(|| parse_legacy_monthly_billing(config))
-}
-
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -617,7 +619,7 @@ mod tests {
             "billingPeriodStart": "2026-07-03T22:41:23.340272+00:00",
             "billingPeriodEnd": "2026-07-10T22:41:23.340272+00:00"
         });
-        let lines = parse_billing(&config).unwrap();
+        let lines = parse_credits_billing(&config).unwrap();
         assert!(lines.iter().any(|l| matches!(
             l,
             MetricLine::Progress { label, used, resets_at, .. }
@@ -652,7 +654,7 @@ mod tests {
             "creditUsagePercent": 42.5,
             "billingPeriodEnd": "2026-08-01T00:00:00+00:00"
         });
-        let lines = parse_billing(&config).unwrap();
+        let lines = parse_credits_billing(&config).unwrap();
         assert!(lines.iter().any(|l| matches!(
             l,
             MetricLine::Progress { label, used, resets_at, .. }
@@ -670,7 +672,7 @@ mod tests {
             "onDemandCap": { "val": 0 },
             "billingPeriodEnd": "2026-06-01T00:00:00+00:00"
         });
-        let lines = parse_billing(&config).unwrap();
+        let lines = parse_legacy_monthly_billing(&config).unwrap();
         assert!(lines.iter().any(|l| matches!(l, MetricLine::Progress { label, used, .. } if label == "Credits used" && *used == 25.0)));
         assert!(lines.iter().any(|l| matches!(l, MetricLine::Badge { label, text, .. } if label == "Pay as you go" && text == "Disabled")));
     }
@@ -682,7 +684,7 @@ mod tests {
             "onDemandCap": { "val": 500 },
             "billingPeriodEnd": "2026-07-10T00:00:00+00:00"
         });
-        let lines = parse_billing(&config).unwrap();
+        let lines = parse_credits_billing(&config).unwrap();
         assert!(lines
             .iter()
             .any(|l| matches!(l, MetricLine::Badge { text, .. } if text == "500 cap")));
@@ -690,7 +692,52 @@ mod tests {
 
     #[test]
     fn none_when_limit_missing() {
-        assert!(parse_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none());
+        assert!(
+            parse_legacy_monthly_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none()
+        );
+        assert!(parse_credits_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none());
+    }
+
+    /// Live `?format=credits` for some SuperGrok accounts: period + PAYG only,
+    /// no `creditUsagePercent` / `productUsage`. Must not parse as weekly.
+    #[test]
+    fn credits_without_usage_percent_is_not_weekly() {
+        let config = serde_json::json!({
+            "currentPeriod": {
+                "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                "start": "2026-07-10T22:41:23.340272+00:00",
+                "end": "2026-07-17T22:41:23.340272+00:00"
+            },
+            "onDemandCap": { "val": 0 },
+            "onDemandUsed": { "val": 0 },
+            "isUnifiedBillingUser": true,
+            "prepaidBalance": { "val": 0 },
+            "topUpMethod": "TOP_UP_METHOD_SAVED_PAYMENT_METHOD",
+            "billingPeriodStart": "2026-07-10T22:41:23.340272+00:00",
+            "billingPeriodEnd": "2026-07-17T22:41:23.340272+00:00"
+        });
+        assert!(parse_credits_billing(&config).is_none());
+        assert!(parse_legacy_monthly_billing(&config).is_none());
+    }
+
+    #[test]
+    fn legacy_monthly_still_parses_when_credits_shape_empty() {
+        let legacy = serde_json::json!({
+            "monthlyLimit": { "val": 150000 },
+            "used": { "val": 46403 },
+            "onDemandCap": { "val": 0 },
+            "billingPeriodStart": "2026-07-01T00:00:00+00:00",
+            "billingPeriodEnd": "2026-08-01T00:00:00+00:00"
+        });
+        let lines = parse_legacy_monthly_billing(&legacy).unwrap();
+        let expected = 46403.0 / 150000.0 * 100.0;
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Progress { label, used, resets_at, .. }
+            if label == "Credits used"
+                && (*used - expected).abs() < 0.01
+                && resets_at.as_deref() == Some("2026-08-01T00:00:00+00:00")
+        )));
     }
 
     #[test]
