@@ -91,6 +91,19 @@ When the provider exposes a weekly epoch boundary, probe also shows
 `reset_at − limit_window_seconds`, so a mid-cycle force-reset restarts the
 cutoff; Grok: `currentPeriod.start`; Claude: estimated from `resets_at − 7d`).
 
+### Usage history (rate-limit epochs)
+
+`spanreed serve` appends Session/Weekly **%** samples to
+`~/.local/share/spanreed/usage-history.jsonl` (deduped; a changing
+`resets_at` is stored as `event: "reset"` for force-resets). Inspect with:
+
+```sh
+spanreed history           # all providers
+spanreed history grok      # one provider
+```
+
+One-shot probes do not write history unless `SPANREED_HISTORY=1`.
+
 Figures are **estimates** (prefixed `~$`) and a lower bound when a model is
 missing from the price table (shown as `(partial)`). Override or extend prices
 with `~/.config/spanreed/pricing.json` (same shape as the LiteLLM data, e.g.
