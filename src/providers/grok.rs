@@ -454,23 +454,27 @@ impl Provider for Grok {
 
         // Prefer weekly credits pool; fall back to bare monthly allotment when
         // the credits payload omits usage fields (seen on SuperGrok Heavy).
-        let mut lines = match load_billing_config(&mut auth, BILLING_CREDITS_URL) {
-            Ok(config) => match parse_credits_billing(&config) {
-                Some(l) => l,
-                None => match load_billing_config(&mut auth, BILLING_LEGACY_URL) {
-                    Ok(legacy) => match parse_legacy_monthly_billing(&legacy) {
-                        Some(l) => l,
-                        None => {
-                            return ProviderOutput::error(
-                                ID,
-                                NAME,
-                                "Grok billing response changed.",
-                            )
-                        }
+        let (mut lines, weekly_start_ms) = match load_billing_config(&mut auth, BILLING_CREDITS_URL)
+        {
+            Ok(config) => {
+                let start = period_start_ms(&config);
+                match parse_credits_billing(&config) {
+                    Some(l) => (l, start),
+                    None => match load_billing_config(&mut auth, BILLING_LEGACY_URL) {
+                        Ok(legacy) => match parse_legacy_monthly_billing(&legacy) {
+                            Some(l) => (l, None),
+                            None => {
+                                return ProviderOutput::error(
+                                    ID,
+                                    NAME,
+                                    "Grok billing response changed.",
+                                )
+                            }
+                        },
+                        Err(msg) => return ProviderOutput::error(ID, NAME, msg),
                     },
-                    Err(msg) => return ProviderOutput::error(ID, NAME, msg),
-                },
-            },
+                }
+            }
             Err(msg) => return ProviderOutput::error(ID, NAME, msg),
         };
 
@@ -483,7 +487,7 @@ impl Provider for Grok {
 
         // Accurate Last-30-Days tokens/cost from the local capture ledger only
         // (populated by `spanreed grok-proxy`). Never invents usage from sessions.
-        lines.extend(crate::grok_ledger::cost_lines());
+        lines.extend(crate::grok_ledger::cost_lines(weekly_start_ms));
 
         let plan = fetch_plan(&auth.token);
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
@@ -514,6 +518,26 @@ fn period_end_iso(config: &serde_json::Value) -> Option<String> {
         .and_then(|p| p.get("end"))
         .and_then(util::to_iso)
         .or_else(|| config.get("billingPeriodEnd").and_then(util::to_iso))
+}
+
+fn period_start_iso(config: &serde_json::Value) -> Option<String> {
+    config
+        .get("currentPeriod")
+        .and_then(|p| p.get("start"))
+        .and_then(util::to_iso)
+        .or_else(|| config.get("billingPeriodStart").and_then(util::to_iso))
+}
+
+/// Weekly usage epoch start (ms) from credits `currentPeriod.start`.
+fn period_start_ms(config: &serde_json::Value) -> Option<i64> {
+    let start = period_start_iso(config)?;
+    let end = period_end_iso(config)?;
+    let used = config
+        .get("creditUsagePercent")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    crate::usage_stats::RateWindow::from_period_bounds("Weekly", used, &start, &end)
+        .map(|w| w.window_start_ms)
 }
 
 /// Unified weekly SuperGrok pool (`?format=credits`).
@@ -642,6 +666,11 @@ mod tests {
             MetricLine::Badge { label, text, .. }
             if label == "Pay as you go" && text == "Disabled"
         )));
+        let start = period_start_ms(&config).expect("period start");
+        let expected = util::parse_iso_dt("2026-07-03T22:41:23.340272+00:00")
+            .map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+            .unwrap();
+        assert_eq!(start, expected);
     }
 
     #[test]

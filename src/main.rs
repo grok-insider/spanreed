@@ -18,6 +18,7 @@ mod cost;
 mod creds;
 mod grok_ledger;
 mod grok_proxy;
+mod history;
 mod http;
 mod model;
 mod output;
@@ -26,6 +27,7 @@ mod probe;
 mod proc;
 mod providers;
 mod secret;
+mod usage_stats;
 mod util;
 
 use std::process::ExitCode;
@@ -65,6 +67,7 @@ fn main() -> ExitCode {
         "waybar" => cmd_waybar(),
         "json" => cmd_json(),
         "serve" => cmd_serve(rest),
+        "history" => cmd_history(rest),
         "capture" => cmd_capture(rest),
         "grok-proxy" => cmd_grok_proxy(rest),
         "auth" => cmd_auth(rest),
@@ -90,6 +93,7 @@ fn print_help() {
          \tspanreed waybar               Waybar custom-module JSON (one shot)\n\
          \tspanreed json                 Raw JSON of detected provider outputs\n\
          \tspanreed serve [--interval S] Local HTTP API on 127.0.0.1:6736\n\
+         \tspanreed history [id]         Show recorded rate-limit history (JSONL)\n\
          \tspanreed capture serve        Dual capture: Grok CLI :18736 + api.x.ai :18737\n\
          \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
@@ -177,6 +181,10 @@ fn cmd_probe(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if history::should_record_on_probe() {
+        history::record(&outputs);
+    }
+
     println!("{}", output::plain(&outputs));
     let any_err = outputs.iter().any(model::ProviderOutput::has_error);
     if any_err {
@@ -184,6 +192,16 @@ fn cmd_probe(args: &[String]) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn cmd_history(args: &[String]) -> ExitCode {
+    let provider = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .map(String::as_str);
+    let samples = history::read_samples(&history::history_path(), provider);
+    print!("{}", history::format_table(&samples));
+    ExitCode::SUCCESS
 }
 
 fn cmd_waybar() -> ExitCode {

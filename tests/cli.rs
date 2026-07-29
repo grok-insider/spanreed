@@ -104,6 +104,7 @@ fn help_lists_subcommands() {
         "waybar",
         "json",
         "serve",
+        "history",
         "capture",
         "grok-proxy",
         "auth",

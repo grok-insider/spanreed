@@ -106,7 +106,9 @@ pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
     let listener = TcpListener::bind(BIND_ADDR)?;
     log::info!("local API listening on http://{BIND_ADDR}");
 
-    let cache: Cache = Arc::new(Mutex::new(probe_with_retry()));
+    let initial = probe_with_retry();
+    crate::history::record(&initial);
+    let cache: Cache = Arc::new(Mutex::new(initial));
 
     // Background refresher.
     {
@@ -116,6 +118,7 @@ pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
             loop {
                 std::thread::sleep(Duration::from_secs(refresh_secs.max(30)));
                 let fresh = probe_with_retry();
+                crate::history::record(&fresh);
                 if let Ok(mut c) = cache.lock() {
                     *c = merge(&c, fresh, &mut stale_counts, MAX_STALE_REFRESHES);
                 }
