@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::creds;
 use crate::model::{BarChartPoint, MetricLine};
+use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
 
 /// Rolling window: today plus the previous 30 days.
@@ -138,7 +139,10 @@ pub fn read_window(now_ms: i64) -> Vec<UsageRecord> {
 }
 
 /// Aggregate ledger into Last-30-Days lines. Returns empty when no capture data.
-pub fn cost_lines() -> Vec<MetricLine> {
+///
+/// When `weekly_start_ms` is set (Grok `currentPeriod.start`), also emit
+/// "Since weekly reset" from records at/after that epoch start.
+pub fn cost_lines(weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
     let now = util::now_ms();
     let recs = read_window(now);
     if recs.is_empty() {
@@ -147,15 +151,21 @@ pub fn cost_lines() -> Vec<MetricLine> {
             "no capture yet — enable `spanreed capture serve` (or HM capture.enable)",
         )];
     }
+    lines_from_records(&recs, weekly_start_ms)
+}
 
+fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
     let mut total_tokens: u64 = 0;
     let mut total_cost = 0.0;
     let mut has_cost = false;
     // date -> (cost, tokens)
     let mut daily: std::collections::BTreeMap<String, (f64, u64)> =
         std::collections::BTreeMap::new();
+    let mut by_model: std::collections::HashMap<String, ModelCost> =
+        std::collections::HashMap::new();
+    let mut cache = CacheTotals::default();
 
-    for r in &recs {
+    for r in recs {
         let tok = r.tokens_for_total();
         total_tokens = total_tokens.saturating_add(tok);
         let cost = r.cost_usd().unwrap_or(0.0);
@@ -167,6 +177,35 @@ pub fn cost_lines() -> Vec<MetricLine> {
         let e = daily.entry(date).or_insert((0.0, 0));
         e.0 += cost;
         e.1 = e.1.saturating_add(tok);
+
+        // Grok: input_tokens includes cached portion (same split as Codex pricing).
+        let cached = r.cached_input_tokens.min(r.input_tokens);
+        let uncached_input = r.input_tokens.saturating_sub(cached);
+        cache.input = cache.input.saturating_add(uncached_input);
+        cache.output = cache.output.saturating_add(r.output_tokens);
+        cache.cache_read = cache.cache_read.saturating_add(cached);
+
+        let model_name = r
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("unknown")
+            .to_string();
+        let row = by_model.entry(model_name.clone()).or_insert(ModelCost {
+            model: model_name,
+            tokens: 0,
+            cost: 0.0,
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_create: 0,
+        });
+        row.tokens = row.tokens.saturating_add(tok);
+        row.cost += cost;
+        row.input = row.input.saturating_add(uncached_input);
+        row.output = row.output.saturating_add(r.output_tokens);
+        row.cache_read = row.cache_read.saturating_add(cached);
     }
 
     let tokens = util::fmt_tokens(total_tokens);
@@ -176,7 +215,32 @@ pub fn cost_lines() -> Vec<MetricLine> {
         format!("{tokens} tokens")
     };
 
+    let mut by_model: Vec<ModelCost> = by_model.into_values().collect();
+    usage_stats::sort_models_by_tokens(&mut by_model);
+
     let mut lines = vec![MetricLine::text("Last 30 Days", value)];
+
+    if let Some(start) = weekly_start_ms {
+        let mut win_tokens: u64 = 0;
+        let mut win_cost = 0.0;
+        let mut win_has_cost = false;
+        for r in recs {
+            if r.ts_ms < start {
+                continue;
+            }
+            win_tokens = win_tokens.saturating_add(r.tokens_for_total());
+            if let Some(c) = r.cost_usd() {
+                win_has_cost = true;
+                win_cost += c;
+            }
+        }
+        let cost = if win_has_cost { win_cost } else { 0.0 };
+        if let Some(l) = usage_stats::since_weekly_reset_line(win_tokens, cost, false) {
+            lines.push(l);
+        }
+    }
+
+    lines.extend(usage_stats::breakdown_lines(&by_model, cache));
     if daily.len() >= 2 {
         let points: Vec<BarChartPoint> = daily
             .iter()
@@ -361,11 +425,114 @@ data: [DONE]
         // When ledger missing, cost_lines still returns enable message.
         // Use a path that won't exist by temporarily relying on real ledger;
         // if user has capture data this still returns non-empty. Assert shape:
-        let lines = cost_lines();
+        let lines = cost_lines(None);
         assert!(!lines.is_empty());
         match &lines[0] {
             MetricLine::Text { label, .. } => assert_eq!(label, "Last 30 Days"),
             _ => panic!("expected text line"),
         }
+    }
+
+    #[test]
+    fn lines_from_records_models_and_cache() {
+        let recs = vec![
+            UsageRecord {
+                ts_ms: 1_700_000_000_000,
+                session_id: None,
+                model: Some("grok-4.5-build".into()),
+                input_tokens: 1000,
+                output_tokens: 100,
+                cached_input_tokens: 600,
+                reasoning_tokens: 0,
+                total_tokens: 1100,
+                cost_usd_ticks: 1_000_000_000, // $1
+                request_id: Some("a".into()),
+            },
+            UsageRecord {
+                ts_ms: 1_700_086_400_000, // next day
+                session_id: None,
+                model: Some("grok-4.5".into()),
+                input_tokens: 200,
+                output_tokens: 50,
+                cached_input_tokens: 0,
+                reasoning_tokens: 0,
+                total_tokens: 250,
+                cost_usd_ticks: 0,
+                request_id: Some("b".into()),
+            },
+        ];
+        let lines = lines_from_records(&recs, None);
+        let labels: Vec<&str> = lines
+            .iter()
+            .filter_map(|l| match l {
+                MetricLine::Text { label, .. } => Some(label.as_str()),
+                MetricLine::BarChart { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(labels.contains(&"Last 30 Days"));
+        assert!(labels.contains(&"Models"));
+        assert!(labels.contains(&"Cache"));
+        assert!(labels.contains(&"Usage Trend"));
+
+        let models = lines.iter().find_map(|l| match l {
+            MetricLine::Text { label, value, .. } if label == "Models" => Some(value.as_str()),
+            _ => None,
+        });
+        let models = models.expect("models line");
+        assert!(models.contains("grok-4.5-build"));
+        assert!(models.contains("grok-4.5"));
+
+        let cache = lines.iter().find_map(|l| match l {
+            MetricLine::Text { label, value, .. } if label == "Cache" => Some(value.as_str()),
+            _ => None,
+        });
+        let cache = cache.expect("cache line");
+        // uncached input 400+200, cache_read 600 → 600/1200 = 50%
+        assert!(
+            cache.contains("50% of input"),
+            "unexpected cache line: {cache}"
+        );
+        assert!(!cache.contains("create"));
+    }
+
+    #[test]
+    fn since_weekly_excludes_records_before_epoch() {
+        let recs = vec![
+            UsageRecord {
+                ts_ms: 1_000,
+                session_id: None,
+                model: Some("a".into()),
+                input_tokens: 100,
+                output_tokens: 0,
+                cached_input_tokens: 0,
+                reasoning_tokens: 0,
+                total_tokens: 100,
+                cost_usd_ticks: 0,
+                request_id: Some("old".into()),
+            },
+            UsageRecord {
+                ts_ms: 5_000,
+                session_id: None,
+                model: Some("a".into()),
+                input_tokens: 25,
+                output_tokens: 0,
+                cached_input_tokens: 0,
+                reasoning_tokens: 0,
+                total_tokens: 25,
+                cost_usd_ticks: 0,
+                request_id: Some("new".into()),
+            },
+        ];
+        let lines = lines_from_records(&recs, Some(4_000));
+        let since = lines.iter().find_map(|l| match l {
+            MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
+                Some(value.as_str())
+            }
+            _ => None,
+        });
+        let since = since.expect("since weekly line");
+        assert!(since.contains("25 tokens"), "got {since}");
+        assert!(!since.contains("100"), "pre-epoch tokens leaked: {since}");
     }
 }

@@ -22,6 +22,7 @@ use time::OffsetDateTime;
 
 use crate::creds;
 use crate::pricing::{self, Usage};
+use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
 
 /// Rolling window: today plus the previous 30 days.
@@ -61,6 +62,12 @@ pub struct CostSummary {
     pub partial: bool,
     /// Per-day totals, ascending by date.
     pub daily: Vec<DayCost>,
+    /// Per-model totals, tokens descending.
+    #[serde(default)]
+    pub by_model: Vec<ModelCost>,
+    /// Prompt/output/cache token totals (for Cache line).
+    #[serde(default)]
+    pub cache: CacheTotals,
 }
 
 /// A single priced usage record extracted from a log line.
@@ -75,9 +82,13 @@ struct Entry {
 }
 
 /// Build the cost display lines for a provider from its local logs:
-/// a `Last 30 Days` summary plus a `Usage Trend` daily-cost sparkline.
+/// `Last 30 Days`, optional since-weekly-reset, model/cache breakdown, sparkline.
+///
+/// `weekly_start_ms` is the current rate-limit epoch start (API-derived). When
+/// set, only log entries with `ts >= weekly_start_ms` count toward
+/// "Since weekly reset" (force-resets move this forward).
 /// Returns an empty vec when there is no local usage data.
-pub fn cost_lines(source: Source) -> Vec<crate::model::MetricLine> {
+pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::model::MetricLine> {
     use crate::model::{BarChartPoint, MetricLine};
 
     let summary = match estimate(source) {
@@ -95,6 +106,21 @@ pub fn cost_lines(source: Source) -> Vec<crate::model::MetricLine> {
     };
     lines.push(MetricLine::text("Last 30 Days", value));
 
+    if let Some(start) = weekly_start_ms {
+        if let Some(win) = estimate_since(source, start) {
+            if let Some(l) =
+                usage_stats::since_weekly_reset_line(win.total_tokens, win.total_cost, win.partial)
+            {
+                lines.push(l);
+            }
+        }
+    }
+
+    lines.extend(usage_stats::breakdown_lines(
+        &summary.by_model,
+        summary.cache,
+    ));
+
     if summary.daily.len() >= 2 {
         let points = summary
             .daily
@@ -111,22 +137,27 @@ pub fn cost_lines(source: Source) -> Vec<crate::model::MetricLine> {
     lines
 }
 
-/// Estimate cost from local logs (TTL-cached).
+/// Estimate cost from local logs (TTL-cached rolling window).
 pub fn estimate(source: Source) -> Option<CostSummary> {
     if let Some(cached) = read_cache(source) {
         return Some(cached);
     }
-    let summary = compute(source)?;
+    let cutoff = util::now_ms() - WINDOW_DAYS * DAY_MS;
+    let summary = compute_from(source, cutoff)?;
     write_cache(source, &summary);
     Some(summary)
 }
 
-fn compute(source: Source) -> Option<CostSummary> {
+/// Re-scan local logs with `cutoff` as the lower bound (not TTL-cached).
+pub fn estimate_since(source: Source, cutoff_ms: i64) -> Option<CostSummary> {
+    compute_from(source, cutoff_ms)
+}
+
+fn compute_from(source: Source, cutoff: i64) -> Option<CostSummary> {
     // Pull fresh model prices (TTL-cached, silent on failure) before the
     // pricing table is first built, so new models are priced without a
     // new binary.
     pricing::ensure_fresh();
-    let cutoff = util::now_ms() - WINDOW_DAYS * DAY_MS;
     let files = collect_files(source, cutoff);
     if files.is_empty() {
         return None;
@@ -139,6 +170,8 @@ fn compute(source: Source) -> Option<CostSummary> {
             total_tokens: 0,
             partial: false,
             daily: Vec::new(),
+            by_model: Vec::new(),
+            cache: CacheTotals::default(),
         });
     }
 
@@ -157,9 +190,12 @@ fn aggregate(mut entries: Vec<Entry>) -> Option<CostSummary> {
 
     let mut by_day: std::collections::BTreeMap<String, (f64, u64)> =
         std::collections::BTreeMap::new();
+    let mut by_model: std::collections::HashMap<String, ModelCost> =
+        std::collections::HashMap::new();
     let mut total_cost = 0.0;
     let mut total_tokens = 0u64;
     let mut partial = false;
+    let mut cache = CacheTotals::default();
 
     for e in &entries {
         let tokens = e.usage.total();
@@ -182,6 +218,34 @@ fn aggregate(mut entries: Vec<Entry>) -> Option<CostSummary> {
         slot.1 += tokens;
         total_cost += cost;
         total_tokens += tokens;
+
+        cache.input = cache.input.saturating_add(e.usage.input);
+        cache.output = cache.output.saturating_add(e.usage.output);
+        cache.cache_read = cache.cache_read.saturating_add(e.usage.cache_read);
+        cache.cache_create = cache.cache_create.saturating_add(e.usage.cache_create);
+
+        let model_name = e
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("unknown")
+            .to_string();
+        let row = by_model.entry(model_name.clone()).or_insert(ModelCost {
+            model: model_name,
+            tokens: 0,
+            cost: 0.0,
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_create: 0,
+        });
+        row.tokens = row.tokens.saturating_add(tokens);
+        row.cost += cost;
+        row.input = row.input.saturating_add(e.usage.input);
+        row.output = row.output.saturating_add(e.usage.output);
+        row.cache_read = row.cache_read.saturating_add(e.usage.cache_read);
+        row.cache_create = row.cache_create.saturating_add(e.usage.cache_create);
     }
 
     let daily = by_day
@@ -189,11 +253,16 @@ fn aggregate(mut entries: Vec<Entry>) -> Option<CostSummary> {
         .map(|(date, (cost, tokens))| DayCost { date, cost, tokens })
         .collect();
 
+    let mut by_model: Vec<ModelCost> = by_model.into_values().collect();
+    usage_stats::sort_models_by_tokens(&mut by_model);
+
     Some(CostSummary {
         total_cost,
         total_tokens,
         partial,
         daily,
+        by_model,
+        cache,
     })
 }
 
@@ -474,9 +543,12 @@ fn file_mtime_ms(entry: &std::fs::DirEntry) -> Option<i64> {
 // --- TTL cache ---
 
 fn cache_path(source: Source) -> PathBuf {
+    // v2: includes by_model + cache totals (old blobs without fields still
+    // deserialize via #[serde(default)] but we bump the filename so probes
+    // recompute once after upgrade instead of serving empty breakdowns).
     creds::cache_home()
         .join("spanreed")
-        .join(format!("{}-cost.json", source.id()))
+        .join(format!("{}-cost-v2.json", source.id()))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -568,6 +640,9 @@ mod tests {
         assert!((s.total_cost - 3.0).abs() < 1e-9);
         assert_eq!(s.total_tokens, 300);
         assert!(!s.partial);
+        assert_eq!(s.by_model.len(), 1);
+        assert_eq!(s.by_model[0].model, "unknown");
+        assert_eq!(s.cache.input, 300);
     }
 
     #[test]
@@ -589,6 +664,80 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_by_model_and_cache() {
+        let entries = vec![
+            Entry {
+                ts_ms: util::now_ms(),
+                model: Some("claude-opus-4".into()),
+                usage: Usage {
+                    input: 100,
+                    output: 50,
+                    cache_create: 10,
+                    cache_read: 200,
+                },
+                cost_usd: Some(1.5),
+                dedup: None,
+            },
+            Entry {
+                ts_ms: util::now_ms(),
+                model: Some("claude-sonnet-4".into()),
+                usage: Usage {
+                    input: 80,
+                    output: 20,
+                    cache_create: 0,
+                    cache_read: 40,
+                },
+                cost_usd: Some(0.5),
+                dedup: None,
+            },
+            Entry {
+                ts_ms: util::now_ms(),
+                model: Some("claude-opus-4".into()),
+                usage: Usage {
+                    input: 10,
+                    output: 5,
+                    cache_create: 0,
+                    cache_read: 0,
+                },
+                cost_usd: Some(0.1),
+                dedup: None,
+            },
+        ];
+        let s = aggregate(entries).unwrap();
+        assert_eq!(s.by_model.len(), 2);
+        assert_eq!(s.by_model[0].model, "claude-opus-4");
+        assert_eq!(s.by_model[0].tokens, 100 + 50 + 10 + 200 + 10 + 5);
+        assert_eq!(s.by_model[1].model, "claude-sonnet-4");
+        assert_eq!(s.cache.input, 190);
+        assert_eq!(s.cache.cache_read, 240);
+        assert_eq!(s.cache.cache_create, 10);
+        let hit = s.cache.cache_hit_pct().unwrap();
+        assert!((hit - (240.0 / 430.0 * 100.0)).abs() < 1e-9);
+
+        let lines = usage_stats::breakdown_lines(&s.by_model, s.cache);
+        assert_eq!(lines.len(), 2);
+        match &lines[0] {
+            crate::model::MetricLine::Text { label, value, .. } => {
+                assert_eq!(label, "Models");
+                assert!(value.contains("claude-opus-4"));
+                assert!(value.contains("claude-sonnet-4"));
+            }
+            _ => panic!("models line"),
+        }
+        match &lines[1] {
+            crate::model::MetricLine::Text { label, value, .. } => {
+                assert_eq!(label, "Cache");
+                assert!(value.contains("create"), "value={value}");
+                assert!(
+                    value.contains(')'),
+                    "create should be inside parens: {value}"
+                );
+            }
+            _ => panic!("cache line"),
+        }
+    }
+
+    #[test]
     fn codex_token_count_uses_last_usage_and_model() {
         let lines = [
             br#"{"timestamp":"2099-01-01T00:00:00Z","type":"turn_context","payload":{"model":"gpt-5-codex"}}"#.to_vec(),
@@ -602,5 +751,33 @@ mod tests {
         assert_eq!(e.usage.input, 400); // 1000 - 600 cached
         assert_eq!(e.usage.cache_read, 600);
         assert_eq!(e.usage.output, 200);
+
+        let s = aggregate(entries).unwrap();
+        assert_eq!(s.by_model[0].model, "gpt-5-codex");
+        assert_eq!(s.cache.cache_read, 600);
+        assert_eq!(s.cache.input, 400);
+    }
+
+    #[test]
+    fn window_cutoff_excludes_pre_epoch_entries() {
+        // Two Claude lines: one before epoch start, one after.
+        let pre = br#"{"timestamp":"2026-01-01T00:00:00.000Z","requestId":"r0","type":"assistant","message":{"model":"m","id":"m0","usage":{"input_tokens":1000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+        let post = br#"{"timestamp":"2026-01-10T00:00:00.000Z","requestId":"r1","type":"assistant","message":{"model":"m","id":"m1","usage":{"input_tokens":50,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+        let blob = [pre.as_slice(), b"\n", post.as_slice()].concat();
+
+        let all = parse_claude_lines(&blob, 0);
+        assert_eq!(all.len(), 2);
+        let full = aggregate(all).unwrap();
+        assert_eq!(full.total_tokens, 1050);
+
+        // Epoch starts 2026-01-05.
+        let epoch_start = util::parse_iso_dt("2026-01-05T00:00:00Z")
+            .map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+            .unwrap();
+        let since = parse_claude_lines(&blob, epoch_start);
+        assert_eq!(since.len(), 1);
+        let win = aggregate(since).unwrap();
+        assert_eq!(win.total_tokens, 50);
+        assert!(win.total_tokens < full.total_tokens);
     }
 }
