@@ -74,6 +74,36 @@ are skipped by mtime, only token-bearing lines are parsed (via a `memchr`
 pre-filter), files are read in parallel, duplicate messages are de-duped, and
 the 30-day aggregate is cached for a few minutes.
 
+Besides the total, probe also shows a local breakdown when the logs carry it:
+
+- **Models** — top models by token volume over the same 30-day window (e.g.
+  `Models: claude-opus-4 1.1B · claude-sonnet-4 0.7B · (+1)`).
+- **Cache** — prompt-cache hit rate from `cache_read` vs uncached input (e.g.
+  `Cache: 71% of input (read 1.2B · create 40M)`). Claude reports cache create
+  and read; Codex/Grok typically only report cached input reads.
+
+These are **observed** from local session logs (or Grok capture), not the
+subscription pool size. The official Session/Weekly **%** lines remain the
+source of truth for rate limits.
+
+When the provider exposes a weekly epoch boundary, probe also shows
+**Since weekly reset** — local tokens/cost since that epoch started (Codex:
+`reset_at − limit_window_seconds`, so a mid-cycle force-reset restarts the
+cutoff; Grok: `currentPeriod.start`; Claude: estimated from `resets_at − 7d`).
+
+### Usage history (rate-limit epochs)
+
+`spanreed serve` appends Session/Weekly **%** samples to
+`~/.local/share/spanreed/usage-history.jsonl` (deduped; a changing
+`resets_at` is stored as `event: "reset"` for force-resets). Inspect with:
+
+```sh
+spanreed history           # all providers
+spanreed history grok      # one provider
+```
+
+One-shot probes do not write history unless `SPANREED_HISTORY=1`.
+
 Figures are **estimates** (prefixed `~$`) and a lower bound when a model is
 missing from the price table (shown as `(partial)`). Override or extend prices
 with `~/.config/spanreed/pricing.json` (same shape as the LiteLLM data, e.g.

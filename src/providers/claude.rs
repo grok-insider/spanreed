@@ -379,9 +379,30 @@ fn fetch_and_build(access_token: &str) -> Result<(Option<String>, Vec<MetricLine
     }
     // Estimated plan renew / last (soft-fail; OAuth has no period-end field).
     lines.extend(fetch_plan_period_lines(access_token));
-    // Append local-log cost estimate (Last 30 Days + Usage Trend).
-    lines.extend(crate::cost::cost_lines(crate::cost::Source::Claude));
+    // Local-log cost: Last 30 Days + since weekly epoch (resets_at − 7d) + models/cache.
+    let weekly_start = weekly_epoch_start_ms(&data);
+    lines.extend(crate::cost::cost_lines(
+        crate::cost::Source::Claude,
+        weekly_start,
+    ));
     Ok((None, lines))
+}
+
+/// Claude weekly window start from `seven_day.resets_at` − 7 days (product length).
+fn weekly_epoch_start_ms(data: &serde_json::Value) -> Option<i64> {
+    let win = data.get("seven_day")?;
+    let used = win
+        .get("utilization")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let resets = win.get("resets_at").and_then(util::to_iso)?;
+    crate::usage_stats::RateWindow::from_resets_at_iso(
+        "Weekly",
+        used,
+        &resets,
+        crate::usage_stats::CLAUDE_WEEKLY_SECS,
+    )
+    .map(|w| w.window_start_ms)
 }
 
 fn fetch_plan_period_lines(access_token: &str) -> Vec<MetricLine> {
@@ -499,6 +520,11 @@ mod tests {
                 ..
             })
         ));
+        let start = weekly_epoch_start_ms(&data).expect("weekly start");
+        let end = util::parse_iso_dt("2026-02-01T00:00:00Z")
+            .map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+            .unwrap();
+        assert_eq!(start, end - crate::usage_stats::CLAUDE_WEEKLY_SECS * 1000);
     }
 
     #[test]
