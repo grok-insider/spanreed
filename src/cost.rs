@@ -82,9 +82,13 @@ struct Entry {
 }
 
 /// Build the cost display lines for a provider from its local logs:
-/// `Last 30 Days`, model/cache breakdown, and a `Usage Trend` sparkline.
+/// `Last 30 Days`, optional since-weekly-reset, model/cache breakdown, sparkline.
+///
+/// `weekly_start_ms` is the current rate-limit epoch start (API-derived). When
+/// set, only log entries with `ts >= weekly_start_ms` count toward
+/// "Since weekly reset" (force-resets move this forward).
 /// Returns an empty vec when there is no local usage data.
-pub fn cost_lines(source: Source) -> Vec<crate::model::MetricLine> {
+pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::model::MetricLine> {
     use crate::model::{BarChartPoint, MetricLine};
 
     let summary = match estimate(source) {
@@ -101,6 +105,17 @@ pub fn cost_lines(source: Source) -> Vec<crate::model::MetricLine> {
         format!("{tokens} tokens")
     };
     lines.push(MetricLine::text("Last 30 Days", value));
+
+    if let Some(start) = weekly_start_ms {
+        if let Some(win) = estimate_since(source, start) {
+            if let Some(l) =
+                usage_stats::since_weekly_reset_line(win.total_tokens, win.total_cost, win.partial)
+            {
+                lines.push(l);
+            }
+        }
+    }
+
     lines.extend(usage_stats::breakdown_lines(
         &summary.by_model,
         summary.cache,
@@ -122,22 +137,27 @@ pub fn cost_lines(source: Source) -> Vec<crate::model::MetricLine> {
     lines
 }
 
-/// Estimate cost from local logs (TTL-cached).
+/// Estimate cost from local logs (TTL-cached rolling window).
 pub fn estimate(source: Source) -> Option<CostSummary> {
     if let Some(cached) = read_cache(source) {
         return Some(cached);
     }
-    let summary = compute(source)?;
+    let cutoff = util::now_ms() - WINDOW_DAYS * DAY_MS;
+    let summary = compute_from(source, cutoff)?;
     write_cache(source, &summary);
     Some(summary)
 }
 
-fn compute(source: Source) -> Option<CostSummary> {
+/// Re-scan local logs with `cutoff` as the lower bound (not TTL-cached).
+pub fn estimate_since(source: Source, cutoff_ms: i64) -> Option<CostSummary> {
+    compute_from(source, cutoff_ms)
+}
+
+fn compute_from(source: Source, cutoff: i64) -> Option<CostSummary> {
     // Pull fresh model prices (TTL-cached, silent on failure) before the
     // pricing table is first built, so new models are priced without a
     // new binary.
     pricing::ensure_fresh();
-    let cutoff = util::now_ms() - WINDOW_DAYS * DAY_MS;
     let files = collect_files(source, cutoff);
     if files.is_empty() {
         return None;
@@ -736,5 +756,28 @@ mod tests {
         assert_eq!(s.by_model[0].model, "gpt-5-codex");
         assert_eq!(s.cache.cache_read, 600);
         assert_eq!(s.cache.input, 400);
+    }
+
+    #[test]
+    fn window_cutoff_excludes_pre_epoch_entries() {
+        // Two Claude lines: one before epoch start, one after.
+        let pre = br#"{"timestamp":"2026-01-01T00:00:00.000Z","requestId":"r0","type":"assistant","message":{"model":"m","id":"m0","usage":{"input_tokens":1000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+        let post = br#"{"timestamp":"2026-01-10T00:00:00.000Z","requestId":"r1","type":"assistant","message":{"model":"m","id":"m1","usage":{"input_tokens":50,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#;
+        let blob = [pre.as_slice(), b"\n", post.as_slice()].concat();
+
+        let all = parse_claude_lines(&blob, 0);
+        assert_eq!(all.len(), 2);
+        let full = aggregate(all).unwrap();
+        assert_eq!(full.total_tokens, 1050);
+
+        // Epoch starts 2026-01-05.
+        let epoch_start = util::parse_iso_dt("2026-01-05T00:00:00Z")
+            .map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+            .unwrap();
+        let since = parse_claude_lines(&blob, epoch_start);
+        assert_eq!(since.len(), 1);
+        let win = aggregate(since).unwrap();
+        assert_eq!(win.total_tokens, 50);
+        assert!(win.total_tokens < full.total_tokens);
     }
 }

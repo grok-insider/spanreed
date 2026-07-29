@@ -139,7 +139,10 @@ pub fn read_window(now_ms: i64) -> Vec<UsageRecord> {
 }
 
 /// Aggregate ledger into Last-30-Days lines. Returns empty when no capture data.
-pub fn cost_lines() -> Vec<MetricLine> {
+///
+/// When `weekly_start_ms` is set (Grok `currentPeriod.start`), also emit
+/// "Since weekly reset" from records at/after that epoch start.
+pub fn cost_lines(weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
     let now = util::now_ms();
     let recs = read_window(now);
     if recs.is_empty() {
@@ -148,10 +151,10 @@ pub fn cost_lines() -> Vec<MetricLine> {
             "no capture yet — enable `spanreed capture serve` (or HM capture.enable)",
         )];
     }
-    lines_from_records(&recs)
+    lines_from_records(&recs, weekly_start_ms)
 }
 
-fn lines_from_records(recs: &[UsageRecord]) -> Vec<MetricLine> {
+fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
     let mut total_tokens: u64 = 0;
     let mut total_cost = 0.0;
     let mut has_cost = false;
@@ -216,6 +219,27 @@ fn lines_from_records(recs: &[UsageRecord]) -> Vec<MetricLine> {
     usage_stats::sort_models_by_tokens(&mut by_model);
 
     let mut lines = vec![MetricLine::text("Last 30 Days", value)];
+
+    if let Some(start) = weekly_start_ms {
+        let mut win_tokens: u64 = 0;
+        let mut win_cost = 0.0;
+        let mut win_has_cost = false;
+        for r in recs {
+            if r.ts_ms < start {
+                continue;
+            }
+            win_tokens = win_tokens.saturating_add(r.tokens_for_total());
+            if let Some(c) = r.cost_usd() {
+                win_has_cost = true;
+                win_cost += c;
+            }
+        }
+        let cost = if win_has_cost { win_cost } else { 0.0 };
+        if let Some(l) = usage_stats::since_weekly_reset_line(win_tokens, cost, false) {
+            lines.push(l);
+        }
+    }
+
     lines.extend(usage_stats::breakdown_lines(&by_model, cache));
     if daily.len() >= 2 {
         let points: Vec<BarChartPoint> = daily
@@ -401,7 +425,7 @@ data: [DONE]
         // When ledger missing, cost_lines still returns enable message.
         // Use a path that won't exist by temporarily relying on real ledger;
         // if user has capture data this still returns non-empty. Assert shape:
-        let lines = cost_lines();
+        let lines = cost_lines(None);
         assert!(!lines.is_empty());
         match &lines[0] {
             MetricLine::Text { label, .. } => assert_eq!(label, "Last 30 Days"),
@@ -437,7 +461,7 @@ data: [DONE]
                 request_id: Some("b".into()),
             },
         ];
-        let lines = lines_from_records(&recs);
+        let lines = lines_from_records(&recs, None);
         let labels: Vec<&str> = lines
             .iter()
             .filter_map(|l| match l {
@@ -470,5 +494,45 @@ data: [DONE]
             "unexpected cache line: {cache}"
         );
         assert!(!cache.contains("create"));
+    }
+
+    #[test]
+    fn since_weekly_excludes_records_before_epoch() {
+        let recs = vec![
+            UsageRecord {
+                ts_ms: 1_000,
+                session_id: None,
+                model: Some("a".into()),
+                input_tokens: 100,
+                output_tokens: 0,
+                cached_input_tokens: 0,
+                reasoning_tokens: 0,
+                total_tokens: 100,
+                cost_usd_ticks: 0,
+                request_id: Some("old".into()),
+            },
+            UsageRecord {
+                ts_ms: 5_000,
+                session_id: None,
+                model: Some("a".into()),
+                input_tokens: 25,
+                output_tokens: 0,
+                cached_input_tokens: 0,
+                reasoning_tokens: 0,
+                total_tokens: 25,
+                cost_usd_ticks: 0,
+                request_id: Some("new".into()),
+            },
+        ];
+        let lines = lines_from_records(&recs, Some(4_000));
+        let since = lines.iter().find_map(|l| match l {
+            MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
+                Some(value.as_str())
+            }
+            _ => None,
+        });
+        let since = since.expect("since weekly line");
+        assert!(since.contains("25 tokens"), "got {since}");
+        assert!(!since.contains("100"), "pre-epoch tokens leaked: {since}");
     }
 }
