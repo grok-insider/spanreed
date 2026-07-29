@@ -175,26 +175,31 @@ fn refresh_if_needed(
     Ok(())
 }
 
-fn window_progress(win: &serde_json::Value, label: &str, now_sec: i64) -> Option<MetricLine> {
+fn parse_codex_window(
+    win: &serde_json::Value,
+    label: &'static str,
+    now_sec: i64,
+) -> Option<crate::usage_stats::RateWindow> {
     let used = win.get("used_percent")?.as_f64()?;
-
-    // `reset_at` is unix seconds. A rolling window can't reset further out than
-    // its own length, so cap the API value at `now + limit_window_seconds`
-    // (guards against the API returning an out-of-range reset for short
-    // windows, e.g. a monthly timestamp on a 5h window).
     let api_reset = win.get("reset_at").and_then(|r| r.as_i64());
-    let window_end = win
-        .get("limit_window_seconds")
-        .and_then(|v| v.as_i64())
-        .map(|secs| now_sec + secs);
-    let resets_secs = match (api_reset, window_end) {
-        (Some(a), Some(w)) => Some(a.min(w)),
-        (Some(a), None) => Some(a),
-        (None, Some(w)) => Some(w),
-        (None, None) => None,
-    };
-    let resets = resets_secs.and_then(|s| util::ms_to_iso(s * 1000));
-    Some(MetricLine::percent(label, used, resets))
+    let limit = win.get("limit_window_seconds").and_then(|v| v.as_i64());
+    crate::usage_stats::RateWindow::from_codex_fields(label, used, api_reset, limit, now_sec)
+}
+
+fn window_progress(
+    win: &serde_json::Value,
+    label: &'static str,
+    now_sec: i64,
+) -> Option<MetricLine> {
+    let w = parse_codex_window(win, label, now_sec)?;
+    let resets = util::ms_to_iso(w.resets_at_ms);
+    Some(MetricLine::percent(label, w.used_percent, resets))
+}
+
+/// Weekly epoch start from `secondary_window` (`reset_at − limit_window_seconds`).
+fn weekly_epoch_start_ms(data: &serde_json::Value, now_sec: i64) -> Option<i64> {
+    let win = data.get("rate_limit")?.get("secondary_window")?;
+    parse_codex_window(win, "Weekly", now_sec).map(|w| w.window_start_ms)
 }
 
 fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
@@ -338,7 +343,12 @@ impl Provider for Codex {
         if lines.is_empty() {
             return ProviderOutput::error(ID, NAME, "no usage windows returned");
         }
-        lines.extend(crate::cost::cost_lines(crate::cost::Source::Codex));
+        let now_sec = util::now_ms() / 1000;
+        let weekly_start = weekly_epoch_start_ms(&data, now_sec);
+        lines.extend(crate::cost::cost_lines(
+            crate::cost::Source::Codex,
+            weekly_start,
+        ));
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
     }
 }
@@ -376,6 +386,39 @@ mod tests {
         // credits surface as a text line
         assert!(lines.iter().any(|l| matches!(l, MetricLine::Text { label, value, .. } if label == "Credits" && value == "$5.39")));
         assert_eq!(build_plan(&data).as_deref(), Some("Plus"));
+
+        // Epoch start = reset_at − limit_window_seconds when now is inside the window.
+        let now = 1_738_900_000_i64 - 86_400; // one day before reset
+        let start = weekly_epoch_start_ms(&data, now).unwrap();
+        assert_eq!(start, (1_738_900_000_i64 - 604_800) * 1000);
+    }
+
+    #[test]
+    fn weekly_epoch_moves_on_force_reset() {
+        let now = 1_700_000_000_i64;
+        let limit = 604_800_i64;
+        let mid = serde_json::json!({
+            "rate_limit": {
+                "secondary_window": {
+                    "used_percent": 80,
+                    "reset_at": now + 2 * 86400,
+                    "limit_window_seconds": limit
+                }
+            }
+        });
+        let forced = serde_json::json!({
+            "rate_limit": {
+                "secondary_window": {
+                    "used_percent": 0,
+                    "reset_at": now + limit,
+                    "limit_window_seconds": limit
+                }
+            }
+        });
+        let old_start = weekly_epoch_start_ms(&mid, now).unwrap();
+        let new_start = weekly_epoch_start_ms(&forced, now).unwrap();
+        assert!(new_start > old_start);
+        assert_eq!(new_start, now * 1000);
     }
 
     #[test]
