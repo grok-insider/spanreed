@@ -26,6 +26,7 @@ mod probe;
 mod proc;
 mod providers;
 mod secret;
+mod usage_stats;
 mod util;
 
 use std::process::ExitCode;
