@@ -14,6 +14,115 @@ pub const MODEL_TOP_N: usize = 3;
 /// Soft cap for displayed model id length.
 const MODEL_NAME_MAX: usize = 28;
 
+/// Known product window length when Claude's usage JSON omits an explicit duration.
+pub const CLAUDE_WEEKLY_SECS: i64 = 7 * 24 * 60 * 60;
+
+/// One rate-limit / credits epoch reported by a provider API.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RateWindow {
+    /// Display label for the pool (e.g. "Weekly").
+    pub label: &'static str,
+    pub used_percent: f64,
+    /// Epoch end (when this window resets), unix ms.
+    pub resets_at_ms: i64,
+    /// Epoch start (when the current window began), unix ms.
+    pub window_start_ms: i64,
+    /// Window length in seconds when known (Codex `limit_window_seconds`).
+    pub limit_window_secs: Option<i64>,
+}
+
+impl RateWindow {
+    /// Codex-style epoch: `window_start = effective_reset - limit_window_seconds`.
+    ///
+    /// `effective_reset` caps `api_reset_at` at `now + limit_window_seconds` so a
+    /// force-reset (used≈0, reset_at ≈ now+W) yields `window_start ≈ now`.
+    pub fn from_codex_fields(
+        label: &'static str,
+        used_percent: f64,
+        api_reset_at_secs: Option<i64>,
+        limit_window_secs: Option<i64>,
+        now_sec: i64,
+    ) -> Option<Self> {
+        let limit = limit_window_secs.filter(|s| *s > 0)?;
+        let window_end = now_sec + limit;
+        let effective_reset = match api_reset_at_secs {
+            Some(a) => a.min(window_end),
+            None => window_end,
+        };
+        let window_start_ms = (effective_reset - limit).saturating_mul(1000);
+        let resets_at_ms = effective_reset.saturating_mul(1000);
+        Some(Self {
+            label,
+            used_percent,
+            resets_at_ms,
+            window_start_ms,
+            limit_window_secs: Some(limit),
+        })
+    }
+
+    /// Claude-style: only `resets_at` is known; start = resets_at − known duration.
+    pub fn from_resets_at_iso(
+        label: &'static str,
+        used_percent: f64,
+        resets_at_iso: &str,
+        limit_window_secs: i64,
+    ) -> Option<Self> {
+        if limit_window_secs <= 0 {
+            return None;
+        }
+        let resets_at_ms = iso_to_ms(resets_at_iso)?;
+        let window_start_ms = resets_at_ms.saturating_sub(limit_window_secs.saturating_mul(1000));
+        Some(Self {
+            label,
+            used_percent,
+            resets_at_ms,
+            window_start_ms,
+            limit_window_secs: Some(limit_window_secs),
+        })
+    }
+
+    /// Grok credits period with explicit start/end ISO timestamps.
+    pub fn from_period_bounds(
+        label: &'static str,
+        used_percent: f64,
+        start_iso: &str,
+        end_iso: &str,
+    ) -> Option<Self> {
+        let window_start_ms = iso_to_ms(start_iso)?;
+        let resets_at_ms = iso_to_ms(end_iso)?;
+        if resets_at_ms < window_start_ms {
+            return None;
+        }
+        let limit_window_secs = Some((resets_at_ms - window_start_ms) / 1000);
+        Some(Self {
+            label,
+            used_percent,
+            resets_at_ms,
+            window_start_ms,
+            limit_window_secs,
+        })
+    }
+}
+
+fn iso_to_ms(iso: &str) -> Option<i64> {
+    util::parse_iso_dt(iso.trim()).map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+}
+
+/// Metric line for local tokens/cost observed since the current weekly epoch.
+pub fn since_weekly_reset_line(tokens: u64, cost: f64, partial: bool) -> Option<MetricLine> {
+    if tokens == 0 {
+        return None;
+    }
+    let tok = util::fmt_tokens(tokens);
+    let value = if cost > 0.0 {
+        let suffix = if partial { " (partial)" } else { "" };
+        format!("{tok} tokens · ~${cost:.2}{suffix}")
+    } else {
+        format!("{tok} tokens")
+    };
+    Some(MetricLine::text("Since weekly reset", value))
+}
+
 /// Per-model totals over a rolling window.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelCost {
@@ -265,5 +374,68 @@ mod tests {
     #[test]
     fn no_models_or_cache_yields_empty() {
         assert!(breakdown_lines(&[], CacheTotals::default()).is_empty());
+    }
+
+    #[test]
+    fn codex_window_start_is_reset_minus_limit() {
+        let now = 1_700_000_000_i64;
+        let limit = 604_800_i64; // 7d
+        let reset = now + limit; // force-reset: next reset in 7d
+        let w = RateWindow::from_codex_fields("Weekly", 0.0, Some(reset), Some(limit), now)
+            .expect("window");
+        assert_eq!(w.window_start_ms, now * 1000);
+        assert_eq!(w.resets_at_ms, reset * 1000);
+        assert_eq!(w.limit_window_secs, Some(limit));
+    }
+
+    #[test]
+    fn codex_force_reset_moves_epoch_start() {
+        let now = 1_700_000_000_i64;
+        let limit = 604_800_i64;
+        let old_reset = now + 2 * 24 * 3600; // mid-cycle, 2d left
+        let old = RateWindow::from_codex_fields("Weekly", 80.0, Some(old_reset), Some(limit), now)
+            .unwrap();
+        // Force-reset: used→0, reset jumps to now+7d
+        let new_reset = now + limit;
+        let new = RateWindow::from_codex_fields("Weekly", 0.0, Some(new_reset), Some(limit), now)
+            .unwrap();
+        assert!(new.window_start_ms > old.window_start_ms);
+        assert_eq!(new.window_start_ms, now * 1000);
+        // Pre-force tokens would be before new.window_start_ms
+        let pre_force_ts = old.window_start_ms + 1000;
+        assert!(pre_force_ts < new.window_start_ms);
+    }
+
+    #[test]
+    fn codex_caps_outrange_reset_at() {
+        let now = 1_700_000_000_i64;
+        let limit = 18_000_i64; // 5h session
+        let far = now + 30 * 24 * 3600; // API returned monthly-ish stamp
+        let w = RateWindow::from_codex_fields("Session", 1.0, Some(far), Some(limit), now).unwrap();
+        assert_eq!(w.resets_at_ms, (now + limit) * 1000);
+        assert_eq!(w.window_start_ms, now * 1000);
+    }
+
+    #[test]
+    fn claude_weekly_start_from_resets_at() {
+        let end = "2026-08-06T12:00:00Z";
+        let w = RateWindow::from_resets_at_iso("Weekly", 49.0, end, CLAUDE_WEEKLY_SECS).unwrap();
+        let end_ms = iso_to_ms(end).unwrap();
+        assert_eq!(w.resets_at_ms, end_ms);
+        assert_eq!(w.window_start_ms, end_ms - CLAUDE_WEEKLY_SECS * 1000);
+    }
+
+    #[test]
+    fn since_weekly_line_formats() {
+        let l = since_weekly_reset_line(1_500_000, 12.5, false).unwrap();
+        match l {
+            MetricLine::Text { label, value, .. } => {
+                assert_eq!(label, "Since weekly reset");
+                assert!(value.contains("1.5M tokens"));
+                assert!(value.contains("~$12.50"));
+            }
+            _ => panic!("text"),
+        }
+        assert!(since_weekly_reset_line(0, 1.0, false).is_none());
     }
 }

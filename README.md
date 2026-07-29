@@ -86,6 +86,11 @@ These are **observed** from local session logs (or Grok capture), not the
 subscription pool size. The official Session/Weekly **%** lines remain the
 source of truth for rate limits.
 
+When the provider exposes a weekly epoch boundary, probe also shows
+**Since weekly reset** — local tokens/cost since that epoch started (Codex:
+`reset_at − limit_window_seconds`, so a mid-cycle force-reset restarts the
+cutoff; Grok: `currentPeriod.start`; Claude: estimated from `resets_at − 7d`).
+
 Figures are **estimates** (prefixed `~$`) and a lower bound when a model is
 missing from the price table (shown as `(partial)`). Override or extend prices
 with `~/.config/spanreed/pricing.json` (same shape as the LiteLLM data, e.g.
