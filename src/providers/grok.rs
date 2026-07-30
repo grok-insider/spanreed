@@ -13,7 +13,7 @@
 
 use crate::creds;
 use crate::http::Request;
-use crate::model::{MetricLine, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -400,6 +400,7 @@ fn plan_period_lines(period: &PlanPeriod) -> Vec<MetricLine> {
         "Plan renews"
     };
     lines.push(MetricLine::text(
+        MetricKind::Plan,
         renew_label,
         util::format_plan_renew_value(&period.period_end_iso, false),
     ));
@@ -426,8 +427,7 @@ fn plan_period_lines(period: &PlanPeriod) -> Vec<MetricLine> {
         period.create_time_iso.clone()
     };
     if let Some(iso) = last_iso {
-        lines.push(MetricLine::text(
-            "Last renew",
+        lines.push(MetricLine::text(MetricKind::Plan, "Last renew",
             util::format_plan_last_value(&iso, false),
         ));
     }
@@ -501,6 +501,7 @@ fn payg_badge(on_demand_cap: f64) -> MetricLine {
         "Disabled".to_string()
     };
     MetricLine::Badge {
+        kind: MetricKind::Plan,
         label: "Pay as you go".into(),
         text: payg,
         color: Some(if on_demand_cap > 0.0 {

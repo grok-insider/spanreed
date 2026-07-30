@@ -6,7 +6,7 @@
 
 use crate::creds;
 use crate::http::Request;
-use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -153,6 +153,7 @@ fn parse_quotas(data: &serde_json::Value) -> Vec<MetricLine> {
         if let (Some(max), Some(remaining)) = (max, remaining) {
             if max > 0.0 {
                 lines.push(MetricLine::Progress {
+                    kind: MetricKind::Quota,
                     label: "5h Rate Limit".into(),
                     used: (max - remaining).max(0.0),
                     limit: max,
@@ -170,6 +171,7 @@ fn parse_quotas(data: &serde_json::Value) -> Vec<MetricLine> {
             .unwrap_or(false)
         {
             lines.push(MetricLine::Badge {
+                kind: MetricKind::Quota,
                 label: "Rate Limited".into(),
                 text: "Active".into(),
                 color: Some("#ef4444".into()),
@@ -195,6 +197,7 @@ fn parse_quotas(data: &serde_json::Value) -> Vec<MetricLine> {
             if limit > 0.0 {
                 let resets = hourly.get("renewsAt").and_then(util::to_iso);
                 lines.push(MetricLine::Progress {
+                    kind: MetricKind::Quota,
                     label: "Search".into(),
                     used: requests,
                     limit,

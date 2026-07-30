@@ -89,7 +89,7 @@ struct Entry {
 /// "Since weekly reset" (force-resets move this forward).
 /// Returns an empty vec when there is no local usage data.
 pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::model::MetricLine> {
-    use crate::model::{BarChartPoint, MetricLine};
+    use crate::model::{MetricKind, BarChartPoint, MetricLine};
 
     let summary = match estimate(source) {
         Some(s) if s.total_tokens > 0 => s,
@@ -109,7 +109,7 @@ pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::mo
     } else {
         format!("{tokens} tokens")
     };
-    lines.push(MetricLine::text("Last 30 Days", value));
+    lines.push(MetricLine::text(MetricKind::Cost, "Last 30 Days", value));
 
     if let Some(start) = weekly_start_ms {
         if let Some(win) = estimate_since(source, start) {

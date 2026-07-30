@@ -7,7 +7,7 @@
 
 use crate::creds;
 use crate::http::Request;
-use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -96,6 +96,7 @@ fn token_line(usage: &serde_json::Value, key: &str, label: &str) -> Option<Metri
         .unwrap_or(0.0);
     let resets = usage.get("endDate").and_then(util::to_iso);
     Some(MetricLine::Progress {
+        kind: MetricKind::Quota,
         label: label.into(),
         used,
         limit,

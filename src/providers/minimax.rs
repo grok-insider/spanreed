@@ -8,7 +8,7 @@
 
 use crate::creds;
 use crate::http::Request;
-use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -142,6 +142,7 @@ fn parse_model(model: &serde_json::Value, suffix: &str) -> Option<(MetricLine, O
 
     let line = match (total, used_count) {
         (Some(total), Some(used)) if total > 0.0 => MetricLine::Progress {
+            kind: MetricKind::Quota,
             label: "Session".into(),
             used,
             limit: total,

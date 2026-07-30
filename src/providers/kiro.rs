@@ -8,7 +8,7 @@
 //! CREDIT pool. Detection also accepts the AWS SSO token file (`~/.aws`).
 
 use crate::creds;
-use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -81,6 +81,7 @@ impl Provider for Kiro {
                         ID,
                         NAME,
                         vec![MetricLine::Badge {
+                            kind: MetricKind::Other,
                             label: "Status".into(),
                             text: "No usage data".into(),
                             color: Some("#a3a3a3".into()),
@@ -103,6 +104,7 @@ impl Provider for Kiro {
                 ID,
                 NAME,
                 vec![MetricLine::Badge {
+                    kind: MetricKind::Other,
                     label: "Status".into(),
                     text: "No usage data".into(),
                     color: Some("#a3a3a3".into()),
@@ -125,6 +127,7 @@ fn parse_usage_state(usage_state: &serde_json::Value) -> Option<Vec<MetricLine>>
 
     let resets = primary.get("resetDate").and_then(util::to_iso);
     let mut lines = vec![MetricLine::Progress {
+        kind: MetricKind::Quota,
         label: "Credits".into(),
         used,
         limit,
@@ -150,6 +153,7 @@ fn parse_usage_state(usage_state: &serde_json::Value) -> Option<Vec<MetricLine>>
         let bused = num(bonus.get("currentUsage")).unwrap_or(0.0);
         if blimit > 0.0 {
             lines.push(MetricLine::Progress {
+                kind: MetricKind::Quota,
                 label: "Bonus Credits".into(),
                 used: bused,
                 limit: blimit,
@@ -169,6 +173,7 @@ fn parse_usage_state(usage_state: &serde_json::Value) -> Option<Vec<MetricLine>>
         .and_then(|v| v.as_str())
     {
         lines.push(MetricLine::Badge {
+            kind: MetricKind::Plan,
             label: "Overages".into(),
             text: util::plan_label(status),
             color: None,

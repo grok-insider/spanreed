@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::MetricLine;
+use crate::model::{MetricKind, MetricLine};
 use crate::util;
 
 /// Max model names shown on the Models line before `· (+N)`.
@@ -120,7 +120,7 @@ pub fn since_weekly_reset_line(tokens: u64, cost: f64, partial: bool) -> Option<
     } else {
         format!("{tok} tokens")
     };
-    Some(MetricLine::text("Since weekly reset", value))
+    Some(MetricLine::text(MetricKind::Cost, "Since weekly reset", value))
 }
 
 /// Per-model totals over a rolling window.
@@ -198,7 +198,7 @@ fn models_line(by_model: &[ModelCost]) -> Option<MetricLine> {
     if extra > 0 {
         parts.push(format!("(+{extra})"));
     }
-    Some(MetricLine::text("Models", parts.join(" · ")))
+    Some(MetricLine::text(MetricKind::Models, "Models", parts.join(" · ")))
 }
 
 fn cache_line(cache: CacheTotals) -> Option<MetricLine> {
@@ -220,7 +220,7 @@ fn cache_line(cache: CacheTotals) -> Option<MetricLine> {
             util::fmt_tokens(cache.cache_read)
         )
     };
-    Some(MetricLine::text("Cache", value))
+    Some(MetricLine::text(MetricKind::Cache, "Cache", value))
 }
 
 /// Shorten long model ids for the terminal while keeping discriminants.

@@ -16,7 +16,7 @@
 
 use crate::creds;
 use crate::http::Request;
-use crate::model::{MetricLine, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProviderOutput};
 use crate::providers::Provider;
 use crate::secret;
 use crate::util;
@@ -296,8 +296,7 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
             let limit = extra.get("monthly_limit").and_then(|v| v.as_f64());
             if let (Some(used), Some(limit)) = (used, limit) {
                 if limit > 0.0 {
-                    lines.push(MetricLine::dollars(
-                        "Extra usage spent",
+                    lines.push(MetricLine::dollars(MetricKind::Cost, "Extra usage spent",
                         util::cents_to_dollars(used),
                         util::cents_to_dollars(limit),
                         None,
@@ -464,14 +463,12 @@ fn parse_plan_period_lines(profile: &serde_json::Value) -> Vec<MetricLine> {
     let (last, next) = util::monthly_cycle_bounds(created, now);
     let mut lines = Vec::new();
     if let Some(next_iso) = util::offset_dt_to_iso(next) {
-        lines.push(MetricLine::text(
-            "Plan renews",
+        lines.push(MetricLine::text(MetricKind::Plan, "Plan renews",
             util::format_plan_renew_value(&next_iso, true),
         ));
     }
     if let Some(last_iso) = util::offset_dt_to_iso(last) {
-        lines.push(MetricLine::text(
-            "Last renew",
+        lines.push(MetricLine::text(MetricKind::Plan, "Last renew",
             util::format_plan_last_value(&last_iso, true),
         ));
     }
@@ -515,6 +512,7 @@ mod tests {
                 .iter()
                 .find(|l| matches!(l, MetricLine::Progress { label, .. } if label == "Session")),
             Some(MetricLine::Progress {
+                kind: MetricKind::Quota,
                 resets_at: Some(_),
                 format: ProgressFormat::Percent,
                 ..

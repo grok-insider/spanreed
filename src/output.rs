@@ -1,6 +1,6 @@
 //! Render provider outputs in the formats the CLI exposes.
 
-use crate::model::{BarChartPoint, MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{BarChartPoint, MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 
 const SPARK: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
@@ -617,7 +617,7 @@ mod tests {
             "claude",
             "Claude",
             vec![
-                MetricLine::text("Last 30 Days", "~$5.00 · 1M tokens"),
+                MetricLine::text(MetricKind::Cost, "Last 30 Days", "~$5.00 · 1M tokens"),
                 MetricLine::bar_chart(
                     "Usage Trend",
                     vec![

@@ -1,5 +1,28 @@
 use serde::{Deserialize, Serialize};
 
+/// Semantic role of a metric line for presentation filters (probe flags).
+///
+/// Providers set this when building lines. New providers that use the helpers
+/// below participate in default/`--cost`/`--plan`/… views without CLI changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum MetricKind {
+    /// Rate-limit / pool progress (default `probe`).
+    Quota,
+    /// Plan renews, PAYG toggle/cap, plan-level credits.
+    Plan,
+    /// Last 30 Days, since weekly, cost coverage, on-demand spend.
+    Cost,
+    Models,
+    Cache,
+    Trend,
+    /// Always shown.
+    Error,
+    /// Provider-specific; only with `--all`.
+    #[default]
+    Other,
+}
+
 /// How a progress bar's numbers are rendered.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -27,6 +50,8 @@ pub struct BarChartPoint {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum MetricLine {
     Text {
+        #[serde(default)]
+        kind: MetricKind,
         label: String,
         value: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -35,6 +60,8 @@ pub enum MetricLine {
         subtitle: Option<String>,
     },
     Progress {
+        #[serde(default)]
+        kind: MetricKind,
         label: String,
         used: f64,
         limit: f64,
@@ -45,6 +72,8 @@ pub enum MetricLine {
         color: Option<String>,
     },
     Badge {
+        #[serde(default)]
+        kind: MetricKind,
         label: String,
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,6 +83,8 @@ pub enum MetricLine {
     },
     #[serde(rename = "barChart")]
     BarChart {
+        #[serde(default)]
+        kind: MetricKind,
         label: String,
         points: Vec<BarChartPoint>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -64,8 +95,18 @@ pub enum MetricLine {
 }
 
 impl MetricLine {
-    pub fn text(label: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn kind(&self) -> MetricKind {
+        match self {
+            MetricLine::Text { kind, .. }
+            | MetricLine::Progress { kind, .. }
+            | MetricLine::Badge { kind, .. }
+            | MetricLine::BarChart { kind, .. } => *kind,
+        }
+    }
+
+    pub fn text(kind: MetricKind, label: impl Into<String>, value: impl Into<String>) -> Self {
         MetricLine::Text {
+            kind,
             label: label.into(),
             value: value.into(),
             color: None,
@@ -73,8 +114,19 @@ impl MetricLine {
         }
     }
 
+    pub fn badge(kind: MetricKind, label: impl Into<String>, text: impl Into<String>) -> Self {
+        MetricLine::Badge {
+            kind,
+            label: label.into(),
+            text: text.into(),
+            color: None,
+            subtitle: None,
+        }
+    }
+
     pub fn error(text: impl Into<String>) -> Self {
         MetricLine::Badge {
+            kind: MetricKind::Error,
             label: "Error".into(),
             text: text.into(),
             color: Some("#ef4444".into()),
@@ -82,8 +134,10 @@ impl MetricLine {
         }
     }
 
+    /// Rate-limit / pool percentage (always [`MetricKind::Quota`]).
     pub fn percent(label: impl Into<String>, used: f64, resets_at: Option<String>) -> Self {
         MetricLine::Progress {
+            kind: MetricKind::Quota,
             label: label.into(),
             used: used.clamp(0.0, 100.0),
             limit: 100.0,
@@ -93,13 +147,16 @@ impl MetricLine {
         }
     }
 
+    /// Dollar progress; `kind` is usually [`MetricKind::Quota`] or [`MetricKind::Cost`].
     pub fn dollars(
+        kind: MetricKind,
         label: impl Into<String>,
         used: f64,
         limit: f64,
         resets_at: Option<String>,
     ) -> Self {
         MetricLine::Progress {
+            kind,
             label: label.into(),
             used,
             limit,
@@ -109,12 +166,14 @@ impl MetricLine {
         }
     }
 
+    /// Usage trend sparkline (always [`MetricKind::Trend`]).
     pub fn bar_chart(
         label: impl Into<String>,
         points: Vec<BarChartPoint>,
         note: Option<String>,
     ) -> Self {
         MetricLine::BarChart {
+            kind: MetricKind::Trend,
             label: label.into(),
             points,
             note,
@@ -122,9 +181,38 @@ impl MetricLine {
         }
     }
 
-    /// True when this line is the synthesized "Error" badge.
+    /// True when this line is an error badge.
     pub fn is_error(&self) -> bool {
-        matches!(self, MetricLine::Badge { label, .. } if label == "Error")
+        self.kind() == MetricKind::Error
+            || matches!(self, MetricLine::Badge { label, .. } if label == "Error")
+    }
+}
+
+/// Which detail blocks `probe` should print (default = quotas only).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProbeView {
+    pub cost: bool,
+    pub models: bool,
+    pub cache: bool,
+    pub trend: bool,
+    pub plan: bool,
+    pub all: bool,
+}
+
+impl ProbeView {
+    pub fn show(&self, kind: MetricKind) -> bool {
+        if self.all {
+            return true;
+        }
+        match kind {
+            MetricKind::Quota | MetricKind::Error => true,
+            MetricKind::Plan => self.plan,
+            MetricKind::Cost => self.cost,
+            MetricKind::Models => self.models,
+            MetricKind::Cache => self.cache,
+            MetricKind::Trend => self.trend,
+            MetricKind::Other => false,
+        }
     }
 }
 
@@ -169,9 +257,16 @@ mod tests {
 
     #[test]
     fn percent_clamps_to_0_100() {
-        if let MetricLine::Progress { used, limit, .. } = MetricLine::percent("S", 142.0, None) {
+        if let MetricLine::Progress {
+            used,
+            limit,
+            kind,
+            ..
+        } = MetricLine::percent("S", 142.0, None)
+        {
             assert_eq!(used, 100.0);
             assert_eq!(limit, 100.0);
+            assert_eq!(kind, MetricKind::Quota);
         } else {
             panic!("expected progress");
         }
@@ -184,7 +279,12 @@ mod tests {
     fn error_line_and_output_flagged() {
         let out = ProviderOutput::error("x", "X", "boom");
         assert!(out.has_error());
-        let ok = ProviderOutput::new("x", "X", vec![MetricLine::text("a", "b")]);
+        assert_eq!(out.lines[0].kind(), MetricKind::Error);
+        let ok = ProviderOutput::new(
+            "x",
+            "X",
+            vec![MetricLine::text(MetricKind::Other, "a", "b")],
+        );
         assert!(!ok.has_error());
     }
 
@@ -202,6 +302,7 @@ mod tests {
         let j = serde_json::to_value(&line).unwrap();
         assert_eq!(j["type"], "progress");
         assert_eq!(j["format"]["kind"], "percent");
+        assert_eq!(j["kind"], "quota");
         assert_eq!(j["resetsAt"], "2099-01-01T00:00:00Z");
         assert!(j.get("resets_at").is_none());
     }
@@ -219,14 +320,41 @@ mod tests {
         );
         let j = serde_json::to_value(&line).unwrap();
         assert_eq!(j["type"], "barChart");
+        assert_eq!(j["kind"], "trend");
         assert_eq!(j["points"][0]["valueLabel"], "$1.50");
         assert_eq!(j["note"], "note");
     }
 
     #[test]
     fn dollars_count_formats_carry_through() {
-        let d = MetricLine::dollars("On-demand", 1.0, 10.0, None);
+        let d = MetricLine::dollars(MetricKind::Cost, "On-demand", 1.0, 10.0, None);
         let j = serde_json::to_value(&d).unwrap();
         assert_eq!(j["format"]["kind"], "dollars");
+        assert_eq!(j["kind"], "cost");
+    }
+
+    #[test]
+    fn probe_view_default_is_quota_and_error_only() {
+        let v = ProbeView::default();
+        assert!(v.show(MetricKind::Quota));
+        assert!(v.show(MetricKind::Error));
+        assert!(!v.show(MetricKind::Plan));
+        assert!(!v.show(MetricKind::Cost));
+        assert!(!v.show(MetricKind::Models));
+        assert!(!v.show(MetricKind::Cache));
+        assert!(!v.show(MetricKind::Trend));
+        assert!(!v.show(MetricKind::Other));
+        let all = ProbeView {
+            all: true,
+            ..ProbeView::default()
+        };
+        assert!(all.show(MetricKind::Other));
+        assert!(all.show(MetricKind::Plan));
+    }
+
+    #[test]
+    fn payg_badge_is_plan_kind() {
+        let b = MetricLine::badge(MetricKind::Plan, "Pay as you go", "Disabled");
+        assert_eq!(b.kind(), MetricKind::Plan);
     }
 }

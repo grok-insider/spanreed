@@ -179,10 +179,10 @@ fn handle(mut stream: TcpStream, cache: Cache) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::MetricLine;
+    use crate::model::{MetricKind, MetricLine};
 
     fn good(id: &str, value: &str) -> ProviderOutput {
-        ProviderOutput::new(id, id, vec![MetricLine::text("Session", value)])
+        ProviderOutput::new(id, id, vec![MetricLine::text(MetricKind::Quota, "Session", value)])
     }
 
     fn bad(id: &str) -> ProviderOutput {
