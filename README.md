@@ -9,8 +9,7 @@ store, probes each provider’s usage API, and prints:
 - JSON for status bars (e.g. Waybar)
 - a small local HTTP API for dashboards
 
-No Electron, no tray app — Linux-first (Hyprland/Wayland), also builds for
-macOS and Windows.
+Linux-first (Hyprland/Wayland); the same code also builds for macOS and Windows.
 
 ## Build
 
