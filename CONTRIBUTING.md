@@ -1,8 +1,8 @@
 # Contributing to spanreed
 
 Thanks for your interest. spanreed is a small, focused Rust project; the most
-common contribution is **adding a new provider**. This guide covers the dev
-setup, the add-a-provider walkthrough, and PR expectations.
+common contribution is **adding a new provider**. This guide covers local setup
+and the add-a-provider walkthrough.
 
 For the high-level architecture and module map, read [`AGENTS.md`](AGENTS.md)
 first.
@@ -15,14 +15,15 @@ shell with `cargo`, `rustc`, `rustfmt`, `clippy`, `rust-analyzer`, and
 
 ```sh
 cargo build                 # debug
-cargo build --release       # release binary: target/release/spanreed
-cargo fmt                   # format
-cargo clippy                # lint
+cargo build --release       # binary: target/release/spanreed
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+SPANREED_OFFLINE=1 cargo test
 ./target/debug/spanreed list
 ./target/debug/spanreed probe <id>
 ```
 
-Run `cargo fmt` and `cargo clippy` before opening a PR.
+Run fmt, clippy, and tests before sharing a change.
 
 ## Adding a provider
 
@@ -117,45 +118,19 @@ spanreed probe example     # forces the provider even if undetected
 - **Never log raw tokens** or write secrets to disk outside their original
   credential file.
 
-## Pull requests
+## Sharing changes
 
-- Keep PRs focused. One provider or one fix per PR.
-- For provider changes, include before/after `spanreed probe <id>` output (with
-  any tokens/PII redacted) so reviewers can see it works.
-- Run `cargo fmt` and `cargo clippy`; CI runs `nix flake check` on both
-  `x86_64-linux` and `aarch64-linux`.
-- Write clear, human commit messages. No AI-generated commit slop.
+- Keep changes focused. One provider or one fix per change.
+- For provider work, include before/after `spanreed probe <id>` output (tokens
+  redacted).
+- Run fmt, clippy, and `SPANREED_OFFLINE=1 cargo test`.
+- Clear, human Conventional Commit subjects — no version numbers, no PR ids.
 
 ## Releases
 
-Releases are automated with [release-plz](https://release-plz.dev) plus an
-LLM-written changelog — you never tag or hand-edit `CHANGELOG.md`:
-
-1. Merge feature/fix PRs to `master` as usual (Conventional Commit titles; commit
-   messages stay human-written).
-2. A standing **Release PR** (`chore: release vX.Y.Z`) is kept up to date
-   automatically: release-plz bumps the version and `scripts/gen-changelog.sh`
-   writes a user-facing `CHANGELOG.md` section (model `deepseek/deepseek-v4-flash`
-   via OpenRouter) into it. Review and edit those notes in the Release PR.
-3. **Merge the Release PR** to ship. release-plz creates the `vX.Y.Z` tag + GitHub
-   Release; `release.yml` then builds the static musl binaries (x86_64 + aarch64)
-   and attaches them, with the release body taken from the `CHANGELOG.md` section.
-
-Nothing is published until the Release PR is merged. Delivery is the GitHub
-Release (prebuilt binaries) and the Cachix cache — not crates.io. Do **not** set
-`publish = false` in `Cargo.toml` (release-plz would skip the package and open no
-Release PR); crates.io is disabled in `release-plz.toml` via `git_only = true`
-and `publish = false`.
-
-Regenerate a changelog section locally (e.g. to preview):
-
-```sh
-OPENROUTER_API_KEY=... scripts/gen-changelog.sh 0.2.0 v0.1.0..HEAD
-```
-
-Maintainer one-time setup: repo secrets `RELEASE_PLZ_TOKEN` (fine-grained PAT with
-Contents + Pull requests: read/write) and `OPENROUTER_API_KEY`, plus the "Allow
-GitHub Actions to create and approve pull requests" setting enabled.
+No automated release pipeline in-tree right now (local-first clean slate).
+Bump `version` in `Cargo.toml` deliberately when you cut a line; keep
+`CHANGELOG.md` in sync. Not published to crates.io.
 
 ## Reporting issues
 
