@@ -65,7 +65,7 @@ pub fn line_percent(line: &MetricLine) -> Option<f64> {
 
 /// Providers allowed to drive the collapsed Waybar bar text. Everything else
 /// (Copilot, Cursor, ...) is still shown in the tooltip but never sets the bar.
-const BAR_PROVIDERS: &[&str] = &["claude", "codex", "grok"];
+const BAR_PROVIDERS: &[&str] = &["codex", "grok"];
 
 /// Plan labels treated as non-paid; a provider on one of these never drives the
 /// bar. Matched case-insensitively against each whitespace-token of the plan.
@@ -286,8 +286,8 @@ mod tests {
     fn sample() -> Vec<ProviderOutput> {
         vec![
             ProviderOutput::new(
-                "claude",
-                "Claude",
+                "codex",
+                "Codex",
                 vec![
                     MetricLine::percent("Session", 12.0, None),
                     MetricLine::percent("Weekly", 81.0, None),
@@ -295,10 +295,11 @@ mod tests {
             )
             .with_plan(Some("Max".into())),
             ProviderOutput::new(
-                "codex",
-                "Codex",
-                vec![MetricLine::percent("Session", 5.0, None)],
-            ),
+                "grok",
+                "Grok",
+                vec![MetricLine::percent("Weekly", 5.0, None)],
+            )
+            .with_plan(Some("SuperGrok".into())),
         ]
     }
 
@@ -319,13 +320,13 @@ mod tests {
     #[test]
     fn waybar_picks_worst_metric_and_class() {
         let j = waybar_no_activity(&sample());
-        assert_eq!(j["text"], "claude 81%");
+        assert_eq!(j["text"], "codex 81%");
         assert_eq!(j["class"], "warning");
         assert_eq!(j["percentage"], 81);
         assert!(j["tooltip"]
             .as_str()
             .unwrap()
-            .contains("<b>Claude (Max)</b>"));
+            .contains("<b>Codex (Max)</b>"));
     }
 
     #[test]
@@ -354,8 +355,8 @@ mod tests {
         // The core bug: weekly 45% / session 0% (just reset) must show 0%,
         // not the misleading 45%.
         let outputs = vec![ProviderOutput::new(
-            "claude",
-            "Claude",
+            "codex",
+            "Codex",
             vec![
                 MetricLine::percent("Session", 0.0, None),
                 MetricLine::percent("Weekly", 45.0, None),
@@ -363,7 +364,7 @@ mod tests {
         )
         .with_plan(Some("Max 20x".into()))];
         let j = waybar_no_activity(&outputs);
-        assert_eq!(j["text"], "claude 0%");
+        assert_eq!(j["text"], "codex 0%");
         assert_eq!(j["percentage"], 0);
         assert_eq!(j["class"], "ok");
     }
@@ -372,8 +373,8 @@ mod tests {
     fn waybar_escalates_to_weekly_when_weekly_critical() {
         // Weekly near-exhaustion still surfaces over a calm session.
         let outputs = vec![ProviderOutput::new(
-            "claude",
-            "Claude",
+            "codex",
+            "Codex",
             vec![
                 MetricLine::percent("Session", 10.0, None),
                 MetricLine::percent("Weekly", 92.0, None),
@@ -381,7 +382,7 @@ mod tests {
         )
         .with_plan(Some("Max 20x".into()))];
         let j = waybar_no_activity(&outputs);
-        assert_eq!(j["text"], "claude 92%");
+        assert_eq!(j["text"], "codex 92%");
         assert_eq!(j["class"], "warning");
     }
 
@@ -445,8 +446,8 @@ mod tests {
         // when no activity signals are available.
         let outputs = vec![
             ProviderOutput::new(
-                "claude",
-                "Claude",
+                "codex",
+                "Codex",
                 vec![MetricLine::percent("Session", 20.0, None)],
             )
             .with_plan(Some("Max 20x".into())),
@@ -465,8 +466,8 @@ mod tests {
     fn waybar_prefers_last_used_over_worst_utilization() {
         let outputs = vec![
             ProviderOutput::new(
-                "claude",
-                "Claude",
+                "codex",
+                "Codex",
                 vec![
                     MetricLine::percent("Session", 10.0, None),
                     MetricLine::percent("Weekly", 85.0, None),
@@ -482,7 +483,7 @@ mod tests {
         ];
         // Grok used more recently despite lower utilization.
         let j = waybar_with_activity(&outputs, |id| match id {
-            "claude" => Some(1_000),
+            "codex" => Some(1_000),
             "grok" => Some(9_000),
             _ => None,
         });
@@ -491,7 +492,7 @@ mod tests {
         assert_eq!(j["class"], "ok");
         // Tooltip still lists both.
         let tip = j["tooltip"].as_str().unwrap();
-        assert!(tip.contains("Claude"));
+        assert!(tip.contains("Codex"));
         assert!(tip.contains("Grok"));
     }
 
@@ -499,8 +500,8 @@ mod tests {
     fn waybar_falls_back_to_worst_when_no_activity() {
         let outputs = vec![
             ProviderOutput::new(
-                "claude",
-                "Claude",
+                "codex",
+                "Codex",
                 vec![MetricLine::percent("Session", 20.0, None)],
             )
             .with_plan(Some("Max 20x".into())),
@@ -526,23 +527,23 @@ mod tests {
             )
             .with_plan(Some("Free".into())),
             ProviderOutput::new(
-                "claude",
-                "Claude",
-                vec![MetricLine::percent("Session", 15.0, None)],
+                "grok",
+                "Grok",
+                vec![MetricLine::percent("Weekly", 15.0, None)],
             )
-            .with_plan(Some("Max 20x".into())),
+            .with_plan(Some("SuperGrok".into())),
         ];
         let j = waybar_with_activity(&outputs, |id| match id {
             "codex" => Some(99_000),
-            "claude" => Some(1_000),
+            "grok" => Some(1_000),
             _ => None,
         });
-        assert_eq!(j["text"], "claude 15%");
+        assert_eq!(j["text"], "grok 15%");
     }
 
     #[test]
     fn waybar_skips_errored_eligible_provider() {
-        let outputs = vec![ProviderOutput::error("claude", "Claude", "boom")];
+        let outputs = vec![ProviderOutput::error("codex", "Codex", "boom")];
         let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "no data");
     }
@@ -550,7 +551,7 @@ mod tests {
     #[test]
     fn plain_renders_lines() {
         let s = plain(&sample());
-        assert!(s.contains("Claude (Max)"));
+        assert!(s.contains("Codex (Max)"));
         assert!(s.contains("Session: 12%"));
         assert!(s.contains("Weekly: 81%"));
     }
@@ -686,8 +687,8 @@ mod tests {
     #[test]
     fn waybar_tooltip_renders_barchart_as_sparkline_not_null() {
         let outputs = vec![ProviderOutput::new(
-            "claude",
-            "Claude",
+            "codex",
+            "Codex",
             vec![
                 MetricLine::text(
                     crate::model::MetricKind::Cost,

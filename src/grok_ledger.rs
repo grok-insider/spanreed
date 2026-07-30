@@ -142,7 +142,18 @@ pub fn read_window(now_ms: i64) -> Vec<UsageRecord> {
 ///
 /// When `weekly_start_ms` is set (Grok `currentPeriod.start`), also emit
 /// "Since weekly reset" from records at/after that epoch start.
+/// Without pool-% forecast (e.g. tests / callers that only need ledger lines).
+#[allow(dead_code)]
 pub fn cost_lines(weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
+    cost_lines_with_forecast(weekly_start_ms, None, None)
+}
+
+/// Like [`cost_lines`], plus week/month forecasts when `weekly_pct` is known.
+pub fn cost_lines_with_forecast(
+    weekly_start_ms: Option<i64>,
+    weekly_pct: Option<f64>,
+    week_end_ms: Option<i64>,
+) -> Vec<MetricLine> {
     let now = util::now_ms();
     let recs = read_window(now);
     if recs.is_empty() {
@@ -152,10 +163,15 @@ pub fn cost_lines(weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
             "no capture yet — enable `spanreed capture serve` (or HM capture.enable)",
         )];
     }
-    lines_from_records(&recs, weekly_start_ms)
+    lines_from_records(&recs, weekly_start_ms, weekly_pct, week_end_ms)
 }
 
-fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
+fn lines_from_records(
+    recs: &[UsageRecord],
+    weekly_start_ms: Option<i64>,
+    weekly_pct: Option<f64>,
+    week_end_ms: Option<i64>,
+) -> Vec<MetricLine> {
     let mut total_tokens: u64 = 0;
     let mut tokens_with_cost: u64 = 0;
     let mut total_cost = 0.0;
@@ -229,6 +245,8 @@ fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec
         lines.push(cov);
     }
 
+    let mut week_tokens: u64 = 0;
+    let mut week_cost: f64 = 0.0;
     if let Some(start) = weekly_start_ms {
         let mut win_tokens: u64 = 0;
         let mut win_tokens_with_cost: u64 = 0;
@@ -247,10 +265,26 @@ fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec
             }
         }
         let cost = if win_has_cost { win_cost } else { 0.0 };
+        week_tokens = win_tokens;
+        week_cost = cost;
         let win_partial = win_has_cost && win_tokens_with_cost < win_tokens;
         if let Some(l) = usage_stats::since_weekly_reset_line(win_tokens, cost, win_partial) {
             lines.push(l);
         }
+    }
+
+    if let Some(pct) = weekly_pct {
+        let week_id = weekly_start_ms
+            .map(|ms| ms.to_string())
+            .unwrap_or_else(|| "unknown".into());
+        lines.extend(crate::forecast::forecast_lines(
+            "grok",
+            &week_id,
+            pct,
+            week_tokens,
+            week_cost,
+            week_end_ms,
+        ));
     }
 
     lines.extend(usage_stats::breakdown_lines(&by_model, cache));
@@ -487,7 +521,7 @@ data: [DONE]
                 request_id: Some("b".into()),
             },
         ];
-        let lines = lines_from_records(&recs, None);
+        let lines = lines_from_records(&recs, None, None, None);
         let labels: Vec<&str> = lines
             .iter()
             .filter_map(|l| match l {
@@ -560,7 +594,7 @@ data: [DONE]
             cost_usd_ticks: 500_000_000,
             request_id: Some("only".into()),
         }];
-        let lines = lines_from_records(&recs, None);
+        let lines = lines_from_records(&recs, None, None, None);
         let last30 = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Last 30 Days" => {
                 Some(value.as_str())
@@ -603,7 +637,7 @@ data: [DONE]
                 request_id: Some("bare".into()),
             },
         ];
-        let lines = lines_from_records(&recs, Some(4_000));
+        let lines = lines_from_records(&recs, Some(4_000), None, None);
         let since = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
                 Some(value.as_str())
@@ -643,7 +677,7 @@ data: [DONE]
                 request_id: Some("new".into()),
             },
         ];
-        let lines = lines_from_records(&recs, Some(4_000));
+        let lines = lines_from_records(&recs, Some(4_000), None, None);
         let since = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
                 Some(value.as_str())

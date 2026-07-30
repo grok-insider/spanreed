@@ -426,7 +426,11 @@ impl Provider for Copilot {
         let token = match stored_token() {
             Some(t) => t,
             None => {
-                return ProviderOutput::error(ID, NAME, "Not linked. Run `spanreed auth copilot`.")
+                return ProviderOutput::error(
+                    ID,
+                    NAME,
+                    "Not linked. Run `spanreed auth copilot`.",
+                )
             }
         };
 

@@ -22,6 +22,7 @@ const NAME: &str = "Grok";
 const BILLING_CREDITS_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const BILLING_LEGACY_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
+#[allow(dead_code)]
 const SUBS_URL: &str = "https://grok.com/rest/subscriptions";
 const REFRESH_URL: &str = "https://auth.x.ai/oauth2/token";
 const TOKEN_AUTH_HEADER: &str = "xai-grok-cli";
@@ -313,6 +314,7 @@ fn fetch_plan(token: &str) -> Option<String> {
 }
 
 /// Soft-fail fetch of paid plan billing period (renew / cancel-at-end).
+#[allow(dead_code)]
 fn fetch_subscriptions(token: &str) -> Option<serde_json::Value> {
     let resp = Request::get(SUBS_URL)
         .bearer(token)
@@ -327,6 +329,7 @@ fn fetch_subscriptions(token: &str) -> Option<serde_json::Value> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 struct PlanPeriod {
     period_end_iso: String,
     cancel_at_period_end: bool,
@@ -336,6 +339,7 @@ struct PlanPeriod {
 }
 
 /// Pick the best SuperGrok (or other paid) subscription row that has a period end.
+#[allow(dead_code)]
 fn parse_plan_period(root: &serde_json::Value) -> Option<PlanPeriod> {
     let arr = root
         .get("subscriptions")
@@ -392,6 +396,7 @@ fn parse_plan_period(root: &serde_json::Value) -> Option<PlanPeriod> {
     best.map(|(_, p)| p)
 }
 
+#[allow(dead_code)]
 fn plan_period_lines(period: &PlanPeriod) -> Vec<MetricLine> {
     let mut lines = Vec::new();
     let renew_label = if period.cancel_at_period_end {
@@ -480,22 +485,36 @@ impl Provider for Grok {
             Err(msg) => return ProviderOutput::error(ID, NAME, msg),
         };
 
-        // Paid plan renew / ends (monthly Stripe period — not weekly usage reset).
-        if let Some(subs) = fetch_subscriptions(&auth.token) {
-            if let Some(period) = parse_plan_period(&subs) {
-                lines.extend(plan_period_lines(&period));
-            }
-        }
+        // Plan renew / PAYG intentionally not shown (product surface is quotas + cost).
 
         // Accurate Last-30-Days tokens/cost from the local capture ledger only
         // (populated by `spanreed grok-proxy`). Never invents usage from sessions.
-        lines.extend(crate::grok_ledger::cost_lines(weekly_start_ms));
+        let weekly_pct = lines.iter().find_map(|l| match l {
+            MetricLine::Progress { label, used, .. } if label == "Weekly" => Some(*used),
+            _ => None,
+        });
+        let week_end_ms = lines.iter().find_map(|l| match l {
+            MetricLine::Progress {
+                label,
+                resets_at: Some(iso),
+                ..
+            } if label == "Weekly" => {
+                util::parse_iso_dt(iso).map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+            }
+            _ => None,
+        });
+        lines.extend(crate::grok_ledger::cost_lines_with_forecast(
+            weekly_start_ms,
+            weekly_pct,
+            week_end_ms,
+        ));
 
         let plan = fetch_plan(&auth.token);
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
     }
 }
 
+#[allow(dead_code)]
 fn payg_badge(on_demand_cap: f64) -> MetricLine {
     let payg = if on_demand_cap > 0.0 {
         format!("{} cap", on_demand_cap as i64)
@@ -573,7 +592,7 @@ fn parse_credits_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> 
             ));
         }
     }
-    lines.push(payg_badge(on_demand_cap));
+    let _ = on_demand_cap; // API still read for tests of payg_badge helper
     Some(lines)
 }
 
@@ -597,13 +616,12 @@ fn parse_legacy_monthly_billing(config: &serde_json::Value) -> Option<Vec<Metric
     let resets_at = config.get("billingPeriodEnd").and_then(util::to_iso)?;
 
     let used_pct = (used / limit * 100.0).clamp(0.0, 100.0);
-    let mut lines = vec![MetricLine::percent(
+    let _ = on_demand_cap;
+    Some(vec![MetricLine::percent(
         "Credits used",
         used_pct,
         Some(resets_at),
-    )];
-    lines.push(payg_badge(on_demand_cap));
-    Some(lines)
+    )])
 }
 
 fn urlencode(s: &str) -> String {
@@ -662,11 +680,8 @@ mod tests {
             l,
             MetricLine::Progress { label, .. } if label == "Build" || label == "Chat"
         )));
-        assert!(lines.iter().any(|l| matches!(
-            l,
-            MetricLine::Badge { label, text, .. }
-            if label == "Pay as you go" && text == "Disabled"
-        )));
+        // PAYG not emitted on probe surface; helper still unit-tested.
+        assert_eq!(payg_badge(0.0).kind(), crate::model::MetricKind::Plan);
         let start = period_start_ms(&config).expect("period start");
         let expected = util::parse_iso_dt("2026-07-03T22:41:23.340272+00:00")
             .map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
@@ -704,20 +719,19 @@ mod tests {
         });
         let lines = parse_legacy_monthly_billing(&config).unwrap();
         assert!(lines.iter().any(|l| matches!(l, MetricLine::Progress { label, used, .. } if label == "Credits used" && *used == 25.0)));
-        assert!(lines.iter().any(|l| matches!(l, MetricLine::Badge { label, text, .. } if label == "Pay as you go" && text == "Disabled")));
+        assert!(!lines
+            .iter()
+            .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Pay as you go")));
+        assert_eq!(payg_badge(0.0).kind(), crate::model::MetricKind::Plan);
     }
 
     #[test]
     fn payg_cap_when_enabled() {
-        let config = serde_json::json!({
-            "creditUsagePercent": 0.0,
-            "onDemandCap": { "val": 500 },
-            "billingPeriodEnd": "2026-07-10T00:00:00+00:00"
-        });
-        let lines = parse_credits_billing(&config).unwrap();
-        assert!(lines
-            .iter()
-            .any(|l| matches!(l, MetricLine::Badge { text, .. } if text == "500 cap")));
+        let line = payg_badge(500.0);
+        assert!(matches!(
+            &line,
+            MetricLine::Badge { text, .. } if text == "500 cap"
+        ));
     }
 
     #[test]

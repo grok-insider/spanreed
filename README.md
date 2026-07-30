@@ -76,16 +76,16 @@ Grok (SuperGrok Heavy)
 2. **Probe** — query each provider’s usage endpoint (refresh OAuth when needed).
 3. **Render** — plain text, Waybar JSON, raw JSON, or the local HTTP API.
 
-For Claude and Codex, spanreed can also estimate spend from **local session
-logs** (not your invoice). Details: cost/history behaviour is documented in the
-binary help and source; set `SPANREED_OFFLINE=1` to skip remote price-table
-refresh.
+For Codex (and Grok via capture ledger), spanreed can estimate spend from
+**local logs** (not your invoice). With `--cost`, when a weekly pool % is
+available, it also projects **Expected this week / month** using pool-% density
+(tokens per point of weekly usage), not only wall-clock pace. Set
+`SPANREED_OFFLINE=1` to skip remote price-table refresh.
 
 ## Providers
 
 | Id | Credential source (typical) |
 |----|-----------------------------|
-| `claude` | `~/.claude/` / `$CLAUDE_CONFIG_DIR` |
 | `codex` | `~/.codex` / `$CODEX_HOME` |
 | `grok` | `~/.grok/auth.json` (+ optional local capture) |
 | `copilot` | opt-in via `spanreed auth copilot` |
