@@ -161,26 +161,16 @@ Logic is split so it's testable without network or real credentials:
   are undocumented and reverse-engineered, so be precise.
 - Keep messages actionable and never log raw tokens.
 
-## CI / release
+## Local quality gates
 
-`.github/workflows/ci.yml` builds `x86_64-linux` and `aarch64-linux` on every
-push to `master` (and `v*` tags) and pushes every store path to the
-`grok-insider.cachix.org` binary cache, then runs `nix flake check`. Consumers that
-pin the flake input get prebuilt closures (no local compile) after bumping their
-lock. `ci.yml` also runs a `cross` job that compiles + tests on native macOS and
-Windows runners.
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+SPANREED_OFFLINE=1 cargo test
+```
 
-**Releases are automated** (`release-plz.yml` + `release.yml`). Every push to
-`master` keeps a standing **Release PR**: [release-plz](https://release-plz.dev)
-bumps the version and an LLM writes the user-facing `CHANGELOG.md`
-(`scripts/gen-changelog.sh`, model `deepseek/deepseek-v4-flash` via OpenRouter).
-Merging the Release PR creates the `vX.Y.Z` tag + GitHub Release, which triggers
-`release.yml` to build the static musl binaries and attach them (release body =
-the `CHANGELOG.md` section). Nothing publishes until that PR is merged.
-`CHANGELOG.md` is **generated** — never hand-edit it outside the Release PR. Needs
-repo secrets `RELEASE_PLZ_TOKEN` (PAT) and `OPENROUTER_API_KEY`. See
-`CONTRIBUTING.md` → "Releases". Version baseline is git tags (`git_only` in
-`release-plz.toml`); never set Cargo `publish = false` (that skips Release PRs).
+Conventional Commits (`feat:` / `fix:` / `docs:` / …). Subjects: no version
+numbers and no PR ids.
 
 ## Validation status
 
@@ -189,11 +179,7 @@ APIs. The other providers are implemented to the documented API shapes but are
 not yet confirmed against real accounts — treat field parsing as unverified
 until someone runs `spanreed probe <id>` against a live account.
 
-## Branch model (Model A)
+## Branch model
 
-- Human feature/fix/docs PRs target **`dev`**, not `master`.
-- **`master`:** released line. Protected; required checks include CI + **`only dev into master`**.
-- **`dev`:** integration branch. Land work here first.
-- **Guard:** `.github/workflows/guard-master.yml` allowlists `dev` and release-bot heads.
-- **Flow:** `feat/*` → PR into `dev` → batch via `dev`→`master` PR → release on merge to `master`.
-- Org QC: `~/dev/opensource/docs/comparison.md`.
+Local-first for now (no public remote). Prefer a single long-lived `master`
+until GitHub is recreated.

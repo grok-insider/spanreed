@@ -1,14 +1,12 @@
 # Changelog
 
-All notable, user-facing changes to spanreed are documented here. The format
-follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
-project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable, user-facing changes to spanreed are documented here.
 
 ## 0.0.1
 
-Initial public line of the spanreed multi-provider usage monitor:
+Initial public line:
 
-- Daemon + CLI + Waybar integration for paid provider quotas
-- Cross-platform process/secret seams and multi-OS release binaries
-- Grok product usage capture, plan renewal dates, copilot opt-in auth
-- Nix flake + Cachix; GitHub Releases — not crates.io
+- Daemon + CLI + status-bar JSON for subscription usage probes
+- Multi-provider detection and probing from local credentials
+- Optional local cost estimates from CLI session logs
+- Nix flake packaging
