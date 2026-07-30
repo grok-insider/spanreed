@@ -156,6 +156,7 @@ pub fn cost_lines(weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
 
 fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
     let mut total_tokens: u64 = 0;
+    let mut tokens_with_cost: u64 = 0;
     let mut total_cost = 0.0;
     let mut has_cost = false;
     // date -> (cost, tokens)
@@ -172,6 +173,7 @@ fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec
         if cost > 0.0 {
             has_cost = true;
             total_cost += cost;
+            tokens_with_cost = tokens_with_cost.saturating_add(tok);
         }
         let date = ms_to_ymd(r.ts_ms).unwrap_or_else(|| "unknown".into());
         let e = daily.entry(date).or_insert((0.0, 0));
@@ -208,9 +210,12 @@ fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec
         row.cache_read = row.cache_read.saturating_add(cached);
     }
 
+    // Official xAI ticks only; partial when some captured tokens lack cost_in_usd_ticks.
+    let partial = has_cost && tokens_with_cost < total_tokens;
     let tokens = util::fmt_tokens(total_tokens);
     let value = if has_cost && total_cost > 0.0 {
-        format!("${:.4} · {tokens} tokens", total_cost)
+        let suffix = if partial { " (partial)" } else { "" };
+        format!("${:.4} · {tokens} tokens{suffix}", total_cost)
     } else {
         format!("{tokens} tokens")
     };
@@ -219,23 +224,30 @@ fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec
     usage_stats::sort_models_by_tokens(&mut by_model);
 
     let mut lines = vec![MetricLine::text("Last 30 Days", value)];
+    if let Some(cov) = cost_coverage_line(tokens_with_cost, total_tokens, partial) {
+        lines.push(cov);
+    }
 
     if let Some(start) = weekly_start_ms {
         let mut win_tokens: u64 = 0;
+        let mut win_tokens_with_cost: u64 = 0;
         let mut win_cost = 0.0;
         let mut win_has_cost = false;
         for r in recs {
             if r.ts_ms < start {
                 continue;
             }
-            win_tokens = win_tokens.saturating_add(r.tokens_for_total());
+            let tok = r.tokens_for_total();
+            win_tokens = win_tokens.saturating_add(tok);
             if let Some(c) = r.cost_usd() {
                 win_has_cost = true;
                 win_cost += c;
+                win_tokens_with_cost = win_tokens_with_cost.saturating_add(tok);
             }
         }
         let cost = if win_has_cost { win_cost } else { 0.0 };
-        if let Some(l) = usage_stats::since_weekly_reset_line(win_tokens, cost, false) {
+        let win_partial = win_has_cost && win_tokens_with_cost < win_tokens;
+        if let Some(l) = usage_stats::since_weekly_reset_line(win_tokens, cost, win_partial) {
             lines.push(l);
         }
     }
@@ -261,6 +273,18 @@ fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec
         lines.push(MetricLine::bar_chart("Usage Trend", points, None));
     }
     lines
+}
+
+/// When `$` is incomplete, show what fraction of tokens had official ticks.
+fn cost_coverage_line(with_cost: u64, total: u64, partial: bool) -> Option<MetricLine> {
+    if !partial || total == 0 {
+        return None;
+    }
+    let pct = (with_cost as f64 / total as f64) * 100.0;
+    Some(MetricLine::text(
+        "Cost coverage",
+        format!("{pct:.0}% of tokens (official ticks)"),
+    ))
 }
 
 fn ms_to_ymd(ms: i64) -> Option<String> {
@@ -471,9 +495,33 @@ data: [DONE]
             })
             .collect();
         assert!(labels.contains(&"Last 30 Days"));
+        assert!(labels.contains(&"Cost coverage"));
         assert!(labels.contains(&"Models"));
         assert!(labels.contains(&"Cache"));
         assert!(labels.contains(&"Usage Trend"));
+
+        let last30 = lines.iter().find_map(|l| match l {
+            MetricLine::Text { label, value, .. } if label == "Last 30 Days" => {
+                Some(value.as_str())
+            }
+            _ => None,
+        });
+        let last30 = last30.expect("last 30");
+        assert!(
+            last30.contains("(partial)"),
+            "mixed ticks should be partial: {last30}"
+        );
+        assert!(last30.contains("$1.0000"), "got {last30}");
+
+        let cov = lines.iter().find_map(|l| match l {
+            MetricLine::Text { label, value, .. } if label == "Cost coverage" => {
+                Some(value.as_str())
+            }
+            _ => None,
+        });
+        let cov = cov.expect("coverage");
+        // 1100 with cost / 1350 total ≈ 81%
+        assert!(cov.contains("81% of tokens"), "unexpected coverage: {cov}");
 
         let models = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Models" => Some(value.as_str()),
@@ -494,6 +542,75 @@ data: [DONE]
             "unexpected cache line: {cache}"
         );
         assert!(!cache.contains("create"));
+    }
+
+    #[test]
+    fn full_cost_ticks_not_partial() {
+        let recs = vec![UsageRecord {
+            ts_ms: 1_700_000_000_000,
+            session_id: None,
+            model: Some("grok-4.5-build".into()),
+            input_tokens: 100,
+            output_tokens: 10,
+            cached_input_tokens: 0,
+            reasoning_tokens: 0,
+            total_tokens: 110,
+            cost_usd_ticks: 500_000_000,
+            request_id: Some("only".into()),
+        }];
+        let lines = lines_from_records(&recs, None);
+        let last30 = lines.iter().find_map(|l| match l {
+            MetricLine::Text { label, value, .. } if label == "Last 30 Days" => {
+                Some(value.as_str())
+            }
+            _ => None,
+        });
+        let last30 = last30.expect("last 30");
+        assert!(!last30.contains("partial"), "got {last30}");
+        assert!(!lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Text { label, .. } if label == "Cost coverage"
+        )));
+    }
+
+    #[test]
+    fn weekly_partial_when_window_has_unticked_tokens() {
+        let recs = vec![
+            UsageRecord {
+                ts_ms: 5_000,
+                session_id: None,
+                model: Some("a".into()),
+                input_tokens: 100,
+                output_tokens: 0,
+                cached_input_tokens: 0,
+                reasoning_tokens: 0,
+                total_tokens: 100,
+                cost_usd_ticks: 1_000_000_000,
+                request_id: Some("priced".into()),
+            },
+            UsageRecord {
+                ts_ms: 6_000,
+                session_id: None,
+                model: Some("a".into()),
+                input_tokens: 50,
+                output_tokens: 0,
+                cached_input_tokens: 0,
+                reasoning_tokens: 0,
+                total_tokens: 50,
+                cost_usd_ticks: 0,
+                request_id: Some("bare".into()),
+            },
+        ];
+        let lines = lines_from_records(&recs, Some(4_000));
+        let since = lines.iter().find_map(|l| match l {
+            MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
+                Some(value.as_str())
+            }
+            _ => None,
+        });
+        let since = since.expect("since weekly");
+        assert!(since.contains("(partial)"), "got {since}");
+        assert!(since.contains("150 tokens"), "got {since}");
     }
 
     #[test]
