@@ -46,16 +46,40 @@ With no arguments, `spanreed` runs `probe`.
 
 ### Example
 
+Snapshot from this machine (`spanreed probe`):
+
 ```
 $ spanreed probe
 Claude (Max 20x)
-  Session: 15% · resets in 4h 47m
-  Weekly: 22% · resets in 3d 1h
-  …
+  Session: 4% · resets in 4h 39m
+  Weekly: 1% · resets in 6d 22h
+  Plan renews: 2026-08-17 · in 18d 1h · est.
+  Last renew: 2026-07-17 · est.
+  Last 30 Days: ~$2017.98 · 1.9B tokens (estimated)
+  Since weekly reset: 27K tokens · ~$0.01
+  Models: claude-fable-5 1.2B · claude-opus-4-8 710M · claude-haiku-4-5 906K
+  Cache: 100% of input (read 1.8B · create 40M)
+  Usage Trend: ▁▁▁▁▁▂▂▂▁▂▂▁▁█▁▁▁▁▁▁▁▁
 
-Codex (Free)
-  Session: 5% · resets in 29d 23h
-  …
+Codex (Pro)
+  Session: 4% · resets in 5d 21h
+  Last 30 Days: ~$95669.31 · 155B tokens (partial, estimated)
+  Models: gpt-5.6-sol 148B · unknown 6.3B · gpt-5.5 163M
+  Cache: 98% of input (read 151B)
+  Usage Trend: ▁▁▁▁▁▂▄▃▁▁█▆
+
+Grok (SuperGrok Heavy)
+  Weekly: 51% · resets in 15h 34m
+  Build: 48% · resets in 15h 34m
+  Chat: 2% · resets in 15h 34m
+  Api: 1% · resets in 15h 34m
+  Pay as you go: Disabled
+  Plan renews: 2026-08-21 · in 21d 22h
+  Last renew: 2026-07-21
+  Last 30 Days: $96.3509 · 18M tokens
+  Since weekly reset: 18M tokens · ~$96.35
+  Models: grok-4.5-build 18M
+  Cache: 96% of input (read 18M)
 ```
 
 ## How it works
