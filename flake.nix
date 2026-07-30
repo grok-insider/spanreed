@@ -14,7 +14,7 @@
       "https://nix-community.cachix.org"
     ];
     extra-trusted-public-keys = [
-      "grok-insider.cachix.org-1:ZxLVOxJ1CjdY3vQl1I99qCtwNZwIU4+/QwqSvntB/5w="
+      "grok-insider.cachix.org-1:8i89e8J7hJHfIBwZivzxY9Kt9fk89ywhAqW+ml7TOB4="
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
     ];
   };
