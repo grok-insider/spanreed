@@ -98,8 +98,13 @@ pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::mo
 
     let mut lines = Vec::new();
     let tokens = util::fmt_tokens(summary.total_tokens);
+    // Local-log list-price estimate (not the subscription invoice).
     let value = if summary.total_cost > 0.0 {
-        let suffix = if summary.partial { " (partial)" } else { "" };
+        let suffix = if summary.partial {
+            " (partial, estimated)"
+        } else {
+            " (estimated)"
+        };
         format!("~${:.2} · {} tokens{}", summary.total_cost, tokens, suffix)
     } else {
         format!("{tokens} tokens")

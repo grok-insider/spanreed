@@ -192,18 +192,31 @@ fn handle_client(
 
     let mut captured = Vec::new();
     let mut buf = [0u8; 16 * 1024];
+    // If the client disconnects mid-stream (Broken pipe), keep draining upstream
+    // into `captured` so we can still parse response.completed usage.
+    let mut client_ok = true;
     {
-        write!(
+        if write!(
             client,
             "HTTP/1.1 {} {}\r\n",
             status.as_u16(),
             status.canonical_reason().unwrap_or("")
         )
-        .map_err(|e| e.to_string())?;
-        for (k, v) in &resp_headers {
-            write!(client, "{k}: {v}\r\n").map_err(|e| e.to_string())?;
+        .is_err()
+        {
+            client_ok = false;
         }
-        write!(client, "Transfer-Encoding: chunked\r\n\r\n").map_err(|e| e.to_string())?;
+        if client_ok {
+            for (k, v) in &resp_headers {
+                if write!(client, "{k}: {v}\r\n").is_err() {
+                    client_ok = false;
+                    break;
+                }
+            }
+        }
+        if client_ok && write!(client, "Transfer-Encoding: chunked\r\n\r\n").is_err() {
+            client_ok = false;
+        }
     }
 
     loop {
@@ -211,10 +224,19 @@ fn handle_client(
             Ok(0) => break,
             Ok(n) => {
                 captured.extend_from_slice(&buf[..n]);
-                write!(client, "{n:x}\r\n").map_err(|e| e.to_string())?;
-                client.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-                client.write_all(b"\r\n").map_err(|e| e.to_string())?;
-                let _ = client.flush();
+                if client_ok {
+                    let write_ok = write!(client, "{n:x}\r\n")
+                        .and_then(|_| client.write_all(&buf[..n]))
+                        .and_then(|_| client.write_all(b"\r\n"))
+                        .and_then(|_| client.flush())
+                        .is_ok();
+                    if !write_ok {
+                        client_ok = false;
+                        log::warn!(
+                            "[{label}] client disconnected mid-stream; draining upstream for usage"
+                        );
+                    }
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => {
@@ -223,26 +245,60 @@ fn handle_client(
             }
         }
     }
-    let _ = write!(client, "0\r\n\r\n");
-    let _ = client.flush();
-
-    let text = String::from_utf8_lossy(&captured);
-    if let Some(partial) = grok_ledger::usage_from_response_body(&text) {
-        let rec = partial.into_record(util::now_ms(), session_id);
-        if let Err(e) = grok_ledger::append(&rec) {
-            log::warn!("[{label}] ledger append: {e}");
-        } else {
-            log::info!(
-                "[{label}] captured #{seq}: in={} out={} total={} ticks={}",
-                rec.input_tokens,
-                rec.output_tokens,
-                rec.total_tokens,
-                rec.cost_usd_ticks
-            );
-        }
+    if client_ok {
+        let _ = write!(client, "0\r\n\r\n");
+        let _ = client.flush();
     }
 
+    record_usage_from_capture(label, seq, &captured, session_id, !client_ok);
     Ok(())
+}
+
+/// Best-effort ledger write from whatever body bytes we already read.
+fn record_usage_from_capture(
+    label: &str,
+    seq: u64,
+    captured: &[u8],
+    session_id: Option<String>,
+    client_aborted: bool,
+) {
+    let text = String::from_utf8_lossy(captured);
+    let Some(partial) = grok_ledger::usage_from_response_body(&text) else {
+        if client_aborted {
+            log::warn!(
+                "[{label}] client aborted #{seq}: no usage in {} body bytes (lost)",
+                captured.len()
+            );
+        } else if !captured.is_empty() {
+            log::debug!(
+                "[{label}] #{seq}: {} body bytes, no usage object",
+                captured.len()
+            );
+        }
+        return;
+    };
+    let rec = partial.into_record(util::now_ms(), session_id);
+    if let Err(e) = grok_ledger::append(&rec) {
+        log::warn!("[{label}] ledger append: {e}");
+        return;
+    }
+    if client_aborted {
+        log::warn!(
+            "[{label}] captured #{seq} after client abort: in={} out={} total={} ticks={}",
+            rec.input_tokens,
+            rec.output_tokens,
+            rec.total_tokens,
+            rec.cost_usd_ticks
+        );
+    } else {
+        log::info!(
+            "[{label}] captured #{seq}: in={} out={} total={} ticks={}",
+            rec.input_tokens,
+            rec.output_tokens,
+            rec.total_tokens,
+            rec.cost_usd_ticks
+        );
+    }
 }
 
 type HttpRequest = (String, String, HashMap<String, String>, Vec<u8>);

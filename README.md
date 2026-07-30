@@ -104,9 +104,11 @@ spanreed history grok      # one provider
 
 One-shot probes do not write history unless `SPANREED_HISTORY=1`.
 
-Figures are **estimates** (prefixed `~$`) and a lower bound when a model is
-missing from the price table (shown as `(partial)`). Override or extend prices
-with `~/.config/spanreed/pricing.json` (same shape as the LiteLLM data, e.g.
+Figures for Claude/Codex are **list-price estimates from local logs** (prefixed
+`~$`, tagged `(estimated)`), and a lower bound when a model is missing from the
+price table (`(partial, estimated)`). That is **not** the subscription invoice.
+Override or extend prices with `~/.config/spanreed/pricing.json` (same shape as
+the LiteLLM data, e.g.
 `{ "my-model": { "input_cost_per_token": 1e-6, "output_cost_per_token": 5e-6 } }`).
 
 Other providers surface dollar figures wherever their API returns them (Cursor
@@ -120,13 +122,19 @@ into `~/.grok/sessions/` — so spanreed never invents token totals from
 context-size telemetry (that double-counts badly).
 
 For accurate **Last 30 Days** token/cost lines, run the dual capture service
-(records official API `usage` into `~/.local/share/spanreed/grok-usage.jsonl`):
+(records official API `usage` — including `cost_in_usd_ticks` — into
+`~/.local/share/spanreed/grok-usage.jsonl`):
 
 ```sh
 spanreed capture serve
 #   127.0.0.1:18736 → cli-chat-proxy.grok.com  (Grok CLI)
 #   127.0.0.1:18737 → api.x.ai                 (OpenCode xAI)
 ```
+
+`$` on Grok is the sum of official `cost_in_usd_ticks` (credit valuation; not a
+PAYG card charge when pay-as-you-go is disabled). If some captured calls lack
+ticks, the line is marked `(partial)` and a **Cost coverage** line shows what
+fraction of tokens had official cost.
 
 Wire clients **once** (not per invocation):
 
