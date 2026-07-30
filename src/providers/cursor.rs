@@ -118,7 +118,9 @@ fn credits_line(
     if combined <= 0 {
         return None;
     }
-    Some(MetricLine::dollars(MetricKind::Quota, "Credits",
+    Some(MetricLine::dollars(
+        MetricKind::Quota,
+        "Credits",
         util::cents_to_dollars(grant_used_cents.max(0) as f64),
         util::cents_to_dollars(combined as f64),
         None,
@@ -183,7 +185,9 @@ fn parse_usage(usage: &serde_json::Value) -> Vec<MetricLine> {
         // Bonus spend (free credits from model providers), if any.
         if let Some(bonus) = pu.get("bonusSpend").and_then(|v| v.as_f64()) {
             if bonus > 0.0 {
-                lines.push(MetricLine::text(MetricKind::Cost, "Bonus spend",
+                lines.push(MetricLine::text(
+                    MetricKind::Cost,
+                    "Bonus spend",
                     format!("${:.2}", util::cents_to_dollars(bonus)),
                 ));
             }
@@ -201,7 +205,9 @@ fn parse_usage(usage: &serde_json::Value) -> Vec<MetricLine> {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
         if limit > 0.0 {
-            lines.push(MetricLine::dollars(MetricKind::Cost, "On-demand",
+            lines.push(MetricLine::dollars(
+                MetricKind::Cost,
+                "On-demand",
                 util::cents_to_dollars(used),
                 util::cents_to_dollars(limit),
                 None,

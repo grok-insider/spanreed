@@ -121,7 +121,13 @@ fn parse_display(text: &str) -> (Vec<MetricLine>, Option<String>) {
     if let (Some(remaining), Some(total)) = (remaining, total) {
         if total > 0.0 {
             let used = (total - remaining).max(0.0);
-            lines.push(MetricLine::dollars(MetricKind::Quota, "Amp Free", used, total, None));
+            lines.push(MetricLine::dollars(
+                MetricKind::Quota,
+                "Amp Free",
+                used,
+                total,
+                None,
+            ));
             plan = Some("Free".into());
         }
     }
@@ -131,7 +137,11 @@ fn parse_display(text: &str) -> (Vec<MetricLine>, Option<String>) {
     if let Some(caps) = bonus_re.captures(text) {
         let pct = caps.get(1).map(|m| m.as_str()).unwrap_or("0");
         let days = caps.get(2).map(|m| m.as_str()).unwrap_or("0");
-        lines.push(MetricLine::text(MetricKind::Plan, "Bonus", format!("+{pct}% for {days}d")));
+        lines.push(MetricLine::text(
+            MetricKind::Plan,
+            "Bonus",
+            format!("+{pct}% for {days}d"),
+        ));
     }
 
     // Individual credits: "Individual credits: $<credits> remaining"
@@ -139,7 +149,11 @@ fn parse_display(text: &str) -> (Vec<MetricLine>, Option<String>) {
         regex_lite::Regex::new(r"Individual credits: \$([0-9][0-9,]*(?:\.[0-9]+)?) remaining")
             .unwrap();
     if let Some(credits) = money(&credits_re, text, 1) {
-        lines.push(MetricLine::text(MetricKind::Plan, "Credits", format!("${credits:.2}")));
+        lines.push(MetricLine::text(
+            MetricKind::Plan,
+            "Credits",
+            format!("${credits:.2}"),
+        ));
         if plan.is_none() {
             plan = Some("Credits".into());
         }

@@ -120,7 +120,11 @@ pub fn since_weekly_reset_line(tokens: u64, cost: f64, partial: bool) -> Option<
     } else {
         format!("{tok} tokens")
     };
-    Some(MetricLine::text(MetricKind::Cost, "Since weekly reset", value))
+    Some(MetricLine::text(
+        MetricKind::Cost,
+        "Since weekly reset",
+        value,
+    ))
 }
 
 /// Per-model totals over a rolling window.
@@ -198,7 +202,11 @@ fn models_line(by_model: &[ModelCost]) -> Option<MetricLine> {
     if extra > 0 {
         parts.push(format!("(+{extra})"));
     }
-    Some(MetricLine::text(MetricKind::Models, "Models", parts.join(" · ")))
+    Some(MetricLine::text(
+        MetricKind::Models,
+        "Models",
+        parts.join(" · "),
+    ))
 }
 
 fn cache_line(cache: CacheTotals) -> Option<MetricLine> {

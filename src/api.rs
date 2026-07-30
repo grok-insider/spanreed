@@ -182,7 +182,11 @@ mod tests {
     use crate::model::{MetricKind, MetricLine};
 
     fn good(id: &str, value: &str) -> ProviderOutput {
-        ProviderOutput::new(id, id, vec![MetricLine::text(MetricKind::Quota, "Session", value)])
+        ProviderOutput::new(
+            id,
+            id,
+            vec![MetricLine::text(MetricKind::Quota, "Session", value)],
+        )
     }
 
     fn bad(id: &str) -> ProviderOutput {

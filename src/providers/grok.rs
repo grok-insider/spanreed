@@ -427,7 +427,9 @@ fn plan_period_lines(period: &PlanPeriod) -> Vec<MetricLine> {
         period.create_time_iso.clone()
     };
     if let Some(iso) = last_iso {
-        lines.push(MetricLine::text(MetricKind::Plan, "Last renew",
+        lines.push(MetricLine::text(
+            MetricKind::Plan,
+            "Last renew",
             util::format_plan_last_value(&iso, false),
         ));
     }
@@ -500,17 +502,15 @@ fn payg_badge(on_demand_cap: f64) -> MetricLine {
     } else {
         "Disabled".to_string()
     };
-    MetricLine::Badge {
-        kind: MetricKind::Plan,
-        label: "Pay as you go".into(),
-        text: payg,
-        color: Some(if on_demand_cap > 0.0 {
+    let mut line = MetricLine::badge(MetricKind::Plan, "Pay as you go", payg);
+    if let MetricLine::Badge { color, .. } = &mut line {
+        *color = Some(if on_demand_cap > 0.0 {
             "#22c55e".into()
         } else {
             "#a3a3a3".into()
-        }),
-        subtitle: None,
+        });
     }
+    line
 }
 
 fn period_end_iso(config: &serde_json::Value) -> Option<String> {

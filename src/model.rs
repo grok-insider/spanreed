@@ -258,10 +258,7 @@ mod tests {
     #[test]
     fn percent_clamps_to_0_100() {
         if let MetricLine::Progress {
-            used,
-            limit,
-            kind,
-            ..
+            used, limit, kind, ..
         } = MetricLine::percent("S", 142.0, None)
         {
             assert_eq!(used, 100.0);
