@@ -5,7 +5,7 @@
 //! plan limits (5h $12, weekly $30, monthly $60).
 
 use crate::creds;
-use crate::model::{MetricLine, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -99,6 +99,7 @@ impl Provider for OpenCodeGo {
                         ID,
                         NAME,
                         vec![MetricLine::Badge {
+                            kind: MetricKind::Other,
                             label: "Status".into(),
                             text: "No usage data".into(),
                             color: Some("#a3a3a3".into()),
@@ -115,8 +116,7 @@ impl Provider for OpenCodeGo {
 
         // 5h rolling
         let used_5h = sum_in_window(&rows, now - WINDOW_5H_MS, now);
-        lines.push(MetricLine::dollars(
-            "5h",
+        lines.push(MetricLine::dollars(MetricKind::Quota, "5h",
             used_5h.min(LIMIT_5H),
             LIMIT_5H,
             util::ms_to_iso(now + WINDOW_5H_MS),
@@ -125,8 +125,7 @@ impl Provider for OpenCodeGo {
         // Weekly (UTC Mon..Mon)
         let week_start = utc_week_start_ms(now);
         let used_week = sum_in_window(&rows, week_start, week_start + WEEK_MS);
-        lines.push(MetricLine::dollars(
-            "Weekly",
+        lines.push(MetricLine::dollars(MetricKind::Quota, "Weekly",
             used_week.min(LIMIT_WEEKLY),
             LIMIT_WEEKLY,
             util::ms_to_iso(week_start + WEEK_MS),
@@ -136,8 +135,7 @@ impl Provider for OpenCodeGo {
         let earliest = rows.iter().map(|(ts, _)| *ts).min().unwrap_or(now);
         let (m_start, m_end) = monthly_window(now, earliest);
         let used_month = sum_in_window(&rows, m_start, m_end);
-        lines.push(MetricLine::dollars(
-            "Monthly",
+        lines.push(MetricLine::dollars(MetricKind::Quota, "Monthly",
             used_month.min(LIMIT_MONTHLY),
             LIMIT_MONTHLY,
             util::ms_to_iso(m_end),

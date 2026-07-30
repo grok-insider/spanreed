@@ -13,7 +13,7 @@
 
 use crate::creds;
 use crate::http::Request;
-use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -118,8 +118,7 @@ fn credits_line(
     if combined <= 0 {
         return None;
     }
-    Some(MetricLine::dollars(
-        "Credits",
+    Some(MetricLine::dollars(MetricKind::Quota, "Credits",
         util::cents_to_dollars(grant_used_cents.max(0) as f64),
         util::cents_to_dollars(combined as f64),
         None,
@@ -138,6 +137,7 @@ fn requests_line(rest: &serde_json::Value) -> Option<MetricLine> {
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
     Some(MetricLine::Progress {
+        kind: MetricKind::Quota,
         label: "Requests".into(),
         used,
         limit,
@@ -183,8 +183,7 @@ fn parse_usage(usage: &serde_json::Value) -> Vec<MetricLine> {
         // Bonus spend (free credits from model providers), if any.
         if let Some(bonus) = pu.get("bonusSpend").and_then(|v| v.as_f64()) {
             if bonus > 0.0 {
-                lines.push(MetricLine::text(
-                    "Bonus spend",
+                lines.push(MetricLine::text(MetricKind::Cost, "Bonus spend",
                     format!("${:.2}", util::cents_to_dollars(bonus)),
                 ));
             }
@@ -202,8 +201,7 @@ fn parse_usage(usage: &serde_json::Value) -> Vec<MetricLine> {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
         if limit > 0.0 {
-            lines.push(MetricLine::dollars(
-                "On-demand",
+            lines.push(MetricLine::dollars(MetricKind::Cost, "On-demand",
                 util::cents_to_dollars(used),
                 util::cents_to_dollars(limit),
                 None,
@@ -305,7 +303,7 @@ impl Provider for Cursor {
         .or_else(|| auth.membership.as_deref().map(util::plan_label));
 
         if let Some(p) = &plan {
-            lines.insert(0, MetricLine::text("Plan", p.clone()));
+            lines.insert(0, MetricLine::text(MetricKind::Plan, "Plan", p.clone()));
         }
 
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)

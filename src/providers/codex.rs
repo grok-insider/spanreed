@@ -10,7 +10,7 @@
 
 use crate::creds;
 use crate::http::Request;
-use crate::model::{MetricLine, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProviderOutput};
 use crate::providers::Provider;
 use crate::secret;
 use crate::util;
@@ -236,6 +236,7 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
         {
             if let Some(balance) = credits.get("balance").and_then(|v| v.as_f64()) {
                 lines.push(MetricLine::Text {
+                    kind: MetricKind::Plan,
                     label: "Credits".into(),
                     value: format!("${balance:.2}"),
                     color: None,

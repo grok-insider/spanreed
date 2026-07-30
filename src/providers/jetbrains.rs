@@ -6,7 +6,7 @@
 //! Picks the IDE directory with the latest quota window.
 
 use crate::creds;
-use crate::model::{MetricLine, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -148,9 +148,8 @@ impl Provider for JetBrains {
 
         let lines = vec![
             MetricLine::percent("Quota", used_pct, quota.until.clone()),
-            MetricLine::text("Used", format!("{used_credits:.1}")),
-            MetricLine::text(
-                "Remaining",
+            MetricLine::text(MetricKind::Quota, "Used", format!("{used_credits:.1}")),
+            MetricLine::text(MetricKind::Quota, "Remaining",
                 format!("{:.1}", (max_credits - used_credits).max(0.0)),
             ),
         ];

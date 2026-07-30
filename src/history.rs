@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::creds;
-use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::util;
 
 /// Max age of samples retained when rotating (days).
@@ -290,7 +290,7 @@ mod tests {
             vec![
                 MetricLine::percent("Session", 10.0, Some("2026-08-01T00:00:00Z".into())),
                 MetricLine::percent("Weekly", 80.0, Some("2026-08-05T22:00:00Z".into())),
-                MetricLine::text("Last 30 Days", "1B tokens"),
+                MetricLine::text(MetricKind::Cost, "Last 30 Days", "1B tokens"),
             ],
         )
         .with_plan(Some("Pro".into()));

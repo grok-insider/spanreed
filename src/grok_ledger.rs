@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::creds;
-use crate::model::{BarChartPoint, MetricLine};
+use crate::model::{MetricKind, BarChartPoint, MetricLine};
 use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
 
@@ -146,8 +146,7 @@ pub fn cost_lines(weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
     let now = util::now_ms();
     let recs = read_window(now);
     if recs.is_empty() {
-        return vec![MetricLine::text(
-            "Last 30 Days",
+        return vec![MetricLine::text(MetricKind::Cost, "Last 30 Days",
             "no capture yet — enable `spanreed capture serve` (or HM capture.enable)",
         )];
     }
@@ -223,7 +222,7 @@ fn lines_from_records(recs: &[UsageRecord], weekly_start_ms: Option<i64>) -> Vec
     let mut by_model: Vec<ModelCost> = by_model.into_values().collect();
     usage_stats::sort_models_by_tokens(&mut by_model);
 
-    let mut lines = vec![MetricLine::text("Last 30 Days", value)];
+    let mut lines = vec![MetricLine::text(MetricKind::Cost, "Last 30 Days", value)];
     if let Some(cov) = cost_coverage_line(tokens_with_cost, total_tokens, partial) {
         lines.push(cov);
     }
@@ -281,8 +280,7 @@ fn cost_coverage_line(with_cost: u64, total: u64, partial: bool) -> Option<Metri
         return None;
     }
     let pct = (with_cost as f64 / total as f64) * 100.0;
-    Some(MetricLine::text(
-        "Cost coverage",
+    Some(MetricLine::text(MetricKind::Cost, "Cost coverage",
         format!("{pct:.0}% of tokens (official ticks)"),
     ))
 }

@@ -6,7 +6,7 @@
 
 use crate::creds;
 use crate::http::Request;
-use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::providers::Provider;
 use crate::util;
 
@@ -55,6 +55,7 @@ fn parse_limits(data: &serde_json::Value) -> Vec<MetricLine> {
                     .unwrap_or(0.0);
                 if usage > 0.0 {
                     lines.push(MetricLine::Progress {
+                        kind: MetricKind::Quota,
                         label: "Web Searches".into(),
                         used: current,
                         limit: usage,
