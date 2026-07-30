@@ -1,6 +1,8 @@
 //! Render provider outputs in the formats the CLI exposes.
 
-use crate::model::{BarChartPoint, MetricKind, MetricLine, ProgressFormat, ProviderOutput};
+use crate::model::{
+    BarChartPoint, MetricKind, MetricLine, ProbeView, ProgressFormat, ProviderOutput,
+};
 
 const SPARK: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
@@ -118,8 +120,13 @@ fn provider_bar_pct(out: &ProviderOutput) -> Option<f64> {
     }
 }
 
-/// Plain multi-line human output for the terminal.
+/// Plain multi-line human output for the terminal (all lines).
 pub fn plain(outputs: &[ProviderOutput]) -> String {
+    plain_with_view(outputs, ProbeView { all: true, ..ProbeView::default() })
+}
+
+/// Plain output filtered by [`ProbeView`] (default probe = quotas only).
+pub fn plain_with_view(outputs: &[ProviderOutput], view: ProbeView) -> String {
     let mut s = String::new();
     for out in outputs {
         let plan = out
@@ -129,6 +136,9 @@ pub fn plain(outputs: &[ProviderOutput]) -> String {
             .unwrap_or_default();
         s.push_str(&format!("{}{}\n", out.display_name, plan));
         for line in &out.lines {
+            if !view.show(line.kind()) {
+                continue;
+            }
             match line {
                 MetricLine::Text { label, value, .. } => {
                     s.push_str(&format!("  {label}: {value}\n"));
@@ -609,6 +619,56 @@ mod tests {
         assert!(reset_suffix(&Some(future)).contains("resets in"));
         assert_eq!(reset_suffix(&Some("2000-01-01T00:00:00Z".into())), "");
         assert_eq!(reset_suffix(&None), "");
+    }
+
+    #[test]
+    fn plain_default_view_hides_non_quota_blocks() {
+        let outputs = vec![ProviderOutput::new(
+            "grok",
+            "Grok",
+            vec![
+                MetricLine::percent("Weekly", 51.0, None),
+                MetricLine::badge(MetricKind::Plan, "Pay as you go", "Disabled"),
+                MetricLine::text(MetricKind::Plan, "Plan renews", "2026-08-21"),
+                MetricLine::text(MetricKind::Cost, "Last 30 Days", "$10"),
+                MetricLine::text(MetricKind::Models, "Models", "grok-4"),
+                MetricLine::text(MetricKind::Cache, "Cache", "96%"),
+                MetricLine::bar_chart(
+                    "Usage Trend",
+                    vec![BarChartPoint {
+                        label: "d".into(),
+                        value: 1.0,
+                        value_label: None,
+                    }],
+                    None,
+                ),
+            ],
+        )];
+        let s = plain_with_view(&outputs, ProbeView::default());
+        assert!(s.contains("Weekly: 51%"));
+        assert!(!s.contains("Pay as you go"));
+        assert!(!s.contains("Plan renews"));
+        assert!(!s.contains("Last 30 Days"));
+        assert!(!s.contains("Models:"));
+        assert!(!s.contains("Cache:"));
+        assert!(!s.contains("Usage Trend"));
+
+        let with_plan = plain_with_view(
+            &outputs,
+            ProbeView {
+                plan: true,
+                ..ProbeView::default()
+            },
+        );
+        assert!(with_plan.contains("Pay as you go: Disabled"));
+        assert!(with_plan.contains("Plan renews"));
+        assert!(!with_plan.contains("Last 30 Days"));
+
+        let all = plain_with_view(&outputs, ProbeView { all: true, ..ProbeView::default() });
+        assert!(all.contains("Pay as you go"));
+        assert!(all.contains("Last 30 Days"));
+        assert!(all.contains("Models:"));
+        assert!(all.contains("Usage Trend"));
     }
 
     #[test]

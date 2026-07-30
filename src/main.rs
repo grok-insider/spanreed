@@ -2,7 +2,7 @@
 //!
 //! Subcommands:
 //!   spanreed list                 List known providers and detection state.
-//!   spanreed probe [id] [--force] Probe all detected providers (or one).
+//!   spanreed probe [id] [flags]   Probe providers (default: quotas only).
 //!   spanreed waybar               Emit Waybar custom-module JSON (one shot).
 //!   spanreed json                 Emit raw JSON of all detected providers.
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
@@ -90,6 +90,9 @@ fn print_help() {
          USAGE:\n\
          \tspanreed list                 Show providers and whether they're detected\n\
          \tspanreed probe [id] [--force] Probe detected providers, or a single id\n\
+         \t  (default: rate-limit quotas only)\n\
+         \t  --cost --models --cache --trend --plan   Add detail blocks\n\
+         \t  --all                                    Full verbose output\n\
          \tspanreed waybar               Waybar custom-module JSON (one shot)\n\
          \tspanreed json                 Raw JSON of detected provider outputs\n\
          \tspanreed serve [--interval S] Local HTTP API on 127.0.0.1:6736\n\
@@ -155,9 +158,24 @@ fn cmd_list() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn parse_probe_view(args: &[String]) -> model::ProbeView {
+    let all = args.iter().any(|a| a == "--all");
+    model::ProbeView {
+        cost: all || args.iter().any(|a| a == "--cost"),
+        models: all || args.iter().any(|a| a == "--models"),
+        cache: all || args.iter().any(|a| a == "--cache"),
+        trend: all || args.iter().any(|a| a == "--trend"),
+        plan: all || args.iter().any(|a| a == "--plan"),
+        all,
+    }
+}
+
 fn cmd_probe(args: &[String]) -> ExitCode {
     let force = args.iter().any(|a| a == "--force");
-    let id = args.iter().find(|a| !a.starts_with("--"));
+    let view = parse_probe_view(args);
+    let id = args.iter().find(|a| {
+        !a.starts_with("--")
+    });
 
     let outputs = match id {
         Some(id) => match probe::probe_one(id) {
@@ -185,7 +203,7 @@ fn cmd_probe(args: &[String]) -> ExitCode {
         history::record(&outputs);
     }
 
-    println!("{}", output::plain(&outputs));
+    println!("{}", output::plain_with_view(&outputs, view));
     let any_err = outputs.iter().any(model::ProviderOutput::has_error);
     if any_err {
         ExitCode::FAILURE
