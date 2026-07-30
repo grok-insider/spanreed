@@ -173,9 +173,7 @@ fn parse_probe_view(args: &[String]) -> model::ProbeView {
 fn cmd_probe(args: &[String]) -> ExitCode {
     let force = args.iter().any(|a| a == "--force");
     let view = parse_probe_view(args);
-    let id = args.iter().find(|a| {
-        !a.starts_with("--")
-    });
+    let id = args.iter().find(|a| !a.starts_with("--"));
 
     let outputs = match id {
         Some(id) => match probe::probe_one(id) {
@@ -203,7 +201,12 @@ fn cmd_probe(args: &[String]) -> ExitCode {
         history::record(&outputs);
     }
 
-    println!("{}", output::plain_with_view(&outputs, view));
+    let text = if view.all {
+        output::plain(&outputs)
+    } else {
+        output::plain_with_view(&outputs, view)
+    };
+    println!("{text}");
     let any_err = outputs.iter().any(model::ProviderOutput::has_error);
     if any_err {
         ExitCode::FAILURE

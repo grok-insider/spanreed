@@ -168,7 +168,9 @@ fn parse_status(plan_status: &serde_json::Value) -> Vec<MetricLine> {
         .and_then(|v| v.as_f64())
     {
         if micros > 0.0 {
-            lines.push(MetricLine::text(MetricKind::Cost, "Extra usage",
+            lines.push(MetricLine::text(
+                MetricKind::Cost,
+                "Extra usage",
                 format!("${:.2}", micros / 1_000_000.0),
             ));
         }

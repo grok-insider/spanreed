@@ -1,8 +1,6 @@
 //! Render provider outputs in the formats the CLI exposes.
 
-use crate::model::{
-    BarChartPoint, MetricKind, MetricLine, ProbeView, ProgressFormat, ProviderOutput,
-};
+use crate::model::{BarChartPoint, MetricLine, ProbeView, ProgressFormat, ProviderOutput};
 
 const SPARK: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
@@ -122,7 +120,13 @@ fn provider_bar_pct(out: &ProviderOutput) -> Option<f64> {
 
 /// Plain multi-line human output for the terminal (all lines).
 pub fn plain(outputs: &[ProviderOutput]) -> String {
-    plain_with_view(outputs, ProbeView { all: true, ..ProbeView::default() })
+    plain_with_view(
+        outputs,
+        ProbeView {
+            all: true,
+            ..ProbeView::default()
+        },
+    )
 }
 
 /// Plain output filtered by [`ProbeView`] (default probe = quotas only).
@@ -623,6 +627,7 @@ mod tests {
 
     #[test]
     fn plain_default_view_hides_non_quota_blocks() {
+        use crate::model::MetricKind;
         let outputs = vec![ProviderOutput::new(
             "grok",
             "Grok",
@@ -664,7 +669,14 @@ mod tests {
         assert!(with_plan.contains("Plan renews"));
         assert!(!with_plan.contains("Last 30 Days"));
 
-        let all = plain_with_view(&outputs, ProbeView { all: true, ..ProbeView::default() });
+        let all = plain_with_view(
+            &outputs,
+            ProbeView {
+                all: true,
+                ..ProbeView::default()
+            },
+        );
+        assert_eq!(all, plain(&outputs));
         assert!(all.contains("Pay as you go"));
         assert!(all.contains("Last 30 Days"));
         assert!(all.contains("Models:"));
@@ -677,7 +689,11 @@ mod tests {
             "claude",
             "Claude",
             vec![
-                MetricLine::text(MetricKind::Cost, "Last 30 Days", "~$5.00 · 1M tokens"),
+                MetricLine::text(
+                    crate::model::MetricKind::Cost,
+                    "Last 30 Days",
+                    "~$5.00 · 1M tokens",
+                ),
                 MetricLine::bar_chart(
                     "Usage Trend",
                     vec![

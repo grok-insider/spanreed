@@ -149,7 +149,9 @@ impl Provider for JetBrains {
         let lines = vec![
             MetricLine::percent("Quota", used_pct, quota.until.clone()),
             MetricLine::text(MetricKind::Quota, "Used", format!("{used_credits:.1}")),
-            MetricLine::text(MetricKind::Quota, "Remaining",
+            MetricLine::text(
+                MetricKind::Quota,
+                "Remaining",
                 format!("{:.1}", (max_credits - used_credits).max(0.0)),
             ),
         ];
