@@ -51,7 +51,6 @@ fn list_shows_all_providers() {
     let (stdout, status) = run(&["list"]);
     assert!(status.success(), "list should exit 0");
     for id in [
-        "claude",
         "codex",
         "cursor",
         "grok",

@@ -16,6 +16,7 @@ mod activity;
 mod api;
 mod cost;
 mod creds;
+mod forecast;
 mod grok_ledger;
 mod grok_proxy;
 mod history;
@@ -108,7 +109,7 @@ fn print_help() {
          \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
          \t                               (writes to stdout, or to [out]; used to\n\
          \t                               refresh the embedded src/pricing-data.json)\n\n\
-         PROVIDERS: claude, codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
+         PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
          \t           synthetic, kimi, copilot, factory, devin,\n\
          \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
          \t           (copilot requires `spanreed auth copilot`)"
@@ -193,7 +194,9 @@ fn cmd_probe(args: &[String]) -> ExitCode {
     };
 
     if outputs.is_empty() {
-        println!("No providers detected. Try `spanreed list` or `spanreed probe <id> --force`.");
+        println!(
+            "No providers detected. Try `spanreed list` or `spanreed probe <id> --force`."
+        );
         return ExitCode::SUCCESS;
     }
 

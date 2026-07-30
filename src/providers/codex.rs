@@ -346,10 +346,46 @@ impl Provider for Codex {
         }
         let now_sec = util::now_ms() / 1000;
         let weekly_start = weekly_epoch_start_ms(&data, now_sec);
-        lines.extend(crate::cost::cost_lines(
-            crate::cost::Source::Codex,
-            weekly_start,
-        ));
+        // Local cost estimate; Models/Cache breakdowns are noisy for Codex and hidden.
+        let mut cost: Vec<_> = crate::cost::cost_lines(crate::cost::Source::Codex, weekly_start)
+            .into_iter()
+            .filter(|l| {
+                !matches!(
+                    l.kind(),
+                    crate::model::MetricKind::Models | crate::model::MetricKind::Cache
+                )
+            })
+            .collect();
+        // Pool-% forecast when Weekly progress is present.
+        if let Some(weekly) = lines.iter().find_map(|l| match l {
+            MetricLine::Progress {
+                label,
+                used,
+                resets_at,
+                ..
+            } if label == "Weekly" => Some((*used, resets_at.clone())),
+            _ => None,
+        }) {
+            let (pct, resets) = weekly;
+            let week_end = resets.as_ref().and_then(|iso| {
+                util::parse_iso_dt(iso).map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+            });
+            // Tokens/cost so far this week from cost engine since epoch.
+            let (tok, c) = if let Some(start) = weekly_start {
+                crate::cost::estimate_since(crate::cost::Source::Codex, start)
+                    .map(|s| (s.total_tokens, s.total_cost))
+                    .unwrap_or((0, 0.0))
+            } else {
+                (0, 0.0)
+            };
+            let week_id = weekly_start
+                .map(|ms| ms.to_string())
+                .unwrap_or_else(|| "codex-week".into());
+            cost.extend(crate::forecast::forecast_lines(
+                "codex", &week_id, pct, tok, c, week_end,
+            ));
+        }
+        lines.extend(cost);
         ProviderOutput::new(ID, NAME, lines).with_plan(plan)
     }
 }

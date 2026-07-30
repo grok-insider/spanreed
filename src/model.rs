@@ -114,6 +114,7 @@ impl MetricLine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn badge(kind: MetricKind, label: impl Into<String>, text: impl Into<String>) -> Self {
         MetricLine::Badge {
             kind,
