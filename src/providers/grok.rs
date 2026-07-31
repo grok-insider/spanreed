@@ -6,10 +6,13 @@
 //! usable entry, refresh proactively (or on 401), then query billing with the
 //! special `X-XAI-Token-Auth: xai-grok-cli` header.
 //!
-//! Prefer `GET .../v1/billing?format=credits` for the shared **weekly** SuperGrok
-//! pool (`creditUsagePercent` + `currentPeriod`). Some accounts currently get a
-//! credits payload with period / PAYG metadata but no usage percent; in that
-//! case fall back to bare `GET .../v1/billing` (monthly `used` / `monthlyLimit`).
+//! Prefer `GET .../v1/billing?format=credits` for the shared SuperGrok pool
+//! (`currentPeriod` + optional `creditUsagePercent`), matching Grok Build
+//! `/usage`. When the credits payload has a weekly period but omits
+//! `creditUsagePercent` (seen on SuperGrok Heavy), treat usage as **0%** and
+//! keep the weekly reset — do **not** replace it with bare monthly billing.
+//! Fall back to bare `GET .../v1/billing` only when the credits config cannot
+//! yield any quota line at all.
 
 use crate::creds;
 use crate::http::Request;
@@ -459,8 +462,8 @@ impl Provider for Grok {
             Err(msg) => return ProviderOutput::error(ID, NAME, msg),
         };
 
-        // Prefer weekly credits pool; fall back to bare monthly allotment when
-        // the credits payload omits usage fields (seen on SuperGrok Heavy).
+        // Prefer credits pool (CLI `/usage` path). Bare monthly is last resort
+        // only when credits config cannot produce a quota line at all.
         let (mut lines, weekly_start_ms) = match load_billing_config(&mut auth, BILLING_CREDITS_URL)
         {
             Ok(config) => {
@@ -560,20 +563,45 @@ fn period_start_ms(config: &serde_json::Value) -> Option<i64> {
         .map(|w| w.window_start_ms)
 }
 
-/// Unified weekly SuperGrok pool (`?format=credits`).
+/// Credits config from `?format=credits` (Grok Build `/usage` source).
+///
+/// Mirrors CLI `credit_balance_from_config`: prefer `creditUsagePercent`, else
+/// same-payload `used`/`monthlyLimit`, else **0%** when a period is present.
+/// Missing percent on a weekly period is still a weekly line (not a failure).
 fn parse_credits_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> {
-    let used_pct = config
-        .get("creditUsagePercent")?
-        .as_f64()?
-        .clamp(0.0, 100.0);
-    let resets_at = period_end_iso(config)?;
-    let on_demand_cap = units(config.get("onDemandCap")).unwrap_or(0.0);
+    let limit = units(config.get("monthlyLimit")).unwrap_or(0.0);
+    let used_units = units(config.get("used")).unwrap_or(0.0);
+    let has_credit_pct = config
+        .get("creditUsagePercent")
+        .and_then(|v| v.as_f64())
+        .is_some();
+    let used_pct = match config.get("creditUsagePercent").and_then(|v| v.as_f64()) {
+        Some(pct) => pct.clamp(0.0, 100.0),
+        None if limit > 0.0 => (used_units / limit * 100.0).clamp(0.0, 100.0),
+        None => 0.0,
+    };
 
-    let mut lines = vec![MetricLine::percent(
-        "Weekly",
-        used_pct,
-        Some(resets_at.clone()),
-    )];
+    let period_type = config
+        .get("currentPeriod")
+        .and_then(|p| p.get("type"))
+        .and_then(|v| v.as_str());
+    let resets_at = period_end_iso(config);
+
+    // Empty / junk payload: no percent field, no period end, no usable limit.
+    if !has_credit_pct && resets_at.is_none() && limit <= 0.0 {
+        return None;
+    }
+
+    let label = match period_type {
+        Some(t) if t.contains("WEEKLY") => "Weekly",
+        Some(t) if t.contains("MONTHLY") => "Monthly",
+        Some(_) => "Usage",
+        None if has_credit_pct => "Usage",
+        None if limit > 0.0 => "Credits used",
+        None => "Usage",
+    };
+
+    let mut lines = vec![MetricLine::percent(label, used_pct, resets_at.clone())];
     // Product breakdown of the shared weekly pool (official fields only).
     if let Some(arr) = config.get("productUsage").and_then(|v| v.as_array()) {
         for item in arr {
@@ -584,15 +612,15 @@ fn parse_credits_billing(config: &serde_json::Value) -> Option<Vec<MetricLine>> 
                 .get("product")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Product");
-            let label = product_label(raw);
+            let product = product_label(raw);
             lines.push(MetricLine::percent(
-                label,
+                product,
                 pct.clamp(0.0, 100.0),
-                Some(resets_at.clone()),
+                resets_at.clone(),
             ));
         }
     }
-    let _ = on_demand_cap; // API still read for tests of payg_badge helper
+    let _ = units(config.get("onDemandCap")).unwrap_or(0.0);
     Some(lines)
 }
 
@@ -742,26 +770,69 @@ mod tests {
         assert!(parse_credits_billing(&serde_json::json!({ "used": { "val": 1 } })).is_none());
     }
 
-    /// Live `?format=credits` for some SuperGrok accounts: period + PAYG only,
-    /// no `creditUsagePercent` / `productUsage`. Must not parse as weekly.
+    /// Live SuperGrok Heavy `?format=credits`: weekly period + PAYG only, no
+    /// `creditUsagePercent`. CLI shows Weekly 0% + period end — not bare monthly.
     #[test]
-    fn credits_without_usage_percent_is_not_weekly() {
+    fn weekly_period_without_usage_percent_is_zero_percent() {
         let config = serde_json::json!({
             "currentPeriod": {
                 "type": "USAGE_PERIOD_TYPE_WEEKLY",
-                "start": "2026-07-10T22:41:23.340272+00:00",
-                "end": "2026-07-17T22:41:23.340272+00:00"
+                "start": "2026-07-31T05:45:17.624911+00:00",
+                "end": "2026-08-07T05:45:17.624911+00:00"
             },
             "onDemandCap": { "val": 0 },
             "onDemandUsed": { "val": 0 },
             "isUnifiedBillingUser": true,
             "prepaidBalance": { "val": 0 },
             "topUpMethod": "TOP_UP_METHOD_SAVED_PAYMENT_METHOD",
-            "billingPeriodStart": "2026-07-10T22:41:23.340272+00:00",
-            "billingPeriodEnd": "2026-07-17T22:41:23.340272+00:00"
+            "billingPeriodStart": "2026-07-31T05:45:17.624911+00:00",
+            "billingPeriodEnd": "2026-08-07T05:45:17.624911+00:00"
         });
-        assert!(parse_credits_billing(&config).is_none());
+        let lines = parse_credits_billing(&config).expect("weekly credits without percent");
+        assert!(
+            lines.iter().any(|l| matches!(
+                l,
+                MetricLine::Progress { label, used, resets_at, .. }
+                if label == "Weekly"
+                    && *used == 0.0
+                    && resets_at.as_deref() == Some("2026-08-07T05:45:17.624911+00:00")
+            )),
+            "expected Weekly 0% with currentPeriod.end, got {lines:?}"
+        );
+        // Must not invent a monthly "Credits used" primary from this payload.
+        assert!(!lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Progress { label, .. } if label == "Credits used"
+        )));
+        // Same shape has no legacy monthly fields — bare monthly parse fails.
         assert!(parse_legacy_monthly_billing(&config).is_none());
+        let start = period_start_ms(&config).expect("weekly window start");
+        let expected = util::parse_iso_dt("2026-07-31T05:45:17.624911+00:00")
+            .map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+            .unwrap();
+        assert_eq!(start, expected);
+    }
+
+    /// Same-payload `used`/`monthlyLimit` (no `creditUsagePercent`) — CLI uses ratio.
+    #[test]
+    fn credits_same_payload_used_limit_when_percent_absent() {
+        let config = serde_json::json!({
+            "currentPeriod": {
+                "type": "USAGE_PERIOD_TYPE_MONTHLY",
+                "end": "2026-08-01T00:00:00+00:00"
+            },
+            "monthlyLimit": { "val": 100 },
+            "used": { "val": 25 },
+            "onDemandCap": { "val": 0 }
+        });
+        let lines = parse_credits_billing(&config).unwrap();
+        assert!(lines.iter().any(|l| matches!(
+            l,
+            MetricLine::Progress { label, used, resets_at, .. }
+            if label == "Monthly"
+                && (*used - 25.0).abs() < f64::EPSILON
+                && resets_at.as_deref() == Some("2026-08-01T00:00:00+00:00")
+        )));
     }
 
     #[test]
