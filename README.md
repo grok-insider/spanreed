@@ -77,10 +77,12 @@ Grok (SuperGrok Heavy)
 3. **Render** — plain text, Waybar JSON, raw JSON, or the local HTTP API.
 
 For Codex (and Grok via capture ledger), spanreed can estimate spend from
-**local logs** (not your invoice). With `--cost`, when a weekly pool % is
-available, it also projects **Expected this week / month** using pool-% density
-(tokens per point of weekly usage), not only wall-clock pace. Set
-`SPANREED_OFFLINE=1` to skip remote price-table refresh.
+**local logs** (not your invoice). Grok dollars use **public API list prices**
+(e.g. grok-4.5: $2 / $0.30 cached / $6 per MTok, with xAI’s ≥200k long-context
+tier) — not SuperGrok subscription-internal `cost_in_usd_ticks`. With `--cost`,
+when a weekly pool % is available, it also projects **Expected this week /
+month** using pool-% density (tokens per point of weekly usage), not only
+wall-clock pace. Set `SPANREED_OFFLINE=1` to skip remote price-table refresh.
 
 ## Providers
 

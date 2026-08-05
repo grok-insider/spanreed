@@ -56,8 +56,13 @@ pub fn density_from_band(a: &PctSample, b: &PctSample) -> Option<(f64, f64)> {
     if b.tokens < a.tokens {
         return None;
     }
+    // Cost fell while tokens rose → pricing basis changed (e.g. ticks → API
+    // list). Drop the band so we fall back to oneshot rather than $0/pct.
+    if b.cost_usd + f64::EPSILON < a.cost_usd {
+        return None;
+    }
     let d_tok = (b.tokens - a.tokens) as f64;
-    let d_cost = (b.cost_usd - a.cost_usd).max(0.0);
+    let d_cost = b.cost_usd - a.cost_usd;
     Some((d_tok / d_pct, d_cost / d_pct))
 }
 
@@ -412,6 +417,14 @@ mod tests {
         let (tp, cp) = density_from_band(&a, &c).unwrap();
         assert!((tp - 1_600_000.0).abs() < 1.0); // 8M / 5
         assert!((cp - 10.0).abs() < 0.01); // 50 / 5
+    }
+
+    #[test]
+    fn density_rejects_cost_drop_with_rising_tokens() {
+        // Mid-week switch from subscription ticks (~$3000) to API list (~$300).
+        let a = sample(20.0, 400_000_000, 3000.0);
+        let b = sample(25.0, 480_000_000, 300.0);
+        assert!(density_from_band(&a, &b).is_none());
     }
 
     #[test]

@@ -3,6 +3,12 @@
 //! Records are written by [`crate::grok_proxy`] when it observes a completed
 //! Responses API call with a `usage` object. Probe reads this file for
 //! accurate Last-30-Days totals — never invents tokens from session context.
+//!
+//! Dollar estimates use **public API list prices** from [`crate::pricing`]
+//! (Grok 4.5: $2 / $0.30 cached / $6 per MTok, with xAI's all-or-nothing
+//! ≥200k long-context tier). Subscription-internal `cost_in_usd_ticks` are
+//! still captured for reference but are not what we display — SuperGrok
+//! pool ticks are not public API rates.
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
@@ -12,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::creds;
 use crate::model::{BarChartPoint, MetricKind, MetricLine};
+use crate::pricing;
 use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
 
@@ -54,12 +61,42 @@ impl UsageRecord {
         }
     }
 
-    pub fn cost_usd(&self) -> Option<f64> {
+    /// Subscription-internal ticks from the API (not public list price).
+    #[allow(dead_code)]
+    pub fn ticks_usd(&self) -> Option<f64> {
         if self.cost_usd_ticks > 0 {
             Some(self.cost_usd_ticks as f64 / TICKS_PER_USD)
         } else {
             None
         }
+    }
+
+    /// Public API list-price USD for this record, or None if the model is unknown.
+    ///
+    /// xAI long-context rule ([docs](https://docs.x.ai/developers/pricing)):
+    /// when prompt tokens ≥ 200k, **all** token types in the request use the
+    /// higher rate (not progressive Anthropic-style tiers).
+    pub fn list_cost_usd(&self) -> Option<f64> {
+        let model = self
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        let p = pricing::table().find(model)?;
+        let cached = self.cached_input_tokens.min(self.input_tokens);
+        let uncached = self.input_tokens.saturating_sub(cached);
+        const TIER: u64 = 200_000;
+        let long = self.input_tokens >= TIER;
+        let (rin, rcache, rout) = if long {
+            (
+                p.input_above_200k.unwrap_or(p.input),
+                p.cache_read_above_200k.unwrap_or(p.cache_read),
+                p.output_above_200k.unwrap_or(p.output),
+            )
+        } else {
+            (p.input, p.cache_read, p.output)
+        };
+        Some(uncached as f64 * rin + cached as f64 * rcache + self.output_tokens as f64 * rout)
     }
 }
 
@@ -186,12 +223,16 @@ fn lines_from_records(
     for r in recs {
         let tok = r.tokens_for_total();
         total_tokens = total_tokens.saturating_add(tok);
-        let cost = r.cost_usd().unwrap_or(0.0);
-        if cost > 0.0 {
-            has_cost = true;
-            total_cost += cost;
-            tokens_with_cost = tokens_with_cost.saturating_add(tok);
-        }
+        // Public API list price (not SuperGrok subscription ticks).
+        let cost = match r.list_cost_usd() {
+            Some(c) => {
+                has_cost = true;
+                tokens_with_cost = tokens_with_cost.saturating_add(tok);
+                c
+            }
+            None => 0.0,
+        };
+        total_cost += cost;
         let date = ms_to_ymd(r.ts_ms).unwrap_or_else(|| "unknown".into());
         let e = daily.entry(date).or_insert((0.0, 0));
         e.0 += cost;
@@ -227,7 +268,7 @@ fn lines_from_records(
         row.cache_read = row.cache_read.saturating_add(cached);
     }
 
-    // Official xAI ticks only; partial when some captured tokens lack cost_in_usd_ticks.
+    // Partial when some captured tokens have no known public list price.
     let partial = has_cost && tokens_with_cost < total_tokens;
     let tokens = util::fmt_tokens(total_tokens);
     let value = if has_cost && total_cost > 0.0 {
@@ -258,7 +299,7 @@ fn lines_from_records(
             }
             let tok = r.tokens_for_total();
             win_tokens = win_tokens.saturating_add(tok);
-            if let Some(c) = r.cost_usd() {
+            if let Some(c) = r.list_cost_usd() {
                 win_has_cost = true;
                 win_cost += c;
                 win_tokens_with_cost = win_tokens_with_cost.saturating_add(tok);
@@ -310,7 +351,7 @@ fn lines_from_records(
     lines
 }
 
-/// When `$` is incomplete, show what fraction of tokens had official ticks.
+/// When `$` is incomplete, show what fraction of tokens had a public list price.
 fn cost_coverage_line(with_cost: u64, total: u64, partial: bool) -> Option<MetricLine> {
     if !partial || total == 0 {
         return None;
@@ -319,7 +360,7 @@ fn cost_coverage_line(with_cost: u64, total: u64, partial: bool) -> Option<Metri
     Some(MetricLine::text(
         MetricKind::Cost,
         "Cost coverage",
-        format!("{pct:.0}% of tokens (official ticks)"),
+        format!("{pct:.0}% of tokens (API list price)"),
     ))
 }
 
@@ -471,7 +512,37 @@ data: [DONE]
         assert_eq!(u.model.as_deref(), Some("grok-4.5"));
         assert_eq!(u.request_id.as_deref(), Some("resp_1"));
         let rec = u.into_record(1_000, Some("sess".into()));
-        assert!((rec.cost_usd().unwrap() - 0.5).abs() < 1e-9);
+        assert!((rec.ticks_usd().unwrap() - 0.5).abs() < 1e-9);
+        // Public list: 60 unc * $2/M + 40 cache * $0.30/M + 20 out * $6/M
+        let list = rec.list_cost_usd().unwrap();
+        let expected = 60.0 * 2e-6 + 40.0 * 3e-7 + 20.0 * 6e-6;
+        assert!(
+            (list - expected).abs() < 1e-12,
+            "list={list} expected={expected}"
+        );
+    }
+
+    #[test]
+    fn list_cost_uses_long_context_rates_when_prompt_ge_200k() {
+        let rec = UsageRecord {
+            ts_ms: 1,
+            session_id: None,
+            model: Some("grok-4.5".into()),
+            input_tokens: 200_000,
+            output_tokens: 1_000,
+            cached_input_tokens: 100_000,
+            reasoning_tokens: 0,
+            total_tokens: 201_000,
+            cost_usd_ticks: 0,
+            request_id: None,
+        };
+        // All tokens at long rates: unc 100k * $4/M + cache 100k * $0.60/M + out 1k * $12/M
+        let expected = 100_000.0 * 4e-6 + 100_000.0 * 6e-7 + 1_000.0 * 1.2e-5;
+        let got = rec.list_cost_usd().unwrap();
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "got={got} expected={expected}"
+        );
     }
 
     #[test]
@@ -505,7 +576,7 @@ data: [DONE]
                 cached_input_tokens: 600,
                 reasoning_tokens: 0,
                 total_tokens: 1100,
-                cost_usd_ticks: 1_000_000_000, // $1
+                cost_usd_ticks: 1_000_000_000, // ticks ignored for $ display
                 request_id: Some("a".into()),
             },
             UsageRecord {
@@ -531,11 +602,13 @@ data: [DONE]
             })
             .collect();
         assert!(labels.contains(&"Last 30 Days"));
-        assert!(labels.contains(&"Cost coverage"));
+        assert!(!labels.contains(&"Cost coverage")); // both models priced
         assert!(labels.contains(&"Models"));
         assert!(labels.contains(&"Cache"));
         assert!(labels.contains(&"Usage Trend"));
 
+        // 400*$2/M + 600*$0.30/M + 100*$6/M + 200*$2/M + 50*$6/M
+        let expected = 400.0 * 2e-6 + 600.0 * 3e-7 + 100.0 * 6e-6 + 200.0 * 2e-6 + 50.0 * 6e-6;
         let last30 = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Last 30 Days" => {
                 Some(value.as_str())
@@ -543,21 +616,11 @@ data: [DONE]
             _ => None,
         });
         let last30 = last30.expect("last 30");
+        assert!(!last30.contains("(partial)"), "got {last30}");
         assert!(
-            last30.contains("(partial)"),
-            "mixed ticks should be partial: {last30}"
+            last30.contains(&format!("${expected:.4}")),
+            "expected ${expected:.4} in {last30}"
         );
-        assert!(last30.contains("$1.0000"), "got {last30}");
-
-        let cov = lines.iter().find_map(|l| match l {
-            MetricLine::Text { label, value, .. } if label == "Cost coverage" => {
-                Some(value.as_str())
-            }
-            _ => None,
-        });
-        let cov = cov.expect("coverage");
-        // 1100 with cost / 1350 total ≈ 81%
-        assert!(cov.contains("81% of tokens"), "unexpected coverage: {cov}");
 
         let models = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Models" => Some(value.as_str()),
@@ -581,7 +644,7 @@ data: [DONE]
     }
 
     #[test]
-    fn full_cost_ticks_not_partial() {
+    fn full_list_price_not_partial() {
         let recs = vec![UsageRecord {
             ts_ms: 1_700_000_000_000,
             session_id: None,
@@ -603,6 +666,11 @@ data: [DONE]
         });
         let last30 = last30.expect("last 30");
         assert!(!last30.contains("partial"), "got {last30}");
+        // 100*$2/M + 10*$6/M = $0.00026
+        assert!(
+            last30.contains("$0.0003") || last30.contains("$0.0002"),
+            "got {last30}"
+        );
         assert!(!lines.iter().any(|l| matches!(
             l,
             MetricLine::Text { label, .. } if label == "Cost coverage"
@@ -610,24 +678,24 @@ data: [DONE]
     }
 
     #[test]
-    fn weekly_partial_when_window_has_unticked_tokens() {
+    fn weekly_partial_when_window_has_unpriced_model() {
         let recs = vec![
             UsageRecord {
                 ts_ms: 5_000,
                 session_id: None,
-                model: Some("a".into()),
-                input_tokens: 100,
+                model: Some("grok-4.5".into()),
+                input_tokens: 1_000_000,
                 output_tokens: 0,
                 cached_input_tokens: 0,
                 reasoning_tokens: 0,
-                total_tokens: 100,
-                cost_usd_ticks: 1_000_000_000,
+                total_tokens: 1_000_000,
+                cost_usd_ticks: 0,
                 request_id: Some("priced".into()),
             },
             UsageRecord {
                 ts_ms: 6_000,
                 session_id: None,
-                model: Some("a".into()),
+                model: Some("unknown-model-xyz".into()),
                 input_tokens: 50,
                 output_tokens: 0,
                 cached_input_tokens: 0,
@@ -646,7 +714,12 @@ data: [DONE]
         });
         let since = since.expect("since weekly");
         assert!(since.contains("(partial)"), "got {since}");
-        assert!(since.contains("150 tokens"), "got {since}");
+        assert!(since.contains("1M tokens"), "got {since}");
+        // 1M input ≥200k → long-context $4/M list = ~$4
+        assert!(
+            since.contains("$4.00") || since.contains("~$4"),
+            "got {since}"
+        );
     }
 
     #[test]

@@ -490,8 +490,8 @@ impl Provider for Grok {
 
         // Plan renew / PAYG intentionally not shown (product surface is quotas + cost).
 
-        // Accurate Last-30-Days tokens/cost from the local capture ledger only
-        // (populated by `spanreed grok-proxy`). Never invents usage from sessions.
+        // Last-30-Days tokens from capture ledger; $ = public API list price
+        // via pricing table (not SuperGrok cost_in_usd_ticks).
         let weekly_pct = lines.iter().find_map(|l| match l {
             MetricLine::Progress { label, used, .. } if label == "Weekly" => Some(*used),
             _ => None,
