@@ -37,6 +37,8 @@ declare it in `src/main.rs`.
 | `src/output.rs`         | Renderers: `plain` (terminal + sparkline), `waybar` (custom-module JSON), severity classes. |
 | `src/api.rs`            | Local HTTP API on `127.0.0.1:6736` (`/usage`, `/health`) with background refresh. |
 | `src/cost.rs`           | Local-log cost engine (Claude/Codex): parallel + `memchr` + mtime pre-filter + dedup + TTL cache; produces `Last 30 Days` + `Usage Trend`. |
+| `src/grok_ledger.rs`    | Grok capture ledger (`grok-usage.jsonl`). Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
+| `src/forecast.rs`       | Week/month Expected lines from pool-% density samples. |
 | `src/pricing.rs`        | Model price table: embedded LiteLLM snapshot (`pricing-data.json`) + runtime-refreshed remote cache (7-day TTL) + user override; model-name matching and tiered cost math. |
 
 ## The `Provider` trait
@@ -148,6 +150,9 @@ Logic is split so it's testable without network or real credentials:
   `pricing::ensure_fresh()`, silent on failure, disabled by
   `SPANREED_OFFLINE`) → user `~/.config/spanreed/pricing.json`. New models
   are priced without a new binary.
+- Grok capture costs use that table (public API list: grok-4.5 $2/$0.30
+  cached/$6 per MTok, ×2 above 200k prompt — same as xAI docs and OpenRouter
+  `x-ai/grok-4.5`). SuperGrok `cost_in_usd_ticks` are stored but not shown.
 - The embedded snapshot is the offline fallback; refresh it occasionally with
   `spanreed update-pricing src/pricing-data.json` (same Rust filter as the
   runtime refresh) and commit the result (no build-time network — Nix-sandbox
