@@ -1,7 +1,7 @@
-//! Daily anonymous share schedule (once per product day).
+//! Daily authenticated share schedule (once per product day).
 //!
 //! Installed by `spanreed setup` (default on) so contributions to the
-//! public plan pool happen automatically — no login, no manual share.
+//! public plan pool happen automatically after `spanreed share login`.
 //!
 //! **Semantics:** at most one successful sample per Europe/Madrid product day
 //! (client due-gate in [`crate::share`]). OS jobs may fire more often (evening
@@ -109,7 +109,7 @@ mod platform {
         let login = login_service_path();
         let service_body = format!(
             "[Unit]\n\
-             Description=spanreed anonymous daily share to grokinsider.net\n\
+             Description=spanreed daily share to grokinsider.net\n\
              \n\
              [Service]\n\
              Type=oneshot\n\
@@ -369,7 +369,7 @@ mod platform {
             r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>spanreed anonymous daily share to grokinsider.net (evening + login catch-up)</Description>
+    <Description>spanreed daily share to grokinsider.net (evening + login catch-up)</Description>
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>

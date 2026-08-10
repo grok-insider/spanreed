@@ -1,8 +1,8 @@
-//! Stable anonymous install id for community share anti-abuse.
+//! Stable install id for community share device tracking.
 //!
 //! Generated once (setup or first share), stored under the spanreed config
-//! dir. Sent as `X-OpenUsage-Client` — not a user account; the API only keeps
-//! an HMAC of this value.
+//! dir. Sent as `X-OpenUsage-Client`. Voting identity is the Grok Insider
+//! account (Bearer); this id is only a device fingerprint (HMAC on server).
 
 use std::path::PathBuf;
 
