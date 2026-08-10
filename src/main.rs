@@ -19,6 +19,7 @@ mod activity;
 mod api;
 mod capture_log;
 mod capture_watchdog;
+mod client_id;
 mod cost;
 mod creds;
 mod forecast;
@@ -35,6 +36,8 @@ mod providers;
 mod secret;
 mod setup;
 mod share;
+mod share_economics;
+mod share_schedule;
 mod usage_stats;
 mod util;
 
@@ -110,7 +113,8 @@ fn print_help() {
          \tspanreed capture serve        Dual capture: Grok CLI :18736 + api.x.ai :18737\n\
          \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
          \t  --watchdog                   Keep capture alive (restart on exit; logs to\n\
-         \t                               %%LOCALAPPDATA%%/spanreed/logs/capture.log)\n\
+         \t                               %%LOCALAPPDATA%%/spanreed/logs/capture.log;\n\
+         \t                               Windows: windowless / FreeConsole)\n\
          \tspanreed capture ensure      Start capture+watchdog if ports are down\n\
          \tspanreed capture status      Exit 0 if listening, 1 if DOWN; print log path\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
@@ -130,8 +134,11 @@ fn print_help() {
          \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
          \t                               (writes to stdout, or to [out]; used to\n\
          \t                               refresh the embedded src/pricing-data.json)\n\
-         \tspanreed share               Opt-in upload of aggregated quotas to\n\
-         \t                               api.grokinsider.net (needs SPANREED_SHARE_TOKEN)\n\n\
+         \tspanreed share               Anonymous opt-in upload of plan/quota\n\
+         \t                               metrics to the public community pool\n\
+         \t                               (no login; SPANREED_API_BASE optional)\n\
+         \t                               Daily auto-share at 23:00 Europe/Madrid\n\
+         \t                               is installed by `setup` (share schedule)\n\n\
          PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
          \t           synthetic, kimi, copilot, factory, devin,\n\
          \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
