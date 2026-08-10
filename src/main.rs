@@ -34,6 +34,7 @@ mod proc;
 mod providers;
 mod secret;
 mod setup;
+mod share;
 mod usage_stats;
 mod util;
 
@@ -78,6 +79,7 @@ fn main() -> ExitCode {
         "capture" => cmd_capture(rest),
         "grok-proxy" => cmd_grok_proxy(rest),
         "setup" => setup::cmd(rest),
+        "share" => share::cmd(rest),
         "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),
         "help" | "-h" | "--help" => {
@@ -127,7 +129,9 @@ fn print_help() {
          \tspanreed auth logout copilot  Remove the stored Copilot credential\n\
          \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
          \t                               (writes to stdout, or to [out]; used to\n\
-         \t                               refresh the embedded src/pricing-data.json)\n\n\
+         \t                               refresh the embedded src/pricing-data.json)\n\
+         \tspanreed share               Opt-in upload of aggregated quotas to\n\
+         \t                               api.grokinsider.net (needs SPANREED_SHARE_TOKEN)\n\n\
          PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
          \t           synthetic, kimi, copilot, factory, devin,\n\
          \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
