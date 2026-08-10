@@ -57,7 +57,9 @@ pub fn run(serve_args: &[String]) -> Result<(), String> {
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
 
-        let mut child = cmd.spawn().map_err(|e| format!("spawn capture serve: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("spawn capture serve: {e}"))?;
         let pid = child.id();
         capture_log::append(&format!("worker pid={pid}"));
 
@@ -71,7 +73,9 @@ pub fn run(serve_args: &[String]) -> Result<(), String> {
         match child.wait() {
             Ok(status) => {
                 capture_log::append(&format!("worker pid={pid} exited: {status}"));
-                eprintln!("capture watchdog: worker exited ({status}), restarting in {BACKOFF_SECS}s");
+                eprintln!(
+                    "capture watchdog: worker exited ({status}), restarting in {BACKOFF_SECS}s"
+                );
             }
             Err(e) => {
                 capture_log::append(&format!("worker wait error: {e}"));

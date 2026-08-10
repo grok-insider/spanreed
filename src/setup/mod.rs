@@ -174,10 +174,7 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
 
     if do_install {
         match install_cli(flags.dry_run, flags.from_current_exe) {
-            Ok(InstallResult {
-                path,
-                path_updated,
-            }) => {
+            Ok(InstallResult { path, path_updated }) => {
                 println!("  CLI:      {}", path.display());
                 state.install_path = Some(path.display().to_string());
                 path_changed = path_updated;
@@ -387,11 +384,7 @@ fn print_status() -> ExitCode {
     println!(
         "  Ledger:           {} ({})",
         ledger.display(),
-        if ledger.exists() {
-            "exists"
-        } else {
-            "missing"
-        }
+        if ledger.exists() { "exists" } else { "missing" }
     );
 
     let svc = service::status();
@@ -536,9 +529,7 @@ fn format_hint_install() -> String {
 
 fn prompt_yn(question: &str, default: bool, hint: Option<String>) -> bool {
     let def = if default { "Y/n" } else { "y/N" };
-    let hint_s = hint
-        .map(|h| format!(" ({h})"))
-        .unwrap_or_default();
+    let hint_s = hint.map(|h| format!(" ({h})")).unwrap_or_default();
     print!("{question}{hint_s} [{def}] ");
     let _ = io::stdout().flush();
     let mut line = String::new();
@@ -558,11 +549,7 @@ mod tests {
 
     #[test]
     fn parse_flags_yes_service() {
-        let args = vec![
-            "--yes".into(),
-            "--service".into(),
-            "--dry-run".into(),
-        ];
+        let args = vec!["--yes".into(), "--service".into(), "--dry-run".into()];
         let (sub, f) = SetupFlags::parse(&args);
         assert!(sub.is_none());
         assert!(f.yes && f.service && f.dry_run);

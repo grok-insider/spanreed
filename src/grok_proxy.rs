@@ -60,7 +60,10 @@ pub fn run_capture(listeners: &[ListenerConfig]) -> Result<(), String> {
         eprintln!("  {}  http://{}  →  {}", l.label, l.bind, l.upstream);
     }
     eprintln!("ledger: {}", grok_ledger::ledger_path().display());
-    eprintln!("log:    {}", crate::capture_log::capture_log_path().display());
+    eprintln!(
+        "log:    {}",
+        crate::capture_log::capture_log_path().display()
+    );
     eprintln!("upstream HTTP(S)_PROXY: honored from environment (if set)");
     eprintln!();
     crate::capture_log::append(&format!(
@@ -331,9 +334,7 @@ fn is_local_health_path(path: &str) -> bool {
 }
 
 fn write_health_response(client: &mut TcpStream, label: &str) -> Result<(), String> {
-    let body = format!(
-        "{{\"ok\":true,\"service\":\"spanreed-capture\",\"label\":\"{label}\"}}"
-    );
+    let body = format!("{{\"ok\":true,\"service\":\"spanreed-capture\",\"label\":\"{label}\"}}");
     write!(
         client,
         "HTTP/1.1 200 OK\r\n\

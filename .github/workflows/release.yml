@@ -1,0 +1,362 @@
+name: Release
+
+# Automated patch-line versioning + GitHub Releases (open-sessionbar model).
+#
+# Flow when a PR into master is merged (or workflow_dispatch):
+#   * release-pr          — OUR OWN job: opens/updates the "release PR" that
+#                           bumps package version to the next PATCH, refreshes
+#                           Cargo.lock, and writes the CHANGELOG section via
+#                           release-changelog-action@v1. Only feat/fix commits
+#                           since the last tag trigger it.
+#   * release-plz-release — when a release PR (auto or manual) is merged (or the
+#                           tip version is still untagged), creates the `vX.Y.Z`
+#                           tag + GitHub Release from CHANGELOG.md.
+#   * resolve / artifacts — build `spanreed` for Linux (x86_64/aarch64 musl
+#                           static), macOS (x86_64/arm64), and Windows, and attach.
+#   * release-notes       — set GH Release body from CHANGELOG section.
+#
+# Nothing is published to crates.io (`git_only` + `publish = false`).
+# Deliberate major/minor: Manual Version Bump workflow.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Open the release PR even without feat/fix commits
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-pr:
+    name: release PR (patch line)
+    if: >
+      github.repository_owner == 'grok-insider'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'pull_request'
+              && github.event.pull_request.merged == true))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-pr
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+      CARGO_NET_RETRY: "10"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
+          persist-credentials: true
+          token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Decide the next version
+        id: decide
+        env:
+          FORCE: ${{ inputs.force == true && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          current="$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)"
+          if [[ ! "$current" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::Cargo.toml version '$current' is not x.y.z."
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
+          if ! git rev-parse -q --verify "refs/tags/v${current}" >/dev/null; then
+            echo "::notice::v${current} is not tagged yet — this push is releasing it; no new release PR."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$FORCE" != "true" ] \
+            && ! git log "v${current}..HEAD" --no-merges --format=%s \
+               | grep -qE '^(feat|fix)(\(.*\))?!?:'; then
+            echo "::notice::no feat/fix commits since v${current}; nothing to release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          breaking=false
+          if git log "v${current}..HEAD" --no-merges --format='%s%n%b' \
+            | grep -qE '^[a-z]+(\(.*\))?!:|^BREAKING CHANGE'; then
+            breaking=true
+          fi
+          next="${major}.${minor}.$(( patch + 1 ))"
+          {
+            echo "skip=false"
+            echo "current=$current"
+            echo "next=$next"
+            echo "breaking=$breaking"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Bump the package version
+        if: ${{ steps.decide.outputs.skip == 'false' }}
+        env:
+          NEXT: ${{ steps.decide.outputs.next }}
+        run: |
+          set -euo pipefail
+          sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${NEXT}\"/" Cargo.toml
+          cargo update --workspace
+          if git diff --quiet -- Cargo.toml Cargo.lock; then
+            echo "::error::Version bump produced no Cargo.toml or Cargo.lock changes."
+            exit 1
+          fi
+
+      - name: Generate the AI changelog section
+        if: ${{ steps.decide.outputs.skip == 'false' }}
+        uses: grok-insider/release-changelog-action@v1
+        with:
+          version: ${{ steps.decide.outputs.next }}
+          range: v${{ steps.decide.outputs.current }}..HEAD
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          project-description: "Cross-platform AI coding subscription usage tracker (CLI + daemon + Waybar/JSON + local capture proxy)"
+
+      - name: Open or update the release PR
+        if: ${{ steps.decide.outputs.skip == 'false' }}
+        env:
+          CURRENT: ${{ steps.decide.outputs.current }}
+          NEXT: ${{ steps.decide.outputs.next }}
+          BREAKING: ${{ steps.decide.outputs.breaking }}
+        run: |
+          set -euo pipefail
+          branch="release-plz-v${NEXT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git commit -m "chore: release v${NEXT}"
+          git push --force --set-upstream origin "$branch"
+
+          gh label create release --color 0e8a16 \
+            --description "release PRs (auto patch line + manual bumps)" \
+            2>/dev/null || true
+
+          body="$(mktemp)"
+          {
+            echo "Automated patch-line release PR: **v${CURRENT} -> v${NEXT}**."
+            echo
+            echo "Bumps the package version + \`Cargo.lock\`, and adds the"
+            echo "AI-generated \`CHANGELOG.md\` section for the commits since v${CURRENT}."
+            echo "Regenerated from master on every push until merged."
+            echo
+            if [ "$BREAKING" = "true" ]; then
+              echo "**WARNING: breaking commits (\`!\`/\`BREAKING CHANGE\`) landed since"
+              echo "v${CURRENT}.** The automatic stream still bumps the patch component;"
+              echo "if this deserves a minor milestone instead, close this PR and run the"
+              echo "Manual Version Bump workflow."
+              echo
+            fi
+            echo "Merging tags \`v${NEXT}\` + creates the GitHub Release (release-plz"
+            echo "\`release_always\`) and attaches prebuilt \`spanreed\` binaries."
+          } > "$body"
+
+          existing="$(gh pr list --state open --head "$branch" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "chore: release v${NEXT}" --body-file "$body"
+          else
+            gh pr create \
+              --base master \
+              --head "$branch" \
+              --title "chore: release v${NEXT}" \
+              --body-file "$body" \
+              --label release
+          fi
+
+          for stale in $(gh pr list --state open --label release --json number,headRefName \
+            --jq ".[] | select(.headRefName != \"$branch\" and (.headRefName | startswith(\"release-plz-v\"))) | .number"); do
+            gh pr close "$stale" --comment "Superseded by the release PR for v${NEXT}." --delete-branch
+          done
+
+  release-plz-release:
+    name: release-plz release
+    if: >
+      github.repository_owner == 'grok-insider'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'pull_request'
+              && github.event.pull_request.merged == true))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-plz-release
+      cancel-in-progress: false
+    outputs:
+      releases_created: ${{ steps.release-plz.outputs.releases_created }}
+      releases: ${{ steps.release-plz.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz (release)
+        id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+
+  resolve:
+    name: resolve release tag
+    needs: release-plz-release
+    if: needs.release-plz-release.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.r.outputs.tag }}
+      version: ${{ steps.r.outputs.version }}
+    steps:
+      - id: r
+        env:
+          RELEASES: ${{ needs.release-plz-release.outputs.releases }}
+        run: |
+          set -euo pipefail
+          echo "tag=$(echo "$RELEASES" | jq -r '.[0].tag')" >> "$GITHUB_OUTPUT"
+          echo "version=$(echo "$RELEASES" | jq -r '.[0].version')" >> "$GITHUB_OUTPUT"
+
+  artifacts:
+    name: ${{ matrix.target }}
+    needs: [release-plz-release, resolve]
+    if: needs.release-plz-release.outputs.releases_created == 'true'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, cross: zig }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, cross: zig }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, cross: "" }
+          - { os: macos-14, target: aarch64-apple-darwin, cross: "" }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, cross: "" }
+    runs-on: ${{ matrix.os }}
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+      TAG: ${{ needs.resolve.outputs.tag }}
+    steps:
+      - name: Checkout the released tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install zig
+        if: matrix.cross == 'zig'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild
+        if: matrix.cross == 'zig'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+      - name: Build (zigbuild static)
+        if: matrix.cross == 'zig'
+        run: cargo zigbuild --release --target "$TARGET"
+      - name: Build (native)
+        if: matrix.cross != 'zig'
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Verify Linux binary is static
+        if: matrix.cross == 'zig'
+        run: |
+          set -euo pipefail
+          f="target/$TARGET/release/spanreed"
+          file "$f"
+          if ldd "$f" 2>&1 | grep -qiE 'libc\.so|GLIBC'; then
+            echo "::error::spanreed is dynamically linked against glibc"; exit 1
+          fi
+      - name: Package + upload (unix)
+        if: runner.os != 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          archive="spanreed-$VERSION-$TARGET.tar.gz"
+          tar -czf "$archive" -C "target/$TARGET/release" spanreed
+          shasum -a 256 "$archive" > "$archive.sha256" 2>/dev/null || sha256sum "$archive" > "$archive.sha256"
+          gh release upload "$TAG" "$archive" "$archive.sha256" --clobber
+      - name: Package + upload (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = "spanreed-$env:VERSION-$env:TARGET.zip"
+          Compress-Archive -Path "target/$env:TARGET/release/spanreed.exe" -DestinationPath $archive -Force
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archive" | Out-File -FilePath "$archive.sha256" -Encoding ascii
+          gh release upload "$env:TAG" "$archive" "$archive.sha256" --clobber
+
+  install-scripts:
+    name: install scripts
+    needs: [release-plz-release, resolve, artifacts]
+    if: needs.release-plz-release.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+      - name: Upload install.sh / install.ps1
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" scripts/install.sh scripts/install.ps1 --clobber
+
+  release-notes:
+    name: publish release notes
+    needs: [release-plz-release, resolve, install-scripts]
+    if: needs.release-plz-release.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the released tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+      - name: Publish CHANGELOG section to GitHub Release
+        uses: grok-insider/release-changelog-action@v1
+        with:
+          version: ${{ needs.resolve.outputs.version }}
+          skip-generate: true
+          publish-github-release: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ needs.resolve.outputs.tag }}
+          notes-footer: |
+            ---
+
+            ### Install
+
+            ```sh
+            # Linux / macOS
+            curl -fsSL https://github.com/grok-insider/spanreed/releases/latest/download/install.sh | sh
+            ```
+
+            ```powershell
+            # Windows
+            irm https://github.com/grok-insider/spanreed/releases/latest/download/install.ps1 | iex
+            ```

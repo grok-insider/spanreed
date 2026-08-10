@@ -25,6 +25,20 @@ SPANREED_OFFLINE=1 cargo test
 
 Run fmt, clippy, and tests before sharing a change.
 
+## Git workflow
+
+This repo uses **Model A**:
+
+1. Branch from **`dev`**, open a PR into **`dev`**.
+2. When a batch is ready to ship, open one PR **`dev` → `master`** (guard allows
+   only `dev` or release-bot heads into `master`).
+3. After merge to `master`, automation may open a **patch** Release PR
+   (`release-plz-v*`). Deliberate **minor/major** bumps use the
+   **Manual Version Bump** workflow (repo admins).
+
+Never push directly to `master`. Do not hand-edit `CHANGELOG.md` outside a
+Release PR.
+
 ## Adding a provider
 
 A provider is one file implementing the `Provider` trait. Use an existing one as
