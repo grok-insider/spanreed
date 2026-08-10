@@ -65,7 +65,7 @@ pub fn local_date_ymd(ms: i64) -> String {
     format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day())
 }
 
-/// Product timezone for anonymous share day buckets: Europe/Madrid as fixed
+/// Product timezone for share day buckets: Europe/Madrid as fixed
 /// **UTC+1** (same convention as `grok-insider-api` `day_key_madrid`). DST
 /// ±1h is accepted for v1 so client and server stay aligned without chrono-tz.
 pub const SHARE_TZ_LABEL: &str = "Europe/Madrid";

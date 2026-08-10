@@ -121,10 +121,11 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
                 )),
             );
             let do_share_schedule = prompt_yn(
-                "Enable daily anonymous plan share (once per day, catch-up when PC is on)?",
+                "Enable daily plan share to grokinsider.net (once per day, catch-up when PC is on)?",
                 true,
                 Some(
-                    "uploads provider+plan metrics to the public pool (no login, no user id); \
+                    "requires `spanreed share login` once (Sign in with X); \
+                     uploads provider+plan metrics to the public pool; \
                      prefers evening, also runs on login if yesterday's timer was missed"
                         .into(),
                 ),
@@ -238,11 +239,11 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
         println!("  Capture:  not enabled (run `spanreed capture ensure` or `--service`)");
     }
 
-    // Always ensure anonymous install id (used by share anti-abuse).
+    // Always ensure install id (device fingerprint for share).
     if !flags.dry_run {
         match crate::client_id::ensure() {
             Ok(id) => println!(
-                "  Client:   {}… (anonymous install id)",
+                "  Client:   {}… (install device id)",
                 id.chars().take(8).collect::<String>()
             ),
             Err(e) => {

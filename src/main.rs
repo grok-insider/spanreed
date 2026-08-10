@@ -38,6 +38,7 @@ mod setup;
 mod share;
 mod share_economics;
 mod share_schedule;
+mod share_session;
 mod usage_stats;
 mod util;
 
@@ -134,9 +135,10 @@ fn print_help() {
          \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
          \t                               (writes to stdout, or to [out]; used to\n\
          \t                               refresh the embedded src/pricing-data.json)\n\
-         \tspanreed share               Anonymous opt-in upload of plan/quota\n\
-         \t                               metrics to the public community pool\n\
-         \t                               (no login; SPANREED_API_BASE optional)\n\
+         \tspanreed share               Upload plan/quota metrics (requires X login)\n\
+         \tspanreed share login         Link CLI via device code on grokinsider.net\n\
+         \tspanreed share logout|status Session management\n\
+         \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\
          \t                               evening timer + login/missed-run catch-up\n\n\
          PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
