@@ -154,7 +154,12 @@ fn handle_client(
         .ok();
 
     let mut reader = BufReader::new(client.try_clone().map_err(|e| e.to_string())?);
-    let (method, path, headers, body) = read_http_request(&mut reader)?;
+    let (method, path, headers, body) = match read_http_request(&mut reader) {
+        Ok(r) => r,
+        // Bare TCP connect (port probe) sends no HTTP — not an error.
+        Err(e) if e.contains("empty request line") => return Ok(()),
+        Err(e) => return Err(e),
+    };
 
     // Local health (not forwarded). Used by ops / `capture status` checks.
     if is_local_health_path(&path) {

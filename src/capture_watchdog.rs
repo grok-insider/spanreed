@@ -37,8 +37,8 @@ pub fn run(serve_args: &[String]) -> Result<(), String> {
             continue;
         }
 
-        capture_log::append("ports down — starting capture worker");
-        eprintln!("capture watchdog: ports down, starting worker…");
+        capture_log::append("ports down - starting capture worker");
+        eprintln!("capture watchdog: ports down, starting worker...");
 
         let log = capture_log::open_append()?;
         let log_err = log
