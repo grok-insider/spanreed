@@ -38,6 +38,7 @@ declare it in `src/main.rs`.
 | `src/api.rs`            | Local HTTP API on `127.0.0.1:6736` (`/usage`, `/health`) with background refresh. |
 | `src/cost.rs`           | Local-log cost engine (Claude/Codex): parallel + `memchr` + mtime pre-filter + dedup + TTL cache; produces `Last 30 Days` + `Usage Trend`. |
 | `src/grok_ledger.rs`    | Grok capture ledger (`grok-usage.jsonl`). Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
+| `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service, wire Grok Build + OpenCode xAI to the local capture proxy. |
 | `src/forecast.rs`       | Week/month Expected lines from pool-% density samples. |
 | `src/pricing.rs`        | Model price table: embedded LiteLLM snapshot (`pricing-data.json`) + runtime-refreshed remote cache (7-day TTL) + user override; model-name matching and tiered cost math. |
 

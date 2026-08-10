@@ -194,13 +194,31 @@ pub fn cost_lines_with_forecast(
     let now = util::now_ms();
     let recs = read_window(now);
     if recs.is_empty() {
-        return vec![MetricLine::text(
-            MetricKind::Cost,
-            "Last 30 Days",
-            "no capture yet — enable `spanreed capture serve` (or HM capture.enable)",
-        )];
+        let hint = empty_capture_hint();
+        return vec![MetricLine::text(MetricKind::Cost, "Last 30 Days", hint)];
     }
     lines_from_records(&recs, weekly_start_ms, weekly_pct, week_end_ms)
+}
+
+fn empty_capture_hint() -> String {
+    // Avoid circular deps on setup for unit tests: TCP probe only.
+    let ports_up = capture_ports_up();
+    if ports_up {
+        "no usage captured yet — use Grok/OpenCode via the local proxy".into()
+    } else {
+        "proxy DOWN — Grok/OpenCode may fail; run `spanreed capture ensure`".into()
+    }
+}
+
+fn capture_ports_up() -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+    ["127.0.0.1:18736", "127.0.0.1:18737"].iter().all(|a| {
+        a.parse::<SocketAddr>()
+            .ok()
+            .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(150)).ok())
+            .is_some()
+    })
 }
 
 fn lines_from_records(

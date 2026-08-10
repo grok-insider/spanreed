@@ -11,6 +11,58 @@ store, probes each provider’s usage API, and prints:
 
 Linux-first (Hyprland/Wayland); the same code also builds for macOS and Windows.
 
+## Install
+
+### From a release (one command)
+
+```sh
+# Linux / macOS
+curl -fsSL https://github.com/grok-insider/spanreed/releases/latest/download/install.sh | sh
+
+# Windows (PowerShell)
+irm https://github.com/grok-insider/spanreed/releases/latest/download/install.ps1 | iex
+```
+
+The installer downloads the binary, then runs **`spanreed setup`**, which asks:
+
+- install CLI to user PATH  
+- create the Grok capture ledger  
+- start the capture proxy at login (optional)  
+- wire **Grok Build** → `http://127.0.0.1:18736/v1`  
+- wire **OpenCode xAI** → `http://127.0.0.1:18737/v1`  
+
+### From a local build
+
+```sh
+cargo build --release
+
+# Linux / macOS
+./scripts/install.sh --from-path ./target/release/spanreed
+
+# Windows
+.\scripts\install.ps1 -FromPath .\target\release\spanreed.exe
+
+# Or run setup on the binary you just built:
+./target/release/spanreed setup
+# non-interactive (no service unless --service):
+./target/release/spanreed setup --yes --from-current-exe
+```
+
+Useful setup commands:
+
+```sh
+spanreed setup status
+spanreed setup uninstall          # unwire + stop capture service
+spanreed capture serve            # run capture in the foreground
+spanreed capture ensure           # start capture if ports 18736/18737 are down
+spanreed capture status           # exit 0 if listening, 1 if DOWN
+spanreed probe grok --cost        # quotas + captured tokens / $ estimate
+```
+
+If Grok Build or OpenCode “stops working” while wired to the local proxy, check
+capture first (`setup status` / `capture status`). A dead proxy with live wiring
+looks like a CLI failure. Fix: `spanreed capture ensure`.
+
 ## Build
 
 ```sh
@@ -42,6 +94,7 @@ spanreed probe claude          # one provider
 spanreed waybar                # one-shot status-bar JSON (full detail)
 spanreed json                  # raw JSON (full detail, includes kind)
 spanreed serve [--interval S]  # HTTP API on 127.0.0.1:6736
+spanreed setup                 # install + optional capture service + wire clients
 spanreed auth copilot          # opt-in GitHub token for Copilot
 spanreed help
 ```

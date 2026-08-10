@@ -105,11 +105,59 @@ fn help_lists_subcommands() {
         "serve",
         "history",
         "capture",
+        "ensure",
         "grok-proxy",
+        "setup",
         "auth",
     ] {
         assert!(stdout.contains(word), "help missing '{word}'");
     }
+}
+
+#[test]
+fn setup_status_exits_zero_in_isolated_home() {
+    let (stdout, status) = run(&["setup", "status"]);
+    // Isolated HOME: nothing wired → exit 0 even if capture ports are down.
+    assert!(status.success(), "setup status should exit 0\n{stdout}");
+    assert!(
+        stdout.contains("spanreed setup status"),
+        "unexpected status output\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Capture service:"),
+        "missing capture service line\n{stdout}"
+    );
+}
+
+#[test]
+fn capture_status_reports_state() {
+    let (stdout, status) = run(&["capture", "status"]);
+    // Ports may or may not be up on the host; just require a clear line and no panic.
+    assert!(
+        stdout.contains("capture:"),
+        "capture status missing line\n{stdout}"
+    );
+    let _ = status; // 0 if up, 1 if down — both valid
+}
+
+#[test]
+fn capture_ensure_dry_run_ok() {
+    let (stdout, status) = run(&["capture", "ensure", "--dry-run"]);
+    assert!(status.success(), "ensure --dry-run failed\n{stdout}");
+    assert!(
+        stdout.contains("listening") || stdout.contains("would start"),
+        "unexpected ensure output\n{stdout}"
+    );
+}
+
+#[test]
+fn setup_dry_run_yes_exits_zero() {
+    let (stdout, status) = run(&["setup", "--yes", "--dry-run", "--no-wire"]);
+    assert!(status.success(), "setup --yes --dry-run failed\n{stdout}");
+    assert!(
+        stdout.contains("Dry run") || stdout.contains("Done") || stdout.contains("Non-interactive"),
+        "unexpected setup output\n{stdout}"
+    );
 }
 
 #[test]

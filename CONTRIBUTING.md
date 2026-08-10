@@ -132,6 +132,12 @@ No automated release pipeline in-tree right now (local-first clean slate).
 Bump `version` in `Cargo.toml` deliberately when you cut a line; keep
 `CHANGELOG.md` in sync. Not published to crates.io.
 
+Install bootstrap scripts live in `scripts/install.sh` and
+`scripts/install.ps1`. They expect GitHub Release assets named
+`spanreed-<target>.tar.gz` / `spanreed-x86_64-pc-windows-msvc.zip`, or
+accept `--from-path` / `-FromPath` for local dogfood. After placing the binary
+they run `spanreed setup`.
+
 ## Reporting issues
 
 Open an issue with:
