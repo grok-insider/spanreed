@@ -54,14 +54,17 @@ Useful setup commands:
 spanreed setup status
 spanreed setup uninstall          # unwire + stop capture service
 spanreed capture serve            # run capture in the foreground
-spanreed capture ensure           # start capture if ports 18736/18737 are down
-spanreed capture status           # exit 0 if listening, 1 if DOWN
+spanreed capture serve --watchdog # auto-restart worker; log under spanreed/logs
+spanreed capture ensure           # start capture+watchdog if ports 18736/18737 are down
+spanreed capture status           # exit 0 if listening, 1 if DOWN; shows log path
 spanreed probe grok --cost        # quotas + captured tokens / $ estimate
 ```
 
 If Grok Build or OpenCode “stops working” while wired to the local proxy, check
 capture first (`setup status` / `capture status`). A dead proxy with live wiring
 looks like a CLI failure. Fix: `spanreed capture ensure`.
+
+Capture logs (Windows): `%LOCALAPPDATA%\spanreed\logs\capture.log`.
 
 ## Build
 

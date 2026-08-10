@@ -60,8 +60,17 @@ pub fn run_capture(listeners: &[ListenerConfig]) -> Result<(), String> {
         eprintln!("  {}  http://{}  →  {}", l.label, l.bind, l.upstream);
     }
     eprintln!("ledger: {}", grok_ledger::ledger_path().display());
+    eprintln!("log:    {}", crate::capture_log::capture_log_path().display());
     eprintln!("upstream HTTP(S)_PROXY: honored from environment (if set)");
     eprintln!();
+    crate::capture_log::append(&format!(
+        "listening {}",
+        listeners
+            .iter()
+            .map(|l| format!("{}={}", l.label, l.bind))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
 
     let mut handles = Vec::new();
     for l in listeners {
