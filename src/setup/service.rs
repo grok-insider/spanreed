@@ -16,7 +16,8 @@ pub fn kind_label() -> &'static str {
     }
     #[cfg(target_os = "windows")]
     {
-        "windows-hkcu-run"
+        // HKCU Run and/or a user Scheduled Task; both start the windowless watchdog.
+        "windows-user"
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
@@ -360,33 +361,110 @@ mod platform {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     fn run_command_value(bin: &std::path::Path) -> String {
-        // Watchdog restarts the worker if it exits mid-session.
+        // Watchdog detaches its console (FreeConsole) so this Run entry is silent.
         format!("\"{}\" capture serve --watchdog", bin.display())
+    }
+
+    /// Task Scheduler XML: logon trigger, least privilege, Hidden=true, no time limit.
+    /// Built as UTF-16 LE with BOM for `schtasks /Create /XML`.
+    fn task_xml(bin: &std::path::Path) -> String {
+        let cmd = bin.display().to_string();
+        // Escape XML special chars in the path (rare but possible).
+        let cmd = cmd
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;");
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>spanreed Grok/xAI usage capture proxy (windowless watchdog)</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>true</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{cmd}</Command>
+      <Arguments>capture serve --watchdog</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"#
+        )
     }
 
     pub fn status() -> String {
         let run = read_run_key();
         let listening = ports_listening();
         let sch = schtasks_status();
-        match (run, listening, sch.as_str()) {
-            (true, true, _) => format!("hkcu-run ({RUN_VALUE}: installed, ports up)"),
-            (true, false, _) => format!("hkcu-run ({RUN_VALUE}: installed, not listening)"),
-            (false, true, _) => "capture ports up (manual process?)".into(),
-            (false, false, s) if s != "missing" => format!("windows-task ({TASK_NAME}: {s})"),
+        let task_present = sch != "missing";
+        match (run, task_present, listening) {
+            (true, true, true) => {
+                format!("windows-user (Run+task {TASK_NAME}: installed, ports up, windowless)")
+            }
+            (true, true, false) => {
+                format!("windows-user (Run+task {TASK_NAME}: installed, not listening)")
+            }
+            (true, false, true) => {
+                format!("hkcu-run ({RUN_VALUE}: installed, ports up, windowless)")
+            }
+            (true, false, false) => {
+                format!("hkcu-run ({RUN_VALUE}: installed, not listening)")
+            }
+            (false, true, true) => {
+                format!("windows-task ({TASK_NAME}: {sch}, ports up, windowless)")
+            }
+            (false, true, false) => format!("windows-task ({TASK_NAME}: {sch})"),
+            (false, false, true) => "capture ports up (manual process?)".into(),
             _ => format!("not installed (no HKCU Run / task {TASK_NAME})"),
         }
     }
 
     fn schtasks_status() -> String {
         let out = Command::new("schtasks")
-            .args(["/Query", "/TN", TASK_NAME, "/FO", "LIST"])
+            .args(["/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         match out {
             Ok(o) if o.status.success() => {
                 let text = String::from_utf8_lossy(&o.stdout);
                 text.lines()
-                    .find(|l| l.starts_with("Status:"))
-                    .map(|l| l.trim().to_string())
+                    .find(|l| l.trim_start().starts_with("Status:"))
+                    .map(|l| {
+                        l.split_once(':')
+                            .map(|(_, v)| v.trim())
+                            .unwrap_or(l)
+                            .to_string()
+                    })
                     .unwrap_or_else(|| "present".into())
             }
             _ => "missing".into(),
@@ -405,6 +483,7 @@ mod platform {
         );
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .ok();
         out.map(|o| String::from_utf8_lossy(&o.stdout).contains('1'))
@@ -420,6 +499,7 @@ mod platform {
         );
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("powershell Run key: {e}"))?;
         if !out.status.success() {
@@ -438,13 +518,14 @@ mod platform {
         );
         let _ = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         Ok(())
     }
 
     pub fn start_now(bin: &std::path::Path) -> Result<(), String> {
         // PowerShell Start-Process detaches cleanly (no console, survives parent exit).
-        // --watchdog keeps capture alive if the worker process exits.
+        // Watchdog FreeConsole + CREATE_NO_WINDOW on the worker keeps it windowless.
         let path = bin.display().to_string().replace('\'', "''");
         let script = format!(
             "Start-Process -FilePath '{path}' -ArgumentList 'capture','serve','--watchdog' -WindowStyle Hidden"
@@ -466,36 +547,72 @@ mod platform {
     pub fn enable(bin: &std::path::Path, dry_run: bool) -> Result<String, String> {
         let tr = run_command_value(bin);
         if dry_run {
-            return Ok(format!("would register HKCU Run {RUN_VALUE} → {tr}"));
+            return Ok(format!(
+                "would register logon task {TASK_NAME} (Hidden) and/or HKCU Run {RUN_VALUE} → {tr}"
+            ));
         }
-        // Prefer HKCU Run (no admin). schtasks ONLOGON often returns Access denied
-        // for non-elevated users on locked-down Windows 11.
+        // 1) Best-effort hidden Scheduled Task (native, no flash when it works).
+        let task_ok = try_schtasks_xml(bin).is_ok();
+        // 2) Always register HKCU Run as the no-admin reliable path. The watchdog
+        //    FreeConsole() so Run no longer leaves a visible cmd window.
         set_run_key(bin)?;
-        // Best-effort schtasks (ignore failure).
-        let _ = try_schtasks(bin);
         start_now(bin)?;
         // Brief settle so status can see listeners.
         std::thread::sleep(std::time::Duration::from_millis(400));
-        Ok(format!("enabled HKCU Run {RUN_VALUE} + started capture"))
+        if task_ok {
+            Ok(format!(
+                "enabled task {TASK_NAME} (Hidden) + HKCU Run {RUN_VALUE} + started capture (windowless)"
+            ))
+        } else {
+            Ok(format!(
+                "enabled HKCU Run {RUN_VALUE} + started capture (windowless; task optional failed)"
+            ))
+        }
     }
 
-    fn try_schtasks(bin: &std::path::Path) -> Result<(), String> {
-        let tr = run_command_value(bin);
+    /// Register a Hidden logon task via XML. Falls back errors for the caller.
+    fn try_schtasks_xml(bin: &std::path::Path) -> Result<(), String> {
         let _ = Command::new("schtasks")
             .args(["/Delete", "/TN", TASK_NAME, "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
+
+        let xml = task_xml(bin);
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("spanreed-capture-{}.xml", std::process::id()));
+        // schtasks expects UTF-16 LE with BOM for /XML on many Windows builds.
+        let mut utf16: Vec<u8> = vec![0xFF, 0xFE];
+        for u in xml.encode_utf16() {
+            utf16.extend_from_slice(&u.to_le_bytes());
+        }
+        std::fs::write(&path, &utf16).map_err(|e| format!("write task xml: {e}"))?;
+
+        let path_s = path.display().to_string();
+        let out = Command::new("schtasks")
+            .args(["/Create", "/TN", TASK_NAME, "/XML", &path_s, "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("schtasks /Create /XML: {e}"))?;
+        let _ = std::fs::remove_file(&path);
+        if !out.status.success() {
+            // Fallback: classic /SC ONLOGON (may Access denied without elevation).
+            return try_schtasks_tr(bin);
+        }
+        Ok(())
+    }
+
+    fn try_schtasks_tr(bin: &std::path::Path) -> Result<(), String> {
+        let tr = run_command_value(bin);
         let out = Command::new("schtasks")
             .args([
                 "/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/RL", "LIMITED", "/F", "/TR", &tr,
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("schtasks: {e}"))?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).to_string());
         }
-        let _ = Command::new("schtasks")
-            .args(["/Run", "/TN", TASK_NAME])
-            .output();
         Ok(())
     }
 
@@ -508,6 +625,7 @@ mod platform {
         clear_run_key()?;
         let _ = Command::new("schtasks")
             .args(["/Delete", "/TN", TASK_NAME, "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         // Stop listening processes that look like our capture (best-effort).
         let _ = Command::new("powershell")
@@ -519,8 +637,44 @@ mod platform {
                  Where-Object { $_.CommandLine -match 'capture' } | \
                  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
-        Ok(format!("disabled capture autostart ({RUN_VALUE})"))
+        Ok(format!(
+            "disabled capture autostart ({RUN_VALUE} / {TASK_NAME})"
+        ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::task_xml;
+        use std::path::Path;
+
+        #[test]
+        fn task_xml_contains_hidden_and_watchdog() {
+            let xml = task_xml(Path::new(
+                r"C:\Users\me\AppData\Local\spanreed\bin\spanreed.exe",
+            ));
+            assert!(
+                xml.contains("<Hidden>true</Hidden>"),
+                "expected Hidden=true"
+            );
+            assert!(
+                xml.contains("capture serve --watchdog"),
+                "expected watchdog args"
+            );
+            assert!(
+                xml.contains(r"C:\Users\me\AppData\Local\spanreed\bin\spanreed.exe"),
+                "expected bin path"
+            );
+            assert!(xml.contains("<LogonTrigger>"));
+        }
+
+        #[test]
+        fn task_xml_escapes_ampersand_in_path() {
+            let xml = task_xml(Path::new(r"C:\a&b\spanreed.exe"));
+            assert!(xml.contains("a&amp;b"));
+            assert!(!xml.contains(r"a&b"));
+        }
     }
 }
 

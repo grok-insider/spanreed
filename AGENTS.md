@@ -222,7 +222,18 @@ SPANREED_OFFLINE=1 cargo test --all
 | **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
 | **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
-| **api.grokinsider.net** | Future opt-in **share** of aggregated usage metrics for the web dashboard — not install hosting. |
+| **api.grokinsider.net** | Opt-in **anonymous share** (`spanreed share` → `POST /v1/usage/snapshots`, no auth) into a public plan metric pool for **grokinsider.net/spanreed**. Not install hosting. |
 
 Do not re-attach install scripts to GH Releases. Keep public one-liners pointing at
 the website.
+
+### Share → public plan pool (anonymous)
+
+- **No login / no share token.** Contributions are not tied to a user.
+- **Automatic:** `spanreed setup` enables a daily job at **23:00 Europe/Madrid**
+  (`src/share_schedule.rs` → systemd timer / launchd / Windows task).
+- Manual: `spanreed share`. Optional `SPANREED_API_BASE`.
+- Payload: quota/plan/cost/error lines (`src/share.rs`). Multi-provider (Grok
+  focus first; Codex, Claude, … already included in probe/share).
+- Site `/spanreed` is **metrics only** (public summary). No install CTA.
+- Workspace notes: `grok-insider/docs/spanreed.md`.
