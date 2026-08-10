@@ -275,7 +275,8 @@ mod tests {
             ],
         };
         let snap = snapshot_from_outputs(&[out], "0.0.1");
-        assert_eq!(snap.schema_version, 1);
+        // Cost text + weekly pool → schema v2 economics payload.
+        assert_eq!(snap.schema_version, 2);
         assert_eq!(snap.source.app, "spanreed");
         assert_eq!(snap.source.version, "0.0.1");
         assert_eq!(snap.providers.len(), 1);
@@ -285,6 +286,7 @@ mod tests {
         assert_eq!(snap.providers[0].lines[0].kind, "percent");
         assert_eq!(snap.providers[0].lines[0].used, Some(42.5));
         assert_eq!(snap.providers[0].lines[1].kind, "text");
+        assert!(snap.providers[0].economics.is_some());
         // No secret fields in serialized JSON.
         let v = serde_json::to_value(&snap).unwrap();
         let s = v.to_string().to_ascii_lowercase();
