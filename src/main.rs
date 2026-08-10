@@ -7,6 +7,8 @@
 //!   spanreed json                 Emit raw JSON of all detected providers.
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
 //!   spanreed capture serve        Dual capture proxy (Grok CLI + api.x.ai).
+//!   spanreed capture serve --watchdog  Restart capture if it exits.
+//!   spanreed capture ensure       Start capture (with watchdog) if ports down.
 //!   spanreed grok-proxy [...]     Single-listener capture (compat alias).
 //!   spanreed setup [...]          Install CLI, optional capture service, wire Grok/OpenCode.
 //!   spanreed auth copilot [...]   Opt-in link a GitHub token for Copilot.
@@ -15,6 +17,8 @@
 
 mod activity;
 mod api;
+mod capture_log;
+mod capture_watchdog;
 mod cost;
 mod creds;
 mod forecast;
@@ -103,8 +107,10 @@ fn print_help() {
          \tspanreed history [id]         Show recorded rate-limit history (JSONL)\n\
          \tspanreed capture serve        Dual capture: Grok CLI :18736 + api.x.ai :18737\n\
          \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
-         \tspanreed capture ensure      Start capture if ports are down (no re-wire)\n\
-         \tspanreed capture status      Exit 0 if listening, 1 if DOWN\n\
+         \t  --watchdog                   Keep capture alive (restart on exit; logs to\n\
+         \t                               %%LOCALAPPDATA%%/spanreed/logs/capture.log)\n\
+         \tspanreed capture ensure      Start capture+watchdog if ports are down\n\
+         \tspanreed capture status      Exit 0 if listening, 1 if DOWN; print log path\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
          \t                               Single-listener capture (compat)\n\
          \tspanreed setup               Install CLI, ledger, optional capture service,\n\
@@ -304,12 +310,28 @@ fn cmd_serve(args: &[String]) -> ExitCode {
 fn cmd_capture(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("serve") | None => {
-            // Optional overrides: --grok-cli-bind, --xai-api-bind
+            // Optional overrides: --grok-cli-bind, --xai-api-bind, --watchdog
             let rest = if args.first().map(String::as_str) == Some("serve") {
                 &args[1..]
             } else {
                 args
             };
+            let watchdog = rest.iter().any(|a| a == "--watchdog");
+            if watchdog {
+                let serve_args: Vec<String> = rest
+                    .iter()
+                    .filter(|a| a.as_str() != "--watchdog")
+                    .cloned()
+                    .collect();
+                return match capture_watchdog::run(&serve_args) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("capture watchdog: {e}");
+                        capture_log::append(&format!("watchdog fatal: {e}"));
+                        ExitCode::FAILURE
+                    }
+                };
+            }
             let grok_bind = rest
                 .iter()
                 .position(|a| a == "--grok-cli-bind")
@@ -332,10 +354,18 @@ fn cmd_capture(args: &[String]) -> ExitCode {
                     label: "xai-api".into(),
                 },
             ];
+            capture_log::append(&format!(
+                "capture serve start binds={}/{}",
+                listeners[0].bind, listeners[1].bind
+            ));
             match grok_proxy::run_capture(&listeners) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(()) => {
+                    capture_log::append("capture serve exit ok");
+                    ExitCode::SUCCESS
+                }
                 Err(e) => {
                     eprintln!("capture error: {e}");
+                    capture_log::append(&format!("capture serve error: {e}"));
                     ExitCode::FAILURE
                 }
             }
@@ -355,6 +385,7 @@ fn cmd_capture(args: &[String]) -> ExitCode {
         }
         Some("status") => {
             let up = setup::capture_ports_up();
+            let log = capture_log::capture_log_path();
             println!(
                 "capture: {}",
                 if up {
@@ -363,6 +394,7 @@ fn cmd_capture(args: &[String]) -> ExitCode {
                     "DOWN — run `spanreed capture ensure`"
                 }
             );
+            println!("log:     {}", log.display());
             if up {
                 ExitCode::SUCCESS
             } else {
@@ -372,7 +404,7 @@ fn cmd_capture(args: &[String]) -> ExitCode {
         Some(other) => {
             eprintln!("unknown capture subcommand: {other}");
             eprintln!(
-                "usage: spanreed capture serve [--grok-cli-bind A] [--xai-api-bind B]\n\
+                "usage: spanreed capture serve [--watchdog] [--grok-cli-bind A] [--xai-api-bind B]\n\
                  \t spanreed capture ensure [--dry-run]\n\
                  \t spanreed capture status"
             );

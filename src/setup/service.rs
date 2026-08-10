@@ -134,7 +134,7 @@ mod platform {
              Wants=network-online.target\n\
              \n\
              [Service]\n\
-             ExecStart={bin} capture serve\n\
+             ExecStart={bin} capture serve --watchdog\n\
              Restart=on-failure\n\
              RestartSec=3\n\
              \n\
@@ -170,7 +170,7 @@ mod platform {
             }
         }
         Command::new(bin)
-            .args(["capture", "serve"])
+            .args(["capture", "serve", "--watchdog"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -263,6 +263,7 @@ mod platform {
     <string>{bin}</string>
     <string>capture</string>
     <string>serve</string>
+    <string>--watchdog</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -318,7 +319,7 @@ mod platform {
             }
         }
         Command::new(bin)
-            .args(["capture", "serve"])
+            .args(["capture", "serve", "--watchdog"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -355,7 +356,8 @@ mod platform {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     fn run_command_value(bin: &std::path::Path) -> String {
-        format!("\"{}\" capture serve", bin.display())
+        // Watchdog restarts the worker if it exits mid-session.
+        format!("\"{}\" capture serve --watchdog", bin.display())
     }
 
     pub fn status() -> String {
@@ -438,9 +440,10 @@ mod platform {
 
     pub fn start_now(bin: &std::path::Path) -> Result<(), String> {
         // PowerShell Start-Process detaches cleanly (no console, survives parent exit).
+        // --watchdog keeps capture alive if the worker process exits.
         let path = bin.display().to_string().replace('\'', "''");
         let script = format!(
-            "Start-Process -FilePath '{path}' -ArgumentList 'capture','serve' -WindowStyle Hidden"
+            "Start-Process -FilePath '{path}' -ArgumentList 'capture','serve','--watchdog' -WindowStyle Hidden"
         );
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
@@ -536,7 +539,7 @@ mod platform {
     }
     pub fn start_now(bin: &std::path::Path) -> Result<(), String> {
         Command::new(bin)
-            .args(["capture", "serve"])
+            .args(["capture", "serve", "--watchdog"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
