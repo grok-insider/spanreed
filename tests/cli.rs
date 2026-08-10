@@ -11,7 +11,12 @@ fn bin() -> &'static str {
 /// Run the binary with args in a clean, isolated HOME so it never touches the
 /// developer's real credentials/logs, and capture stdout.
 fn run(args: &[&str]) -> (String, std::process::ExitStatus) {
-    // Point HOME/XDG at an empty temp dir so no provider detects/probes.
+    let (stdout, _stderr, status) = run_full(args, true);
+    (stdout, status)
+}
+
+/// Full capture (stdout+stderr). When `offline`, sets SPANREED_OFFLINE=1.
+fn run_full(args: &[&str], offline: bool) -> (String, String, std::process::ExitStatus) {
     let tmp = std::env::temp_dir().join(format!(
         "spanreed-it-{}-{}",
         std::process::id(),
@@ -19,15 +24,12 @@ fn run(args: &[&str]) -> (String, std::process::ExitStatus) {
     ));
     let _ = std::fs::create_dir_all(&tmp);
 
-    let out = Command::new(bin())
-        .args(args)
+    let mut cmd = Command::new(bin());
+    cmd.args(args)
         .env("HOME", &tmp)
         .env("XDG_CONFIG_HOME", tmp.join("config"))
         .env("XDG_DATA_HOME", tmp.join("data"))
         .env("XDG_CACHE_HOME", tmp.join("cache"))
-        // Never fetch the remote pricing table from tests/CI.
-        .env("SPANREED_OFFLINE", "1")
-        // Strip provider env keys so detection is deterministic.
         .env_remove("ZAI_API_KEY")
         .env_remove("GLM_API_KEY")
         .env_remove("MINIMAX_API_KEY")
@@ -36,12 +38,17 @@ fn run(args: &[&str]) -> (String, std::process::ExitStatus) {
         .env_remove("SYNTHETIC_API_KEY")
         .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
         .env_remove("CODEX_HOME")
-        .env_remove("CLAUDE_CONFIG_DIR")
-        .output()
-        .expect("run spanreed");
+        .env_remove("CLAUDE_CONFIG_DIR");
+    if offline {
+        cmd.env("SPANREED_OFFLINE", "1");
+    } else {
+        cmd.env_remove("SPANREED_OFFLINE");
+    }
+    let out = cmd.output().expect("run spanreed");
     let _ = std::fs::remove_dir_all(&tmp);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
         out.status,
     )
 }
@@ -109,9 +116,56 @@ fn help_lists_subcommands() {
         "grok-proxy",
         "setup",
         "auth",
+        "share",
     ] {
         assert!(stdout.contains(word), "help missing '{word}'");
     }
+    assert!(
+        stdout.contains("share login") || stdout.contains("login"),
+        "help should mention share login\n{stdout}"
+    );
+}
+
+#[test]
+fn share_help_documents_auth_subcommands() {
+    let (stdout, status) = run(&["share", "--help"]);
+    assert!(status.success(), "share --help failed\n{stdout}");
+    for word in ["login", "logout", "status"] {
+        assert!(
+            stdout.contains(word),
+            "share help missing '{word}'\n{stdout}"
+        );
+    }
+    assert!(
+        stdout.contains("SPANREED_API_BASE") || stdout.contains("authenticated"),
+        "share help should mention auth/API base\n{stdout}"
+    );
+}
+
+#[test]
+fn share_status_without_session_instructs_login() {
+    let (stdout, stderr, status) = run_full(&["share", "status"], true);
+    assert!(!status.success(), "status should fail without session");
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("not logged in") || combined.contains("share login"),
+        "expected login instruction\n{combined}"
+    );
+}
+
+#[test]
+fn share_without_session_instructs_login() {
+    // Online path (no OFFLINE) so share attempts auth gate before probe skip.
+    let (stdout, stderr, status) = run_full(&["share"], false);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        !status.success(),
+        "share without session must fail\n{combined}"
+    );
+    assert!(
+        combined.contains("not logged in") || combined.contains("share login"),
+        "expected login instruction\n{combined}"
+    );
 }
 
 #[test]
