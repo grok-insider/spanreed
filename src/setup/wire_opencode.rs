@@ -20,25 +20,19 @@ pub fn is_wired_to_capture(det: &Detection, state: &SetupState) -> bool {
         return state.wired.opencode_xai.is_some();
     };
     match read_xai_base_url(&path) {
-        Some(url) => {
-            url == OPENCODE_XAI_CAPTURE_BASE_URL || url.contains("127.0.0.1:18737")
-        }
+        Some(url) => url == OPENCODE_XAI_CAPTURE_BASE_URL || url.contains("127.0.0.1:18737"),
         None => false,
     }
 }
 
 pub fn status_line(det: &Detection, state: &SetupState) -> String {
-    let path = det
-        .opencode
-        .config_path
-        .clone()
-        .or_else(|| {
-            state
-                .wired
-                .opencode_xai
-                .as_ref()
-                .map(|w| std::path::PathBuf::from(&w.path))
-        });
+    let path = det.opencode.config_path.clone().or_else(|| {
+        state
+            .wired
+            .opencode_xai
+            .as_ref()
+            .map(|w| std::path::PathBuf::from(&w.path))
+    });
     let Some(path) = path else {
         return "no config".into();
     };
@@ -84,7 +78,8 @@ pub fn wire(dry_run: bool, state: &mut SetupState, det: &Detection) -> Result<St
     }
 
     let mut root = if path.exists() {
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("read opencode.json: {e}"))?;
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("read opencode.json: {e}"))?;
         serde_json::from_str::<serde_json::Value>(text.trim())
             .map_err(|e| format!("parse opencode.json: {e}"))?
     } else {
