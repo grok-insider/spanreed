@@ -8,6 +8,7 @@
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
 //!   spanreed capture serve        Dual capture proxy (Grok CLI + api.x.ai).
 //!   spanreed grok-proxy [...]     Single-listener capture (compat alias).
+//!   spanreed setup [...]          Install CLI, optional capture service, wire Grok/OpenCode.
 //!   spanreed auth copilot [...]   Opt-in link a GitHub token for Copilot.
 //!   spanreed auth logout copilot  Forget the stored Copilot credential.
 //!   spanreed update-pricing [out] Fetch + filter the upstream price table.
@@ -28,6 +29,7 @@ mod probe;
 mod proc;
 mod providers;
 mod secret;
+mod setup;
 mod usage_stats;
 mod util;
 
@@ -71,6 +73,7 @@ fn main() -> ExitCode {
         "history" => cmd_history(rest),
         "capture" => cmd_capture(rest),
         "grok-proxy" => cmd_grok_proxy(rest),
+        "setup" => setup::cmd(rest),
         "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),
         "help" | "-h" | "--help" => {
@@ -100,8 +103,18 @@ fn print_help() {
          \tspanreed history [id]         Show recorded rate-limit history (JSONL)\n\
          \tspanreed capture serve        Dual capture: Grok CLI :18736 + api.x.ai :18737\n\
          \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
+         \tspanreed capture ensure      Start capture if ports are down (no re-wire)\n\
+         \tspanreed capture status      Exit 0 if listening, 1 if DOWN\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
          \t                               Single-listener capture (compat)\n\
+         \tspanreed setup               Install CLI, ledger, optional capture service,\n\
+         \t                               and wire Grok Build + OpenCode xAI to the proxy\n\
+         \t  --yes / -y                   Non-interactive defaults (service off unless --service)\n\
+         \t  --service                    Enable capture user service (with --yes)\n\
+         \t  --dry-run --no-wire --from-current-exe\n\
+         \tspanreed setup status        Show install / wire / service state\n\
+         \t                               (exit 1 if clients wired but proxy DOWN)\n\
+         \tspanreed setup uninstall     Unwire clients and disable capture service\n\
          \tspanreed auth copilot         Link Copilot (opt-in; pick gh user or paste)\n\
          \t  --user LOGIN                 Import token for that gh account\n\
          \t  --token-stdin                Read token from stdin\n\
@@ -292,15 +305,20 @@ fn cmd_capture(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("serve") | None => {
             // Optional overrides: --grok-cli-bind, --xai-api-bind
-            let grok_bind = args
+            let rest = if args.first().map(String::as_str) == Some("serve") {
+                &args[1..]
+            } else {
+                args
+            };
+            let grok_bind = rest
                 .iter()
                 .position(|a| a == "--grok-cli-bind")
-                .and_then(|i| args.get(i + 1))
+                .and_then(|i| rest.get(i + 1))
                 .cloned();
-            let xai_bind = args
+            let xai_bind = rest
                 .iter()
                 .position(|a| a == "--xai-api-bind")
-                .and_then(|i| args.get(i + 1))
+                .and_then(|i| rest.get(i + 1))
                 .cloned();
             let listeners = vec![
                 grok_proxy::ListenerConfig {
@@ -322,9 +340,42 @@ fn cmd_capture(args: &[String]) -> ExitCode {
                 }
             }
         }
+        Some("ensure") => {
+            let dry = args.iter().any(|a| a == "--dry-run");
+            match setup::service_ensure(dry) {
+                Ok(msg) => {
+                    println!("{msg}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("capture ensure: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Some("status") => {
+            let up = setup::capture_ports_up();
+            println!(
+                "capture: {}",
+                if up {
+                    "listening (18736 + 18737)"
+                } else {
+                    "DOWN — run `spanreed capture ensure`"
+                }
+            );
+            if up {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
         Some(other) => {
             eprintln!("unknown capture subcommand: {other}");
-            eprintln!("usage: spanreed capture serve [--grok-cli-bind A] [--xai-api-bind B]");
+            eprintln!(
+                "usage: spanreed capture serve [--grok-cli-bind A] [--xai-api-bind B]\n\
+                 \t spanreed capture ensure [--dry-run]\n\
+                 \t spanreed capture status"
+            );
             ExitCode::FAILURE
         }
     }

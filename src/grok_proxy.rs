@@ -147,6 +147,12 @@ fn handle_client(
     let mut reader = BufReader::new(client.try_clone().map_err(|e| e.to_string())?);
     let (method, path, headers, body) = read_http_request(&mut reader)?;
 
+    // Local health (not forwarded). Used by ops / `capture status` checks.
+    if is_local_health_path(&path) {
+        let _ = method;
+        return write_health_response(&mut client, label);
+    }
+
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let upstream_base = upstream_base.trim_end_matches('/');
     let url = format!("{upstream_base}{path}");
@@ -302,6 +308,31 @@ fn record_usage_from_capture(
 }
 
 type HttpRequest = (String, String, HashMap<String, String>, Vec<u8>);
+
+fn is_local_health_path(path: &str) -> bool {
+    let p = path.split('?').next().unwrap_or(path);
+    p == "/__spanreed/health"
+        || p == "/__spanreed/health/"
+        || p.ends_with("/__spanreed/health")
+}
+
+fn write_health_response(client: &mut TcpStream, label: &str) -> Result<(), String> {
+    let body = format!(
+        "{{\"ok\":true,\"service\":\"spanreed-capture\",\"label\":\"{label}\"}}"
+    );
+    write!(
+        client,
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {body}",
+        body.len()
+    )
+    .map_err(|e| format!("write health: {e}"))?;
+    Ok(())
+}
 
 fn read_http_request(reader: &mut BufReader<TcpStream>) -> Result<HttpRequest, String> {
     let mut first = String::new();
