@@ -222,21 +222,22 @@ SPANREED_OFFLINE=1 cargo test --all
 | **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
 | **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
-| **api.grokinsider.net** | Opt-in **anonymous share** (`spanreed share` → `POST /v1/usage/snapshots`, no auth) into a public plan metric pool for **grokinsider.net/spanreed**. Not install hosting. |
+| **api.grokinsider.net** | Opt-in **authenticated share** (`share login` + Bearer `POST /v1/usage/snapshots`) into a public plan metric pool for **grokinsider.net/spanreed**. Not install hosting. |
 
 Do not re-attach install scripts to GH Releases. Keep public one-liners pointing at
 the website.
 
-### Share → public plan pool (anonymous)
+### Share → public plan pool (X-linked)
 
-- **No login / no share token.** Contributions are not tied to a user.
+- **Requires Grok Insider account** (Sign in with X once via device flow).
+- **Login:** `spanreed share login` → browser `/spanreed/link` → approve.
 - **Automatic:** `spanreed setup` enables **once-per-day** auto-share
   (`src/share_schedule.rs`): preferred evening timer (**23:00 Europe/Madrid** /
   local) **plus** login / missed-run catch-up (systemd `Persistent` + login
   oneshot; macOS `RunAtLoad`; Windows `StartWhenAvailable` + logon).
 - **Due-gate:** client records `last_share_day` (product day UTC+1 Madrid);
-  second trigger same day no-ops. Manual: `spanreed share` (`--force` retries).
+  server **upserts** same day. Manual: `spanreed share` (`--force` retries).
 - Optional `SPANREED_API_BASE`. Payload: quota/plan/cost/error + economics
-  (`src/share.rs`). Multi-provider.
-- Site `/spanreed` is **metrics only** (public summary). No install CTA.
+  (`src/share.rs`). Vote = server `user_id`; install id is device-only.
+- Site `/spanreed` is **metrics only** (public summary). Link page for CLI.
 - Workspace notes: `grok-insider/docs/spanreed.md`.

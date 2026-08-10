@@ -1,15 +1,17 @@
-//! Opt-in anonymous share of aggregated usage snapshots to api.grokinsider.net.
+//! Opt-in **authenticated** share of aggregated usage snapshots to
+//! api.grokinsider.net (Grok Insider account via Sign in with X).
 //!
-//! Contributions are **not** tied to a user account. They feed a public pool
-//! used to compare how much value (limits / pool pressure / token signals)
-//! different subscription plans deliver over time.
+//! Contributions are tied to a stable `user_id` on the server (not the raw
+//! install UUID). They feed a public pool used to compare how much value
+//! (limits / pool pressure / token signals) different subscription plans
+//! deliver over time.
 //!
-//! **At most once per product day** (Europe/Madrid, fixed UTC+1 — same as the
-//! API). Auto-share is installed by `spanreed setup` via
-//! [`crate::share_schedule`] (evening timer + catch-up on login / missed run).
-//! Manual `spanreed share` still works; a second send the same day is a no-op.
+//! **Login once:** `spanreed share login` (device code → browser X login).
+//! **At most one meaningful sample per product day** (Europe/Madrid); the
+//! server **upserts** the same day. Auto-share is installed by
+//! `spanreed setup` via [`crate::share_schedule`].
 //!
-//! Never includes provider tokens, API keys, raw capture logs, or user identity.
+//! Never includes provider tokens, API keys, or raw capture logs.
 
 use std::path::PathBuf;
 
@@ -62,7 +64,7 @@ pub struct ShareLine {
     pub value: Option<String>,
 }
 
-/// Map probe outputs → anonymous API snapshot.
+/// Map probe outputs → community share API snapshot.
 ///
 /// Includes quota/plan/cost lines (and errors) plus structured **economics**
 /// (observed API $ and at 100% pool estimates). Multi-model mixes are valued in
@@ -215,9 +217,10 @@ pub enum PostOutcome {
     AlreadyCounted,
 }
 
-/// POST anonymous snapshot to API (no auth).
+/// POST authenticated snapshot (Bearer + install client id).
 pub fn post_snapshot(
     base: &str,
+    access_token: &str,
     snap: &ShareSnapshot,
     client_id: &str,
 ) -> Result<PostOutcome, String> {
@@ -225,6 +228,7 @@ pub fn post_snapshot(
     let body = serde_json::to_string(snap).map_err(|e| e.to_string())?;
     let res = Request::post(url)
         .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {access_token}"))
         .header("X-OpenUsage-Client", client_id)
         .header(
             "User-Agent",
@@ -236,8 +240,9 @@ pub fn post_snapshot(
     if res.status >= 200 && res.status < 300 {
         Ok(PostOutcome::Accepted(res.status))
     } else if res.status == 429 {
-        // API: 1 sample / contributor / Madrid day (and IP caps).
         Ok(PostOutcome::AlreadyCounted)
+    } else if res.status == 401 {
+        Err("share unauthorized — run: spanreed share login".into())
     } else {
         Err(format!(
             "share failed HTTP {}: {}",
@@ -250,18 +255,29 @@ pub fn post_snapshot(
 pub fn cmd(args: &[String]) -> std::process::ExitCode {
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!(
-            "spanreed share — opt-in anonymous upload of plan/quota metrics\n\n\
+            "spanreed share — authenticated upload of plan/quota metrics\n\n\
+             Requires a Grok Insider account (Sign in with X) linked once via:\n\
+               spanreed share login\n\n\
              Sends aggregated provider+plan lines to the public community pool\n\
-             on grokinsider.net (no login, no user id). Used to track how much\n\
-             value different subscription plans deliver over time.\n\n\
-             At most once per day (product TZ {tz}). A second run the same day\n\
-             exits successfully without re-uploading unless --force.\n\n\
+             on grokinsider.net. Server identity is your account (not install id).\n\n\
+             At most one local send per day (product TZ {tz}) unless --force.\n\
+             Same-day re-send upserts on the server.\n\n\
+             Subcommands: login | logout | status\n\
              Optional SPANREED_API_BASE (default {DEFAULT_API_BASE}).\n\
              SPANREED_OFFLINE=1 skips the network call.\n\
-             --force  bypass local same-day skip (API may still rate-limit).",
+             --force  bypass local same-day skip.",
             tz = util::SHARE_TZ_LABEL
         );
         return std::process::ExitCode::SUCCESS;
+    }
+
+    if let Some(sub) = args.first().map(String::as_str) {
+        match sub {
+            "login" => return crate::share_session::cmd_login(),
+            "logout" => return crate::share_session::cmd_logout(),
+            "status" => return crate::share_session::cmd_status(),
+            _ => {}
+        }
     }
 
     let force = args.iter().any(|a| a == "--force");
@@ -276,6 +292,15 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
         eprintln!("share: already sent for {day} (use --force to retry)");
         return std::process::ExitCode::SUCCESS;
     }
+
+    let base = api_base();
+    let access = match crate::share_session::ensure_access(&base) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("share: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
 
     let outputs = probe::probe_detected();
     let version = env!("CARGO_PKG_VERSION");
@@ -293,14 +318,13 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
         }
     };
 
-    let base = api_base();
-    match post_snapshot(&base, &snap, &client_id) {
+    match post_snapshot(&base, &access, &snap, &client_id) {
         Ok(PostOutcome::Accepted(status)) => {
             if let Err(e) = mark_shared_day(&day) {
                 eprintln!("share: warning: could not record day: {e}");
             }
             println!(
-                "shared {} provider(s) anonymously to {base} (HTTP {status}, day {day})",
+                "shared {} provider(s) to {base} (HTTP {status}, day {day})",
                 snap.providers.len()
             );
             std::process::ExitCode::SUCCESS
@@ -309,8 +333,35 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
             if let Err(e) = mark_shared_day(&day) {
                 eprintln!("share: warning: could not record day: {e}");
             }
-            eprintln!("share: already counted for {day} (HTTP 429) — marked local day");
+            eprintln!("share: rate-limited for {day} (HTTP 429) — marked local day");
             std::process::ExitCode::SUCCESS
+        }
+        Err(e) if e.contains("unauthorized") => {
+            // Try one refresh then retry
+            match crate::share_session::refresh_access(&base) {
+                Ok(sess) => match post_snapshot(&base, &sess.access_token, &snap, &client_id) {
+                    Ok(PostOutcome::Accepted(status)) => {
+                        let _ = mark_shared_day(&day);
+                        println!(
+                            "shared {} provider(s) to {base} (HTTP {status}, day {day})",
+                            snap.providers.len()
+                        );
+                        std::process::ExitCode::SUCCESS
+                    }
+                    Ok(PostOutcome::AlreadyCounted) => {
+                        let _ = mark_shared_day(&day);
+                        std::process::ExitCode::SUCCESS
+                    }
+                    Err(e2) => {
+                        eprintln!("{e2}");
+                        std::process::ExitCode::FAILURE
+                    }
+                },
+                Err(re) => {
+                    eprintln!("share: {re}");
+                    std::process::ExitCode::FAILURE
+                }
+            }
         }
         Err(e) => {
             eprintln!("{e}");
