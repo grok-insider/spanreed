@@ -182,13 +182,11 @@ mod platform {
         if !path.exists() {
             return format!("launchd ({LABEL}: not installed)");
         }
-        let out = Command::new("launchctl")
-            .args(["list", LABEL])
-            .output();
+        let out = Command::new("launchctl").args(["list", LABEL]).output();
         match out {
-            Ok(o) if o.status.success() => format!(
-                "launchd ({LABEL}: loaded, daily {HOUR:02}:{MINUTE:02} local ≈ {TZ_LABEL})"
-            ),
+            Ok(o) if o.status.success() => {
+                format!("launchd ({LABEL}: loaded, daily {HOUR:02}:{MINUTE:02} local ≈ {TZ_LABEL})")
+            }
             _ => format!("launchd ({LABEL}: plist present, not loaded)"),
         }
     }
@@ -311,18 +309,8 @@ mod platform {
             .output();
         let out = Command::new("schtasks")
             .args([
-                "/Create",
-                "/TN",
-                TASK_NAME,
-                "/SC",
-                "DAILY",
-                "/ST",
-                &st,
-                "/RL",
-                "LIMITED",
-                "/F",
-                "/TR",
-                &tr,
+                "/Create", "/TN", TASK_NAME, "/SC", "DAILY", "/ST", &st, "/RL", "LIMITED", "/F",
+                "/TR", &tr,
             ])
             .creation_flags(CREATE_NO_WINDOW)
             .output()

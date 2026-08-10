@@ -447,10 +447,7 @@ fn print_status() -> ExitCode {
 
     let svc = service::status();
     println!("  Capture service:  {svc}");
-    println!(
-        "  Share schedule:   {}",
-        crate::share_schedule::status()
-    );
+    println!("  Share schedule:   {}", crate::share_schedule::status());
 
     println!(
         "  Grok Build:       {} — {}",
