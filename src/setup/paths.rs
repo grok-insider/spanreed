@@ -62,10 +62,10 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
 /// Ensure the install directory is on the user PATH. Returns true if PATH was modified.
 pub fn ensure_install_dir_on_user_path(dry_run: bool) -> Result<bool, String> {
     let dir = install_dir();
-    let dir_s = dir.display().to_string();
 
     #[cfg(windows)]
     {
+        let dir_s = dir.display().to_string();
         ensure_windows_user_path(&dir_s, dry_run)
     }
     #[cfg(not(windows))]
