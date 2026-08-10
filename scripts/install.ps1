@@ -61,12 +61,16 @@ if ($FromPath) {
     Copy-OpenUsageBinary -Source $FromPath -Destination $Dest
     Write-Host "Installed $Dest from $FromPath"
 } else {
-    $Asset = "spanreed-x86_64-pc-windows-msvc.zip"
+    # Asset names include the semver: spanreed-0.0.1-x86_64-pc-windows-msvc.zip
+    $ResolvedTag = $Tag
     if ($Tag -eq "latest") {
-        $Url = "https://github.com/$Repo/releases/latest/download/$Asset"
-    } else {
-        $Url = "https://github.com/$Repo/releases/download/$Tag/$Asset"
+        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
+        $ResolvedTag = $rel.tag_name
+        if (-not $ResolvedTag) { throw "could not resolve latest release tag for $Repo" }
     }
+    $Version = $ResolvedTag.TrimStart("v")
+    $Asset = "spanreed-$Version-x86_64-pc-windows-msvc.zip"
+    $Url = "https://github.com/$Repo/releases/download/$ResolvedTag/$Asset"
     $Tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("spanreed-install-" + [guid]::NewGuid().ToString())
     New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
     try {
@@ -77,7 +81,7 @@ if ($FromPath) {
         $Bin = Get-ChildItem -Path $Tmp -Recurse -Filter "spanreed.exe" | Select-Object -First 1
         if (-not $Bin) { throw "archive did not contain spanreed.exe" }
         Copy-OpenUsageBinary -Source $Bin.FullName -Destination $Dest
-        Write-Host "Installed $Dest"
+        Write-Host "Installed $Dest (release $ResolvedTag)"
     } finally {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Tmp
     }
