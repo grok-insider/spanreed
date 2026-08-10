@@ -4,10 +4,14 @@
 //! used to compare how much value (limits / pool pressure / token signals)
 //! different subscription plans deliver over time.
 //!
-//! Daily auto-share (23:00 Europe/Madrid) is installed by `spanreed setup`
-//! via [`crate::share_schedule`]. Manual `spanreed share` still works.
+//! **At most once per product day** (Europe/Madrid, fixed UTC+1 — same as the
+//! API). Auto-share is installed by `spanreed setup` via
+//! [`crate::share_schedule`] (evening timer + catch-up on login / missed run).
+//! Manual `spanreed share` still works; a second send the same day is a no-op.
 //!
 //! Never includes provider tokens, API keys, raw capture logs, or user identity.
+
+use std::path::PathBuf;
 
 use crate::http::Request;
 use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
@@ -17,6 +21,7 @@ use crate::util;
 const DEFAULT_API_BASE: &str = "https://api.grokinsider.net";
 const ENV_API_BASE: &str = "SPANREED_API_BASE";
 const ENV_OFFLINE: &str = "SPANREED_OFFLINE";
+const LAST_SHARE_DAY_FILE: &str = "last_share_day";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct ShareSnapshot {
@@ -162,8 +167,60 @@ pub fn is_offline() -> bool {
     )
 }
 
-/// POST anonymous snapshot to API (no auth). Returns status code on success.
-pub fn post_snapshot(base: &str, snap: &ShareSnapshot, client_id: &str) -> Result<u16, String> {
+fn last_share_path() -> PathBuf {
+    crate::creds::config_home()
+        .join("spanreed")
+        .join(LAST_SHARE_DAY_FILE)
+}
+
+/// Last successfully recorded share day (`YYYY-MM-DD`), if any.
+pub fn last_shared_day() -> Option<String> {
+    let raw = crate::creds::read_file(&last_share_path())?;
+    let day = raw.trim();
+    if day.len() == 10 && day.as_bytes()[4] == b'-' && day.as_bytes()[7] == b'-' {
+        Some(day.to_string())
+    } else {
+        None
+    }
+}
+
+/// Whether a share is still due given last recorded day and today's key.
+pub fn is_due_for_day(last: Option<&str>, today: &str) -> bool {
+    match last {
+        None => true,
+        Some(d) => d != today,
+    }
+}
+
+/// Whether a share is still due for the current product day.
+pub fn is_due_today() -> bool {
+    is_due_for_day(last_shared_day().as_deref(), &util::today_day_key_madrid())
+}
+
+/// Persist successful (or server-already-counted) share for the product day.
+pub fn mark_shared_day(day: &str) -> Result<(), String> {
+    let p = last_share_path();
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir last_share_day: {e}"))?;
+    }
+    std::fs::write(&p, format!("{day}\n")).map_err(|e| format!("write last_share_day: {e}"))
+}
+
+/// Outcome of a share POST (for due-gate bookkeeping).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostOutcome {
+    /// Accepted by the API (2xx).
+    Accepted(u16),
+    /// Rate-limited — treat as already counted for the day when possible.
+    AlreadyCounted,
+}
+
+/// POST anonymous snapshot to API (no auth).
+pub fn post_snapshot(
+    base: &str,
+    snap: &ShareSnapshot,
+    client_id: &str,
+) -> Result<PostOutcome, String> {
     let url = format!("{}/v1/usage/snapshots", base.trim_end_matches('/'));
     let body = serde_json::to_string(snap).map_err(|e| e.to_string())?;
     let res = Request::post(url)
@@ -177,7 +234,10 @@ pub fn post_snapshot(base: &str, snap: &ShareSnapshot, client_id: &str) -> Resul
         .send()
         .map_err(|e| e.to_string())?;
     if res.status >= 200 && res.status < 300 {
-        Ok(res.status)
+        Ok(PostOutcome::Accepted(res.status))
+    } else if res.status == 429 {
+        // API: 1 sample / contributor / Madrid day (and IP caps).
+        Ok(PostOutcome::AlreadyCounted)
     } else {
         Err(format!(
             "share failed HTTP {}: {}",
@@ -194,14 +254,26 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
              Sends aggregated provider+plan lines to the public community pool\n\
              on grokinsider.net (no login, no user id). Used to track how much\n\
              value different subscription plans deliver over time.\n\n\
+             At most once per day (product TZ {tz}). A second run the same day\n\
+             exits successfully without re-uploading unless --force.\n\n\
              Optional SPANREED_API_BASE (default {DEFAULT_API_BASE}).\n\
-             SPANREED_OFFLINE=1 skips the network call."
+             SPANREED_OFFLINE=1 skips the network call.\n\
+             --force  bypass local same-day skip (API may still rate-limit).",
+            tz = util::SHARE_TZ_LABEL
         );
         return std::process::ExitCode::SUCCESS;
     }
 
+    let force = args.iter().any(|a| a == "--force");
+
     if is_offline() {
         eprintln!("share: SPANREED_OFFLINE=1 — not sending");
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    let day = util::today_day_key_madrid();
+    if !force && !is_due_today() {
+        eprintln!("share: already sent for {day} (use --force to retry)");
         return std::process::ExitCode::SUCCESS;
     }
 
@@ -223,11 +295,21 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
 
     let base = api_base();
     match post_snapshot(&base, &snap, &client_id) {
-        Ok(status) => {
+        Ok(PostOutcome::Accepted(status)) => {
+            if let Err(e) = mark_shared_day(&day) {
+                eprintln!("share: warning: could not record day: {e}");
+            }
             println!(
-                "shared {} provider(s) anonymously to {base} (HTTP {status})",
+                "shared {} provider(s) anonymously to {base} (HTTP {status}, day {day})",
                 snap.providers.len()
             );
+            std::process::ExitCode::SUCCESS
+        }
+        Ok(PostOutcome::AlreadyCounted) => {
+            if let Err(e) = mark_shared_day(&day) {
+                eprintln!("share: warning: could not record day: {e}");
+            }
+            eprintln!("share: already counted for {day} (HTTP 429) — marked local day");
             std::process::ExitCode::SUCCESS
         }
         Err(e) => {
@@ -241,6 +323,13 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
 mod tests {
     use super::*;
     use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
+
+    #[test]
+    fn due_gate_skips_same_day_only() {
+        assert!(is_due_for_day(None, "2026-08-10"));
+        assert!(is_due_for_day(Some("2026-08-09"), "2026-08-10"));
+        assert!(!is_due_for_day(Some("2026-08-10"), "2026-08-10"));
+    }
 
     #[test]
     fn maps_quota_progress_and_skips_cost_charts() {

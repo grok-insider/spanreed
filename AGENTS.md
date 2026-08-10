@@ -230,10 +230,13 @@ the website.
 ### Share → public plan pool (anonymous)
 
 - **No login / no share token.** Contributions are not tied to a user.
-- **Automatic:** `spanreed setup` enables a daily job at **23:00 Europe/Madrid**
-  (`src/share_schedule.rs` → systemd timer / launchd / Windows task).
-- Manual: `spanreed share`. Optional `SPANREED_API_BASE`.
-- Payload: quota/plan/cost/error lines (`src/share.rs`). Multi-provider (Grok
-  focus first; Codex, Claude, … already included in probe/share).
+- **Automatic:** `spanreed setup` enables **once-per-day** auto-share
+  (`src/share_schedule.rs`): preferred evening timer (**23:00 Europe/Madrid** /
+  local) **plus** login / missed-run catch-up (systemd `Persistent` + login
+  oneshot; macOS `RunAtLoad`; Windows `StartWhenAvailable` + logon).
+- **Due-gate:** client records `last_share_day` (product day UTC+1 Madrid);
+  second trigger same day no-ops. Manual: `spanreed share` (`--force` retries).
+- Optional `SPANREED_API_BASE`. Payload: quota/plan/cost/error + economics
+  (`src/share.rs`). Multi-provider.
 - Site `/spanreed` is **metrics only** (public summary). No install CTA.
 - Workspace notes: `grok-insider/docs/spanreed.md`.

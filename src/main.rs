@@ -137,8 +137,8 @@ fn print_help() {
          \tspanreed share               Anonymous opt-in upload of plan/quota\n\
          \t                               metrics to the public community pool\n\
          \t                               (no login; SPANREED_API_BASE optional)\n\
-         \t                               Daily auto-share at 23:00 Europe/Madrid\n\
-         \t                               is installed by `setup` (share schedule)\n\n\
+         \t                               At most once per day; setup installs\n\
+         \t                               evening timer + login/missed-run catch-up\n\n\
          PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
          \t           synthetic, kimi, copilot, factory, devin,\n\
          \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
