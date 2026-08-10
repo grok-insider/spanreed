@@ -32,9 +32,14 @@ The installer downloads the binary from GitHub Releases, then runs
 
 - install CLI to user PATH  
 - create the Grok capture ledger  
-- start the capture proxy at login (optional)  
+- start the capture proxy at login (optional; **windowless** on Windows)  
 - wire **Grok Build** → `http://127.0.0.1:18736/v1`  
 - wire **OpenCode xAI** → `http://127.0.0.1:18737/v1`  
+
+On Windows, capture autostart uses a user **Scheduled Task** (Hidden) when
+allowed, plus an **HKCU Run** fallback. The watchdog detaches from the console
+(`FreeConsole`) so login does **not** leave a visible `cmd` window; logs go to
+`%LOCALAPPDATA%\spanreed\logs\capture.log`.
 
 ### From a local build
 
@@ -70,6 +75,8 @@ capture first (`setup status` / `capture status`). A dead proxy with live wiring
 looks like a CLI failure. Fix: `spanreed capture ensure`.
 
 Capture logs (Windows): `%LOCALAPPDATA%\spanreed\logs\capture.log`.
+After upgrading spanreed on Windows, re-run `spanreed setup` (or
+`setup --yes --service`) so autostart re-registers the windowless watchdog.
 
 ## Build
 
