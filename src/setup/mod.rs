@@ -121,10 +121,11 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
                 )),
             );
             let do_share_schedule = prompt_yn(
-                "Enable daily anonymous plan share (23:00 Europe/Madrid)?",
+                "Enable daily anonymous plan share (once per day, catch-up when PC is on)?",
                 true,
                 Some(
-                    "uploads provider+plan metrics to the public pool (no login, no user id)"
+                    "uploads provider+plan metrics to the public pool (no login, no user id); \
+                     prefers evening, also runs on login if yesterday's timer was missed"
                         .into(),
                 ),
             );
@@ -266,7 +267,7 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             }
         }
     } else {
-        println!("  Share:    schedule not enabled (daily 23:00 Europe/Madrid off)");
+        println!("  Share:    schedule not enabled (daily auto-share off)");
     }
 
     if do_wire_grok {
