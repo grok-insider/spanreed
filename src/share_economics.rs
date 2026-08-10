@@ -1,4 +1,4 @@
-//! Build anonymous plan economics for community share.
+//! Build plan economics for community share.
 //!
 //! Primary goal: estimate **API list-price $ if rate-limit pools run at 100%**
 //! for a week (and month ≈ week × 30/7). Multi-model mixes are valued as
