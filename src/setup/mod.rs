@@ -103,70 +103,84 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
     let det = detect::scan();
     println!("spanreed setup\n");
 
-    let (do_install, do_ledger, do_service, do_wire_grok, do_wire_opencode) = if !flags.yes {
-        let do_install = prompt_yn(
-            "Install CLI to user PATH?",
-            true,
-            Some(format_hint_install()),
-        );
-        let do_ledger = prompt_yn("Create ledger directory?", true, None);
-        let do_service = prompt_yn(
-            "Start capture proxy at login (user service)?",
-            flags.service,
-            Some(format!(
-                "listens {} + {}",
-                grok_proxy::DEFAULT_GROK_CLI_BIND,
-                grok_proxy::DEFAULT_XAI_API_BIND
-            )),
-        );
-        let (do_wire_grok, do_wire_opencode) = if flags.no_wire {
-            (false, false)
-        } else {
+    let (do_install, do_ledger, do_service, do_share_schedule, do_wire_grok, do_wire_opencode) =
+        if !flags.yes {
+            let do_install = prompt_yn(
+                "Install CLI to user PATH?",
+                true,
+                Some(format_hint_install()),
+            );
+            let do_ledger = prompt_yn("Create ledger directory?", true, None);
+            let do_service = prompt_yn(
+                "Start capture proxy at login (user service)?",
+                flags.service,
+                Some(format!(
+                    "listens {} + {}",
+                    grok_proxy::DEFAULT_GROK_CLI_BIND,
+                    grok_proxy::DEFAULT_XAI_API_BIND
+                )),
+            );
+            let do_share_schedule = prompt_yn(
+                "Enable daily anonymous plan share (23:00 Europe/Madrid)?",
+                true,
+                Some(
+                    "uploads provider+plan metrics to the public pool (no login, no user id)"
+                        .into(),
+                ),
+            );
+            let (do_wire_grok, do_wire_opencode) = if flags.no_wire {
+                (false, false)
+            } else {
+                (
+                    prompt_yn(
+                        "Wire Grok Build → capture :18736?",
+                        det.grok.detected,
+                        Some(det.grok.hint()),
+                    ),
+                    prompt_yn(
+                        "Wire OpenCode xAI → capture :18737?",
+                        det.opencode.detected,
+                        Some(det.opencode.hint()),
+                    ),
+                )
+            };
+            if !prompt_yn("Apply?", true, None) {
+                println!("Aborted.");
+                return ExitCode::SUCCESS;
+            }
+            println!();
             (
-                prompt_yn(
-                    "Wire Grok Build → capture :18736?",
-                    det.grok.detected,
-                    Some(det.grok.hint()),
-                ),
-                prompt_yn(
-                    "Wire OpenCode xAI → capture :18737?",
-                    det.opencode.detected,
-                    Some(det.opencode.hint()),
-                ),
+                do_install,
+                do_ledger,
+                do_service,
+                do_share_schedule,
+                do_wire_grok,
+                do_wire_opencode,
+            )
+        } else {
+            // --yes: service only if --service; share schedule ON by default;
+            // wire only if detected and not --no-wire
+            let do_install = true;
+            let do_ledger = true;
+            let do_service = flags.service;
+            let do_share_schedule = true;
+            let do_wire_grok = !flags.no_wire && det.grok.detected;
+            let do_wire_opencode = !flags.no_wire && det.opencode.detected;
+            println!(
+                "Non-interactive: install={do_install} ledger={do_ledger} service={do_service} \
+                 share_schedule={do_share_schedule} wire_grok={do_wire_grok} \
+                 wire_opencode={do_wire_opencode} dry_run={}\n",
+                flags.dry_run
+            );
+            (
+                do_install,
+                do_ledger,
+                do_service,
+                do_share_schedule,
+                do_wire_grok,
+                do_wire_opencode,
             )
         };
-        if !prompt_yn("Apply?", true, None) {
-            println!("Aborted.");
-            return ExitCode::SUCCESS;
-        }
-        println!();
-        (
-            do_install,
-            do_ledger,
-            do_service,
-            do_wire_grok,
-            do_wire_opencode,
-        )
-    } else {
-        // --yes: service only if --service; wire only if detected and not --no-wire
-        let do_install = true;
-        let do_ledger = true;
-        let do_service = flags.service;
-        let do_wire_grok = !flags.no_wire && det.grok.detected;
-        let do_wire_opencode = !flags.no_wire && det.opencode.detected;
-        println!(
-            "Non-interactive: install={do_install} ledger={do_ledger} service={do_service} \
-             wire_grok={do_wire_grok} wire_opencode={do_wire_opencode} dry_run={}\n",
-            flags.dry_run
-        );
-        (
-            do_install,
-            do_ledger,
-            do_service,
-            do_wire_grok,
-            do_wire_opencode,
-        )
-    };
 
     let mut state = state::load().unwrap_or_default();
     let mut path_changed = false;
@@ -221,6 +235,38 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
         }
     } else {
         println!("  Capture:  not enabled (run `spanreed capture ensure` or `--service`)");
+    }
+
+    // Always ensure anonymous install id (used by share anti-abuse).
+    if !flags.dry_run {
+        match crate::client_id::ensure() {
+            Ok(id) => println!(
+                "  Client:   {}… (anonymous install id)",
+                id.chars().take(8).collect::<String>()
+            ),
+            Err(e) => {
+                eprintln!("  Client:   error: {e}");
+                errors.push(e);
+            }
+        }
+    }
+
+    if do_share_schedule {
+        match crate::share_schedule::enable(flags.dry_run) {
+            Ok(msg) => {
+                println!("  Share:    {msg}");
+                state.share_schedule = Some(state::ServiceState {
+                    enabled: true,
+                    kind: crate::share_schedule::kind_label().into(),
+                });
+            }
+            Err(e) => {
+                eprintln!("  Share:    error: {e}");
+                errors.push(e);
+            }
+        }
+    } else {
+        println!("  Share:    schedule not enabled (daily 23:00 Europe/Madrid off)");
     }
 
     if do_wire_grok {
@@ -294,6 +340,18 @@ fn run_uninstall(flags: SetupFlags) -> ExitCode {
     state.service = Some(state::ServiceState {
         enabled: false,
         kind: service::kind_label().into(),
+    });
+
+    match crate::share_schedule::disable(flags.dry_run) {
+        Ok(msg) => println!("  Share:    {msg}"),
+        Err(e) => {
+            eprintln!("  Share:    {e}");
+            errors.push(e);
+        }
+    }
+    state.share_schedule = Some(state::ServiceState {
+        enabled: false,
+        kind: crate::share_schedule::kind_label().into(),
     });
 
     match wire_grok::unwire(flags.dry_run, &mut state) {
@@ -389,6 +447,7 @@ fn print_status() -> ExitCode {
 
     let svc = service::status();
     println!("  Capture service:  {svc}");
+    println!("  Share schedule:   {}", crate::share_schedule::status());
 
     println!(
         "  Grok Build:       {} — {}",
