@@ -98,10 +98,12 @@ fn line_to_share(line: &MetricLine) -> Option<ShareLine> {
             resets_at,
             ..
         } => {
+            // Keep format kinds distinct so the web does not render absolute
+            // counts (Cursor/Factory/Kiro) as percentages.
             let kind = match format {
                 ProgressFormat::Percent => "percent",
                 ProgressFormat::Dollars => "dollars",
-                ProgressFormat::Count { .. } => "percent", // still numeric progress
+                ProgressFormat::Count { .. } => "count",
             };
             Some(ShareLine {
                 kind: kind.into(),
@@ -262,6 +264,32 @@ mod tests {
         let s = v.to_string().to_ascii_lowercase();
         assert!(!s.contains("token"));
         assert!(!s.contains("password"));
+    }
+
+    #[test]
+    fn maps_count_progress_as_count_not_percent() {
+        // Absolute used/limit (e.g. request pools) must not become "50%".
+        let out = ProviderOutput {
+            provider_id: "cursor".into(),
+            display_name: "Cursor".into(),
+            plan: None,
+            lines: vec![MetricLine::Progress {
+                kind: MetricKind::Quota,
+                label: "Requests".into(),
+                used: 50.0,
+                limit: 500.0,
+                format: ProgressFormat::Count {
+                    suffix: "reqs".into(),
+                },
+                resets_at: None,
+                color: None,
+            }],
+        };
+        let snap = snapshot_from_outputs(&[out], "0.0.1");
+        assert_eq!(snap.providers[0].lines[0].kind, "count");
+        assert_eq!(snap.providers[0].lines[0].used, Some(50.0));
+        assert_eq!(snap.providers[0].lines[0].limit, Some(500.0));
+        assert_ne!(snap.providers[0].lines[0].kind, "percent");
     }
 
     #[test]
