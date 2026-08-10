@@ -59,14 +59,14 @@ pub fn scale_to_full_pool(api_usd_obs: f64, pool_pct: f64) -> Option<f64> {
     if !api_usd_obs.is_finite() || api_usd_obs < 0.0 {
         return None;
     }
-    if !pool_pct.is_finite() || pool_pct < MIN_PCT_SCALE || pool_pct > 100.0 {
+    if !pool_pct.is_finite() || !(MIN_PCT_SCALE..=100.0).contains(&pool_pct) {
         return None;
     }
     Some(api_usd_obs * (100.0 / pool_pct))
 }
 
 pub fn scale_tokens_to_full(tokens_obs: u64, pool_pct: f64) -> Option<u64> {
-    if pool_pct < MIN_PCT_SCALE || pool_pct > 100.0 {
+    if !(MIN_PCT_SCALE..=100.0).contains(&pool_pct) {
         return None;
     }
     Some(((tokens_obs as f64) * (100.0 / pool_pct)).round() as u64)
@@ -77,7 +77,7 @@ pub fn parse_usd_and_tokens(value: &str) -> (Option<f64>, Option<u64>) {
     let mut usd = None;
     let mut tokens = None;
     // $1.23 or ~$1.23
-    for cap in value.split(|c: char| c == '·' || c == '|') {
+    for cap in value.split(['·', '|']) {
         let t = cap.trim();
         if let Some(rest) = t.strip_prefix('~').or(Some(t)) {
             if let Some(s) = rest.strip_prefix('$') {
@@ -111,10 +111,7 @@ pub fn parse_usd_and_tokens(value: &str) -> (Option<f64>, Option<u64>) {
 fn weekly_pct(lines: &[MetricLine]) -> Option<(String, f64)> {
     for l in lines {
         if let MetricLine::Progress {
-            kind,
-            label,
-            used,
-            ..
+            kind, label, used, ..
         } = l
         {
             if *kind == MetricKind::Quota
@@ -131,10 +128,7 @@ fn weekly_pct(lines: &[MetricLine]) -> Option<(String, f64)> {
     }
     for l in lines {
         if let MetricLine::Progress {
-            kind,
-            label,
-            used,
-            ..
+            kind, label, used, ..
         } = l
         {
             if *kind == MetricKind::Quota && label.eq_ignore_ascii_case("Weekly") {
@@ -163,7 +157,10 @@ fn weekly_pct(lines: &[MetricLine]) -> Option<(String, f64)> {
 fn text_value(lines: &[MetricLine], label_sub: &str) -> Option<String> {
     for l in lines {
         if let MetricLine::Text { label, value, .. } = l {
-            if label.to_ascii_lowercase().contains(&label_sub.to_ascii_lowercase()) {
+            if label
+                .to_ascii_lowercase()
+                .contains(&label_sub.to_ascii_lowercase())
+            {
                 return Some(value.clone());
             }
         }
@@ -174,8 +171,7 @@ fn text_value(lines: &[MetricLine], label_sub: &str) -> Option<String> {
 /// Build economics from a probed provider output (and optional model breakdown).
 pub fn from_output(o: &ProviderOutput, by_model: Vec<ModelEconomics>) -> Option<ProviderEconomics> {
     let pool = weekly_pct(&o.lines);
-    let since = text_value(&o.lines, "since weekly")
-        .or_else(|| text_value(&o.lines, "since week"));
+    let since = text_value(&o.lines, "since weekly").or_else(|| text_value(&o.lines, "since week"));
     let last30 = text_value(&o.lines, "last 30");
     let expected_week = text_value(&o.lines, "expected this week");
     let expected_month = text_value(&o.lines, "expected this month");
@@ -236,9 +232,10 @@ pub fn from_output(o: &ProviderOutput, by_model: Vec<ModelEconomics>) -> Option<
     if full_week_api.is_none() {
         if let (Some(usd), Some(pct)) = (api_usd_obs, pool_pct) {
             // Prefer density oneshot when pct high enough
-            if let (Some(tok), Some((tp, cp))) =
-                (tokens_obs, density_oneshot(tokens_obs.unwrap_or(0), usd, pct))
-            {
+            if let (Some(tok), Some((tp, cp))) = (
+                tokens_obs,
+                density_oneshot(tokens_obs.unwrap_or(0), usd, pct),
+            ) {
                 let proj = project_week_to_full(tok, usd, pct, tp, cp, pct < 5.0);
                 full_week_api = Some(proj.cost_usd);
                 full_week_tok = Some(proj.tokens);
@@ -308,7 +305,7 @@ fn grok_models() -> Vec<ModelEconomics> {
             api_usd_list,
         })
         .collect();
-    v.sort_by(|a, b| b.tokens.cmp(&a.tokens));
+    v.sort_by_key(|b| std::cmp::Reverse(b.tokens));
     v.truncate(8);
     v
 }
@@ -353,7 +350,7 @@ mod tests {
     #[test]
     fn multi_model_not_single_price() {
         // Sol-heavy mix must not equal Luna-only pricing of same tokens.
-        let mix = vec![
+        let mix = [
             ModelEconomics {
                 model: "luna".into(),
                 tokens: 10_000_000,
