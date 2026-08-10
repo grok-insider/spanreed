@@ -4,6 +4,15 @@ All notable, user-facing changes to spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.3] - 2026-08-10
+
+- feat(share): require X-linked login for community pool
+- feat(share): due-gate and login/missed-run catch-up
+- test(share): expect schema v2 when economics present
+- fix(share): clippy clean share_economics
+- feat(share): multi-model economics, client_id, daily Madrid schedule
+- fix(windows): run capture watchdog without a console window
+
 ## [0.0.2] - 2026-08-10
 
 - fix(share): map ProgressFormat::Count to kind count not percent
