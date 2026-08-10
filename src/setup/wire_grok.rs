@@ -56,9 +56,7 @@ pub fn wire(dry_run: bool, state: &mut SetupState) -> Result<String, String> {
     }
 
     if dry_run {
-        return Ok(format!(
-            "would set {ENV_KEY}={GROK_CAPTURE_BASE_URL}"
-        ));
+        return Ok(format!("would set {ENV_KEY}={GROK_CAPTURE_BASE_URL}"));
     }
 
     platform::set_env(GROK_CAPTURE_BASE_URL)?;
@@ -150,9 +148,7 @@ mod platform {
     use std::process::Command;
 
     pub fn get_env() -> Option<String> {
-        let script = format!(
-            "[Environment]::GetEnvironmentVariable('{ENV_KEY}','User')"
-        );
+        let script = format!("[Environment]::GetEnvironmentVariable('{ENV_KEY}','User')");
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
@@ -170,9 +166,8 @@ mod platform {
 
     pub fn set_env(value: &str) -> Result<(), String> {
         let escaped = value.replace('\'', "''");
-        let script = format!(
-            "[Environment]::SetEnvironmentVariable('{ENV_KEY}','{escaped}','User')"
-        );
+        let script =
+            format!("[Environment]::SetEnvironmentVariable('{ENV_KEY}','{escaped}','User')");
         let out = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
@@ -190,9 +185,8 @@ mod platform {
         match restore {
             Some(v) => set_env(v),
             None => {
-                let script = format!(
-                    "[Environment]::SetEnvironmentVariable('{ENV_KEY}',$null,'User')"
-                );
+                let script =
+                    format!("[Environment]::SetEnvironmentVariable('{ENV_KEY}',$null,'User')");
                 let out = Command::new("powershell")
                     .args(["-NoProfile", "-NonInteractive", "-Command", &script])
                     .output()

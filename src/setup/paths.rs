@@ -76,9 +76,8 @@ pub fn ensure_install_dir_on_user_path(dry_run: bool) -> Result<bool, String> {
         }
         let on_path = std::env::var_os("PATH")
             .map(|p| {
-                std::env::split_paths(&p).any(|entry| {
-                    canonicalize_opt(&entry) == canonicalize_opt(&dir) || entry == dir
-                })
+                std::env::split_paths(&p)
+                    .any(|entry| canonicalize_opt(&entry) == canonicalize_opt(&dir) || entry == dir)
             })
             .unwrap_or(false);
         if !on_path {
@@ -146,10 +145,7 @@ pub fn backup_file(src: &Path) -> Result<PathBuf, String> {
     }
     let dir = backup_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir backups: {e}"))?;
-    let name = src
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("file");
+    let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
     let ts = crate::util::now_ms();
     let dest = dir.join(format!("{name}.{ts}.bak"));
     std::fs::copy(src, &dest).map_err(|e| format!("backup copy: {e}"))?;
