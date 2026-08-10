@@ -214,3 +214,15 @@ SPANREED_OFFLINE=1 cargo test --all
   **not** choose major/minor by itself.
 - Do **not** hand-edit `CHANGELOG.md` outside a Release PR.
 - No crates.io (`publish = false` only in `release-plz.toml`).
+
+### Distribution (install vs binaries vs share)
+
+| Surface | Role |
+|---------|------|
+| **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
+| **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
+| **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
+| **api.grokinsider.net** | Future opt-in **share** of aggregated usage metrics for the web dashboard — not install hosting. |
+
+Do not re-attach install scripts to GH Releases. Keep public one-liners pointing at
+the website.
