@@ -55,7 +55,12 @@ pub fn snapshot_from_outputs(outputs: &[ProviderOutput], version: &str) -> Share
         let lines: Vec<ShareLine> = o
             .lines
             .iter()
-            .filter(|l| matches!(l.kind(), MetricKind::Quota | MetricKind::Plan | MetricKind::Error))
+            .filter(|l| {
+                matches!(
+                    l.kind(),
+                    MetricKind::Quota | MetricKind::Plan | MetricKind::Error
+                )
+            })
             .filter_map(line_to_share)
             .collect();
         if lines.is_empty() && o.lines.is_empty() {
@@ -73,7 +78,8 @@ pub fn snapshot_from_outputs(outputs: &[ProviderOutput], version: &str) -> Share
     }
     ShareSnapshot {
         schema_version: 1,
-        captured_at: util::ms_to_iso(util::now_ms()).unwrap_or_else(|| "1970-01-01T00:00:00Z".into()),
+        captured_at: util::ms_to_iso(util::now_ms())
+            .unwrap_or_else(|| "1970-01-01T00:00:00Z".into()),
         source: ShareSource {
             app: "spanreed".into(),
             version: version.into(),
@@ -131,7 +137,9 @@ pub fn api_base() -> String {
 }
 
 pub fn share_token() -> Option<String> {
-    std::env::var(ENV_TOKEN).ok().filter(|s| !s.trim().is_empty())
+    std::env::var(ENV_TOKEN)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
 }
 
 pub fn is_offline() -> bool {
@@ -142,15 +150,8 @@ pub fn is_offline() -> bool {
 }
 
 /// POST snapshot to API. Returns status code on success path.
-pub fn post_snapshot(
-    base: &str,
-    token: &str,
-    snap: &ShareSnapshot,
-) -> Result<u16, String> {
-    let url = format!(
-        "{}/v1/usage/snapshots",
-        base.trim_end_matches('/')
-    );
+pub fn post_snapshot(base: &str, token: &str, snap: &ShareSnapshot) -> Result<u16, String> {
+    let url = format!("{}/v1/usage/snapshots", base.trim_end_matches('/'));
     let body = serde_json::to_string(snap).map_err(|e| e.to_string())?;
     let res = Request::post(url)
         .header("Authorization", format!("Bearer {token}"))
@@ -281,7 +282,14 @@ mod tests {
         };
         let snap = snapshot_from_outputs(&[out], "0.0.1");
         let keys = collect_keys(&serde_json::to_value(&snap).unwrap());
-        for bad in ["token", "secret", "password", "authorization", "api_key", "credential"] {
+        for bad in [
+            "token",
+            "secret",
+            "password",
+            "authorization",
+            "api_key",
+            "credential",
+        ] {
             assert!(
                 keys.iter().all(|k| !k.to_ascii_lowercase().contains(bad)),
                 "forbidden key substring {bad} in {keys:?}"
