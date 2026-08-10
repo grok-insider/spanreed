@@ -1,6 +1,13 @@
-//! Opt-in share of aggregated usage snapshots to api.grokinsider.net.
+//! Opt-in anonymous share of aggregated usage snapshots to api.grokinsider.net.
 //!
-//! Never includes provider tokens, API keys, or raw capture logs.
+//! Contributions are **not** tied to a user account. They feed a public pool
+//! used to compare how much value (limits / pool pressure / token signals)
+//! different subscription plans deliver over time.
+//!
+//! Daily auto-share (23:00 Europe/Madrid) is installed by `spanreed setup`
+//! via [`crate::share_schedule`]. Manual `spanreed share` still works.
+//!
+//! Never includes provider tokens, API keys, raw capture logs, or user identity.
 
 use crate::http::Request;
 use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
@@ -9,7 +16,6 @@ use crate::util;
 
 const DEFAULT_API_BASE: &str = "https://api.grokinsider.net";
 const ENV_API_BASE: &str = "SPANREED_API_BASE";
-const ENV_TOKEN: &str = "SPANREED_SHARE_TOKEN";
 const ENV_OFFLINE: &str = "SPANREED_OFFLINE";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -32,6 +38,9 @@ pub struct ShareProvider {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
     pub lines: Vec<ShareLine>,
+    /// Structured plan economics (100% pool API $). Schema v2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub economics: Option<crate::share_economics::ProviderEconomics>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -48,9 +57,14 @@ pub struct ShareLine {
     pub value: Option<String>,
 }
 
-/// Map probe outputs → API snapshot (quota/plan/error lines only).
+/// Map probe outputs → anonymous API snapshot.
+///
+/// Includes quota/plan/cost lines (and errors) plus structured **economics**
+/// (observed API $ and at 100% pool estimates). Multi-model mixes are valued in
+/// the CLI, not re-blended on the web.
 pub fn snapshot_from_outputs(outputs: &[ProviderOutput], version: &str) -> ShareSnapshot {
     let mut providers = Vec::new();
+    let mut any_econ = false;
     for o in outputs {
         let lines: Vec<ShareLine> = o
             .lines
@@ -58,26 +72,29 @@ pub fn snapshot_from_outputs(outputs: &[ProviderOutput], version: &str) -> Share
             .filter(|l| {
                 matches!(
                     l.kind(),
-                    MetricKind::Quota | MetricKind::Plan | MetricKind::Error
+                    MetricKind::Quota | MetricKind::Plan | MetricKind::Cost | MetricKind::Error
                 )
             })
             .filter_map(line_to_share)
             .collect();
-        if lines.is_empty() && o.lines.is_empty() {
-            continue;
-        }
-        // Always include provider if it has shareable lines, or if errored with badge.
         if lines.is_empty() {
             continue;
+        }
+        let by_model = crate::share_economics::model_breakdown_for(&o.provider_id);
+        let economics = crate::share_economics::from_output(o, by_model);
+        if economics.is_some() {
+            any_econ = true;
         }
         providers.push(ShareProvider {
             id: o.provider_id.clone(),
             plan: o.plan.clone().filter(|p| !p.trim().is_empty()),
             lines,
+            economics,
         });
     }
     ShareSnapshot {
-        schema_version: 1,
+        // v2 when any economics block present; API still accepts v1 lines-only.
+        schema_version: if any_econ { 2 } else { 1 },
         captured_at: util::ms_to_iso(util::now_ms())
             .unwrap_or_else(|| "1970-01-01T00:00:00Z".into()),
         source: ShareSource {
@@ -138,12 +155,6 @@ pub fn api_base() -> String {
     std::env::var(ENV_API_BASE).unwrap_or_else(|_| DEFAULT_API_BASE.into())
 }
 
-pub fn share_token() -> Option<String> {
-    std::env::var(ENV_TOKEN)
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-}
-
 pub fn is_offline() -> bool {
     matches!(
         std::env::var(ENV_OFFLINE).as_deref(),
@@ -151,13 +162,17 @@ pub fn is_offline() -> bool {
     )
 }
 
-/// POST snapshot to API. Returns status code on success path.
-pub fn post_snapshot(base: &str, token: &str, snap: &ShareSnapshot) -> Result<u16, String> {
+/// POST anonymous snapshot to API (no auth). Returns status code on success.
+pub fn post_snapshot(base: &str, snap: &ShareSnapshot, client_id: &str) -> Result<u16, String> {
     let url = format!("{}/v1/usage/snapshots", base.trim_end_matches('/'));
     let body = serde_json::to_string(snap).map_err(|e| e.to_string())?;
     let res = Request::post(url)
-        .header("Authorization", format!("Bearer {token}"))
         .header("Content-Type", "application/json")
+        .header("X-OpenUsage-Client", client_id)
+        .header(
+            "User-Agent",
+            format!("spanreed/{} (+share)", env!("CARGO_PKG_VERSION")),
+        )
         .body(body)
         .send()
         .map_err(|e| e.to_string())?;
@@ -175,8 +190,10 @@ pub fn post_snapshot(base: &str, token: &str, snap: &ShareSnapshot) -> Result<u1
 pub fn cmd(args: &[String]) -> std::process::ExitCode {
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!(
-            "spanreed share — opt-in upload of aggregated quotas to grokinsider.net\n\n\
-             Requires SPANREED_SHARE_TOKEN (Bearer access JWT from a logged-in session).\n\
+            "spanreed share — opt-in anonymous upload of plan/quota metrics\n\n\
+             Sends aggregated provider+plan lines to the public community pool\n\
+             on grokinsider.net (no login, no user id). Used to track how much\n\
+             value different subscription plans deliver over time.\n\n\
              Optional SPANREED_API_BASE (default {DEFAULT_API_BASE}).\n\
              SPANREED_OFFLINE=1 skips the network call."
         );
@@ -188,27 +205,27 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
 
-    let Some(token) = share_token() else {
-        eprintln!(
-            "share: set SPANREED_SHARE_TOKEN to a Grok Insider access JWT\n\
-             (log in at grokinsider.net, then export the access token for CLI use)."
-        );
-        return std::process::ExitCode::FAILURE;
-    };
-
     let outputs = probe::probe_detected();
     let version = env!("CARGO_PKG_VERSION");
     let snap = snapshot_from_outputs(&outputs, version);
     if snap.providers.is_empty() {
-        eprintln!("share: no quota/plan metrics from detected providers");
+        eprintln!("share: no shareable metrics from detected providers");
         return std::process::ExitCode::FAILURE;
     }
 
+    let client_id = match crate::client_id::ensure() {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("share: client_id: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
     let base = api_base();
-    match post_snapshot(&base, &token, &snap) {
+    match post_snapshot(&base, &snap, &client_id) {
         Ok(status) => {
             println!(
-                "shared {} provider(s) to {base} (HTTP {status})",
+                "shared {} provider(s) anonymously to {base} (HTTP {status})",
                 snap.providers.len()
             );
             std::process::ExitCode::SUCCESS
@@ -241,6 +258,13 @@ mod tests {
                     resets_at: Some("2026-08-17T00:00:00Z".into()),
                     color: None,
                 },
+                MetricLine::Text {
+                    kind: MetricKind::Cost,
+                    label: "Last 30 Days".into(),
+                    value: "$31 · 46M tokens".into(),
+                    color: None,
+                    subtitle: None,
+                },
                 MetricLine::BarChart {
                     kind: MetricKind::Cost,
                     label: "Spend".into(),
@@ -256,13 +280,15 @@ mod tests {
         assert_eq!(snap.source.version, "0.0.1");
         assert_eq!(snap.providers.len(), 1);
         assert_eq!(snap.providers[0].id, "grok");
-        assert_eq!(snap.providers[0].lines.len(), 1);
+        // Quota + cost text; bar charts still skipped.
+        assert_eq!(snap.providers[0].lines.len(), 2);
         assert_eq!(snap.providers[0].lines[0].kind, "percent");
         assert_eq!(snap.providers[0].lines[0].used, Some(42.5));
+        assert_eq!(snap.providers[0].lines[1].kind, "text");
         // No secret fields in serialized JSON.
         let v = serde_json::to_value(&snap).unwrap();
         let s = v.to_string().to_ascii_lowercase();
-        assert!(!s.contains("token"));
+        assert!(!s.contains("\"token\""));
         assert!(!s.contains("password"));
     }
 

@@ -12,6 +12,9 @@ pub struct SetupState {
     pub install_path: Option<String>,
     #[serde(default)]
     pub service: Option<ServiceState>,
+    /// Daily anonymous share at 23:00 Europe/Madrid.
+    #[serde(default)]
+    pub share_schedule: Option<ServiceState>,
     #[serde(default)]
     pub wired: WiredState,
 }
