@@ -58,8 +58,9 @@ case "$arch" in
     ;;
 esac
 
+# Release assets are static musl on Linux (cargo-zigbuild).
 case "$os" in
-  linux) target="${arch}-unknown-linux-gnu" ;;
+  linux) target="${arch}-unknown-linux-musl" ;;
   darwin) target="${arch}-apple-darwin" ;;
   *)
     echo "unsupported OS: $os" >&2
@@ -71,6 +72,38 @@ install_dir="${HOME}/.local/bin"
 mkdir -p "$install_dir"
 dest="${install_dir}/spanreed"
 
+http_get() {
+  # $1 url  $2 outfile (optional: stdout)
+  if command -v curl >/dev/null 2>&1; then
+    if [ -n "${2:-}" ]; then
+      curl -fsSL "$1" -o "$2"
+    else
+      curl -fsSL "$1"
+    fi
+  else
+    if [ -n "${2:-}" ]; then
+      wget -qO "$2" "$1"
+    else
+      wget -qO- "$1"
+    fi
+  fi
+}
+
+resolve_tag() {
+  if [ "$TAG" != "latest" ]; then
+    echo "$TAG"
+    return
+  fi
+  # Asset names include the semver: spanreed-0.0.1-<target>.tar.gz
+  api="https://api.github.com/repos/${REPO}/releases/latest"
+  tag=$(http_get "$api" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+  if [ -z "$tag" ]; then
+    echo "could not resolve latest release tag for ${REPO}" >&2
+    exit 1
+  fi
+  echo "$tag"
+}
+
 if [ -n "$FROM_PATH" ]; then
   if [ ! -f "$FROM_PATH" ]; then
     echo "binary not found: $FROM_PATH" >&2
@@ -80,21 +113,15 @@ if [ -n "$FROM_PATH" ]; then
   chmod 755 "$dest"
   echo "Installed $dest from $FROM_PATH"
 else
-  if [ "$TAG" = "latest" ]; then
-    base="https://github.com/${REPO}/releases/latest/download"
-  else
-    base="https://github.com/${REPO}/releases/download/${TAG}"
-  fi
-  asset="spanreed-${target}.tar.gz"
+  tag=$(resolve_tag)
+  version="${tag#v}"
+  base="https://github.com/${REPO}/releases/download/${tag}"
+  asset="spanreed-${version}-${target}.tar.gz"
   url="${base}/${asset}"
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   echo "Downloading $url"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$tmp/$asset"
-  else
-    wget -qO "$tmp/$asset" "$url"
-  fi
+  http_get "$url" "$tmp/$asset"
   tar -xzf "$tmp/$asset" -C "$tmp"
   bin=$(find "$tmp" -type f -name spanreed | head -n1)
   if [ -z "$bin" ]; then
@@ -103,7 +130,7 @@ else
   fi
   cp "$bin" "$dest"
   chmod 755 "$dest"
-  echo "Installed $dest"
+  echo "Installed $dest (release ${tag})"
 fi
 
 # shellcheck disable=SC2086
