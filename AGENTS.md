@@ -187,7 +187,30 @@ APIs. The other providers are implemented to the documented API shapes but are
 not yet confirmed against real accounts — treat field parsing as unverified
 until someone runs `spanreed probe <id>` against a live account.
 
-## Branch model
+## Branch model (Model A)
 
-Local-first for now (no public remote). Prefer a single long-lived `master`
-until GitHub is recreated.
+Remote: **https://github.com/grok-insider/spanreed** (public).
+
+| Branch | Role |
+|--------|------|
+| `dev` | Integration line for human work (`feat/*` → PR → `dev`) |
+| `master` | Ship line; only `dev` or release-bot heads (`release-plz-*`, `release-plz-manual-*`) |
+
+Local gate before any PR:
+
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+SPANREED_OFFLINE=1 cargo test --all
+```
+
+### Releases
+
+- **Patch (Z):** automatic after a merge into `master` with `feat`/`fix` since the
+  last tag — bot opens `release-plz-vX.Y.Z` (AI changelog via
+  `release-changelog-action@v1`). Merge that PR to tag + attach binaries.
+- **Minor / major (Y / X):** Actions → **Manual Version Bump** (repo admin only).
+  Opens `release-plz-manual-v…` into `master`. A normal `dev` → `master` PR does
+  **not** choose major/minor by itself.
+- Do **not** hand-edit `CHANGELOG.md` outside a Release PR.
+- No crates.io (`publish = false` only in `release-plz.toml`).

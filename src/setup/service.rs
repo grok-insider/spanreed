@@ -59,10 +59,7 @@ pub fn ensure(dry_run: bool) -> Result<String, String> {
     for _ in 0..15 {
         std::thread::sleep(std::time::Duration::from_millis(200));
         if ports_up() {
-            return Ok(format!(
-                "started capture ({})",
-                bin.display()
-            ));
+            return Ok(format!("started capture ({})", bin.display()));
         }
     }
     Err(format!(
@@ -103,9 +100,7 @@ mod platform {
     const UNIT_NAME: &str = "spanreed-capture.service";
 
     fn unit_path() -> PathBuf {
-        crate::creds::expand(&format!(
-            "~/.config/systemd/user/{UNIT_NAME}"
-        ))
+        crate::creds::expand(&format!("~/.config/systemd/user/{UNIT_NAME}"))
     }
 
     pub fn status() -> String {
@@ -121,7 +116,10 @@ mod platform {
                     format!("systemd-user ({UNIT_NAME}: {s})")
                 }
             }
-            Err(_) => format!("systemd-user (systemctl missing; unit {})", unit_path().display()),
+            Err(_) => format!(
+                "systemd-user (systemctl missing; unit {})",
+                unit_path().display()
+            ),
         }
     }
 
@@ -219,9 +217,7 @@ mod platform {
     const LABEL: &str = "net.spanreed.capture";
 
     fn plist_path() -> PathBuf {
-        crate::creds::expand(&format!(
-            "~/Library/LaunchAgents/{LABEL}.plist"
-        ))
+        crate::creds::expand(&format!("~/Library/LaunchAgents/{LABEL}.plist"))
     }
 
     pub fn status() -> String {
@@ -289,10 +285,18 @@ mod platform {
         std::fs::write(&plist, body).map_err(|e| format!("write plist: {e}"))?;
         // Unload if present, then load.
         let _ = Command::new("launchctl")
-            .args(["bootout", &format!("gui/{}", uid()), plist.to_str().unwrap_or("")])
+            .args([
+                "bootout",
+                &format!("gui/{}", uid()),
+                plist.to_str().unwrap_or(""),
+            ])
             .output();
         let out = Command::new("launchctl")
-            .args(["bootstrap", &format!("gui/{}", uid()), plist.to_str().unwrap_or("")])
+            .args([
+                "bootstrap",
+                &format!("gui/{}", uid()),
+                plist.to_str().unwrap_or(""),
+            ])
             .output()
             .map_err(|e| format!("launchctl bootstrap: {e}"))?;
         if !out.status.success() {
@@ -308,11 +312,7 @@ mod platform {
         let plist = plist_path();
         if plist.exists() {
             let _ = Command::new("launchctl")
-                .args([
-                    "kickstart",
-                    "-k",
-                    &format!("gui/{}/{}", uid(), LABEL),
-                ])
+                .args(["kickstart", "-k", &format!("gui/{}/{}", uid(), LABEL)])
                 .output();
             if super::ports_up() {
                 return Ok(());
@@ -334,7 +334,11 @@ mod platform {
             return Ok(format!("would disable {LABEL}"));
         }
         let _ = Command::new("launchctl")
-            .args(["bootout", &format!("gui/{}", uid()), plist.to_str().unwrap_or("")])
+            .args([
+                "bootout",
+                &format!("gui/{}", uid()),
+                plist.to_str().unwrap_or(""),
+            ])
             .output();
         let _ = Command::new("launchctl")
             .args(["unload", "-w", plist.to_str().unwrap_or("")])
@@ -482,16 +486,7 @@ mod platform {
             .output();
         let out = Command::new("schtasks")
             .args([
-                "/Create",
-                "/TN",
-                TASK_NAME,
-                "/SC",
-                "ONLOGON",
-                "/RL",
-                "LIMITED",
-                "/F",
-                "/TR",
-                &tr,
+                "/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/RL", "LIMITED", "/F", "/TR", &tr,
             ])
             .output()
             .map_err(|e| format!("schtasks: {e}"))?;
@@ -506,7 +501,9 @@ mod platform {
 
     pub fn disable(dry_run: bool) -> Result<String, String> {
         if dry_run {
-            return Ok(format!("would remove HKCU Run {RUN_VALUE} / task {TASK_NAME}"));
+            return Ok(format!(
+                "would remove HKCU Run {RUN_VALUE} / task {TASK_NAME}"
+            ));
         }
         clear_run_key()?;
         let _ = Command::new("schtasks")
