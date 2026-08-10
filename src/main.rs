@@ -110,7 +110,8 @@ fn print_help() {
          \tspanreed capture serve        Dual capture: Grok CLI :18736 + api.x.ai :18737\n\
          \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
          \t  --watchdog                   Keep capture alive (restart on exit; logs to\n\
-         \t                               %%LOCALAPPDATA%%/spanreed/logs/capture.log)\n\
+         \t                               %%LOCALAPPDATA%%/spanreed/logs/capture.log;\n\
+         \t                               Windows: windowless / FreeConsole)\n\
          \tspanreed capture ensure      Start capture+watchdog if ports are down\n\
          \tspanreed capture status      Exit 0 if listening, 1 if DOWN; print log path\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
