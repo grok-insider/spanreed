@@ -307,28 +307,9 @@ jobs:
           "$hash  $archive" | Out-File -FilePath "$archive.sha256" -Encoding ascii
           gh release upload "$env:TAG" "$archive" "$archive.sha256" --clobber
 
-  install-scripts:
-    name: install scripts
-    needs: [release-plz-release, resolve, artifacts]
-    if: needs.release-plz-release.outputs.releases_created == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      TAG: ${{ needs.resolve.outputs.tag }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.resolve.outputs.tag }}
-      - name: Upload install.sh / install.ps1
-        run: |
-          set -euo pipefail
-          gh release upload "$TAG" scripts/install.sh scripts/install.ps1 --clobber
-
   release-notes:
     name: publish release notes
-    needs: [release-plz-release, resolve, install-scripts]
+    needs: [release-plz-release, resolve, artifacts]
     if: needs.release-plz-release.outputs.releases_created == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -351,12 +332,15 @@ jobs:
 
             ### Install
 
+            Canonical install is via **[grokinsider.net](https://grokinsider.net)**
+            (not this Release). GitHub Releases ship binaries + checksums only.
+
             ```sh
             # Linux / macOS
-            curl -fsSL https://github.com/grok-insider/spanreed/releases/latest/download/install.sh | sh
+            curl -fsSL https://grokinsider.net/install/spanreed.sh | sh
             ```
 
             ```powershell
             # Windows
-            irm https://github.com/grok-insider/spanreed/releases/latest/download/install.ps1 | iex
+            irm https://grokinsider.net/install/spanreed.ps1 | iex
             ```

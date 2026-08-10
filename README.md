@@ -13,17 +13,22 @@ Linux-first (Hyprland/Wayland); the same code also builds for macOS and Windows.
 
 ## Install
 
-### From a release (one command)
+### From grokinsider.net (one command)
+
+Canonical install is on **[grokinsider.net](https://grokinsider.net)** — not the
+GitHub Release page. Releases only publish platform binaries + checksums; the
+website serves the bootstrap scripts.
 
 ```sh
 # Linux / macOS
-curl -fsSL https://github.com/grok-insider/spanreed/releases/latest/download/install.sh | sh
+curl -fsSL https://grokinsider.net/install/spanreed.sh | sh
 
 # Windows (PowerShell)
-irm https://github.com/grok-insider/spanreed/releases/latest/download/install.ps1 | iex
+irm https://grokinsider.net/install/spanreed.ps1 | iex
 ```
 
-The installer downloads the binary, then runs **`spanreed setup`**, which asks:
+The installer downloads the binary from GitHub Releases, then runs
+**`spanreed setup`**, which asks:
 
 - install CLI to user PATH  
 - create the Grok capture ledger  

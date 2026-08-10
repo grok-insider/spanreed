@@ -1,12 +1,17 @@
 # Bootstrap spanreed on Windows, then run interactive setup.
 #
-#   irm https://github.com/<org>/spanreed/releases/latest/download/install.ps1 | iex
+# Public one-liner (canonical — served by grokinsider.net, not GitHub Releases):
+#   irm https://grokinsider.net/install/spanreed.ps1 | iex
+#
+# Local / from a checkout:
 #   .\scripts\install.ps1 -FromPath .\target\release\spanreed.exe
 #   .\scripts\install.ps1 -FromPath .\target\release\spanreed.exe -Yes -Service
 #
 # Env:
-#   SPANREED_REPO  GitHub owner/repo (default: grok-insider/spanreed)
+#   SPANREED_REPO  GitHub owner/repo for binary assets (default: grok-insider/spanreed)
 #   SPANREED_TAG   Release tag (default: latest)
+#
+# Binaries always come from GitHub Releases; this script is only the bootstrapper.
 
 [CmdletBinding()]
 param(
