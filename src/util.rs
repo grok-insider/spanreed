@@ -65,6 +65,30 @@ pub fn local_date_ymd(ms: i64) -> String {
     format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day())
 }
 
+/// Product timezone for anonymous share day buckets: Europe/Madrid as fixed
+/// **UTC+1** (same convention as `grok-insider-api` `day_key_madrid`). DST
+/// ±1h is accepted for v1 so client and server stay aligned without chrono-tz.
+pub const SHARE_TZ_LABEL: &str = "Europe/Madrid";
+
+/// Fixed UTC+1 offset used for share day keys (product convention).
+pub fn madrid_product_offset() -> UtcOffset {
+    UtcOffset::from_hms(1, 0, 0).unwrap_or(UtcOffset::UTC)
+}
+
+/// `YYYY-MM-DD` in the product share timezone for a unix second timestamp.
+pub fn day_key_madrid(ts_unix: i64) -> String {
+    let dt = OffsetDateTime::from_unix_timestamp(ts_unix)
+        .unwrap_or(OffsetDateTime::UNIX_EPOCH)
+        .to_offset(madrid_product_offset());
+    let d = dt.date();
+    format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day())
+}
+
+/// Current share day key (`YYYY-MM-DD`) in the product timezone.
+pub fn today_day_key_madrid() -> String {
+    day_key_madrid(OffsetDateTime::now_utc().unix_timestamp())
+}
+
 /// Parse an RFC3339 instant and format as local `YYYY-MM-DD`.
 pub fn iso_local_date(iso: &str) -> Option<String> {
     let dt = OffsetDateTime::parse(iso.trim(), &Rfc3339).ok()?;
@@ -406,6 +430,15 @@ mod tests {
         let d = local_date_ymd(1_700_000_000_000);
         // Allow for local offset shifting the date by a day either way.
         assert!(d.starts_with("2023-11-1"), "got {d}");
+    }
+
+    #[test]
+    fn day_key_madrid_matches_utc_plus_one() {
+        // 2023-11-14 22:13:20 UTC → still 2023-11-14 in UTC+1 (23:13).
+        assert_eq!(day_key_madrid(1_700_000_000), "2023-11-14");
+        // 2023-11-14 23:30:00 UTC → 2023-11-15 00:30 in UTC+1.
+        assert_eq!(day_key_madrid(1_700_004_600), "2023-11-15");
+        assert_eq!(SHARE_TZ_LABEL, "Europe/Madrid");
     }
 
     fn dt(iso: &str) -> OffsetDateTime {
