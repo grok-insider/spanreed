@@ -43,6 +43,11 @@ fn reset_suffix(resets_at: &Option<String>) -> String {
 
 /// Percentage for a progress line (for bar/severity), or None.
 pub fn line_percent(line: &MetricLine) -> Option<f64> {
+    line_percent_public(line)
+}
+
+/// Public alias for tray / other modules that need utilization %.
+pub fn line_percent_public(line: &MetricLine) -> Option<f64> {
     match line {
         MetricLine::Progress {
             used,

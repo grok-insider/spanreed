@@ -14,6 +14,8 @@
 //!   spanreed auth copilot [...]   Opt-in link a GitHub token for Copilot.
 //!   spanreed auth logout copilot  Forget the stored Copilot credential.
 //!   spanreed update-pricing [out] Fetch + filter the upstream price table.
+//!   spanreed self-update […]     Check/install latest GitHub Release binary.
+//!   spanreed tray […]            System tray (feature `tray`: Behelit icon).
 
 mod activity;
 mod api;
@@ -34,13 +36,18 @@ mod probe;
 mod proc;
 mod providers;
 mod secret;
+mod self_update;
 mod setup;
 mod share;
 mod share_economics;
 mod share_schedule;
 mod share_session;
+mod tray_format;
 mod usage_stats;
 mod util;
+
+#[cfg(feature = "tray")]
+mod tray;
 
 use std::process::ExitCode;
 
@@ -86,6 +93,8 @@ fn main() -> ExitCode {
         "share" => share::cmd(rest),
         "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),
+        "self-update" => self_update::cmd(rest),
+        "tray" => cmd_tray(rest),
         "help" | "-h" | "--help" => {
             print_help();
             ExitCode::SUCCESS
@@ -140,12 +149,32 @@ fn print_help() {
          \tspanreed share logout|status Session management\n\
          \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\
-         \t                               evening timer + login/missed-run catch-up\n\n\
+         \t                               evening timer + login/missed-run catch-up\n\
+         \tspanreed self-update         Install latest GitHub Release (sha256 verified)\n\
+         \t  --check [--json]             Report only (exit 2 if newer)\n\
+         \t  --yes --dry-run              Apply without prompt / download-only verify\n\
+         \tspanreed tray [--interval S] System tray companion (needs --features tray)\n\n\
          PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
          \t           synthetic, kimi, copilot, factory, devin,\n\
          \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
          \t           (copilot requires `spanreed auth copilot`)"
     );
+}
+
+fn cmd_tray(args: &[String]) -> ExitCode {
+    #[cfg(feature = "tray")]
+    {
+        tray::cmd(args)
+    }
+    #[cfg(not(feature = "tray"))]
+    {
+        let _ = args;
+        eprintln!(
+            "tray: this binary was built without the `tray` feature\n\
+             rebuild with: cargo build --release --features tray"
+        );
+        ExitCode::FAILURE
+    }
 }
 
 fn cmd_auth(args: &[String]) -> ExitCode {

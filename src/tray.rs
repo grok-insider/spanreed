@@ -1,0 +1,413 @@
+//! System tray companion: Behelit icon, usage tooltip, capture health, updates.
+//!
+//! ```text
+//! spanreed tray [--interval S]
+//! ```
+//!
+//! Built only with `--features tray`. Does not own the capture worker — Quit
+//! leaves capture running.
+
+use std::process::{Command, ExitCode};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use image::RgbaImage;
+use tao::event::Event;
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+
+use crate::api;
+use crate::capture_log;
+use crate::model::ProviderOutput;
+use crate::probe;
+use crate::self_update;
+use crate::setup;
+use crate::tray_format::{self, TraySeverity};
+
+const DEFAULT_INTERVAL_SECS: u64 = 60;
+const MASTER_PNG: &[u8] = include_bytes!("assets/tray/behelit-32.png");
+const LOCK_FILE: &str = "tray.lock";
+
+/// Menu labels (kept in one place so docs/tests stay aligned).
+pub const MENU_REFRESH: &str = "Refresh now";
+pub const MENU_ENSURE: &str = "Ensure capture";
+pub const MENU_LOG: &str = "Open capture log";
+pub const MENU_CHECK: &str = "Check for updates";
+pub const MENU_UPDATE: &str = "Install update…";
+pub const MENU_QUIT: &str = "Quit tray";
+
+struct TrayState {
+    outputs: Vec<ProviderOutput>,
+    capture_up: bool,
+    max_used: Option<f64>,
+    update_note: Option<String>,
+    last_notify_proxy: Option<Instant>,
+    last_notify_quota: Option<Instant>,
+    /// Background thread sets this; UI thread clears after repaint.
+    dirty: bool,
+}
+
+impl Default for TrayState {
+    fn default() -> Self {
+        Self {
+            outputs: Vec::new(),
+            capture_up: false,
+            max_used: None,
+            update_note: None,
+            last_notify_proxy: None,
+            last_notify_quota: None,
+            dirty: true,
+        }
+    }
+}
+
+/// CLI entry.
+pub fn cmd(args: &[String]) -> ExitCode {
+    let mut interval = DEFAULT_INTERVAL_SECS;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--interval" => {
+                i += 1;
+                let s = args
+                    .get(i)
+                    .ok_or_else(|| "--interval needs a value".to_string())
+                    .and_then(|v| v.parse::<u64>().map_err(|_| format!("bad --interval: {v}")));
+                match s {
+                    Ok(n) if n >= 5 => interval = n,
+                    Ok(_) => {
+                        eprintln!("tray: --interval minimum is 5s");
+                        return ExitCode::FAILURE;
+                    }
+                    Err(e) => {
+                        eprintln!("tray: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            "-h" | "--help" => {
+                println!(
+                    "spanreed tray — system tray status (Behelit icon)\n\n\
+                     \t--interval S   Refresh every S seconds (default {DEFAULT_INTERVAL_SECS})\n\
+                     Menu: Refresh, Ensure capture, Open log, Check/Install update, Quit tray"
+                );
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("tray: unknown arg: {other}");
+                return ExitCode::FAILURE;
+            }
+        }
+        i += 1;
+    }
+
+    if let Err(e) = run_tray(interval) {
+        eprintln!("tray: {e}");
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_tray(interval_secs: u64) -> Result<(), String> {
+    let _lock = acquire_single_instance()?;
+
+    let event_loop = EventLoopBuilder::new().build();
+
+    let menu = Menu::new();
+    let item_refresh = MenuItem::new(MENU_REFRESH, true, None);
+    let item_ensure = MenuItem::new(MENU_ENSURE, true, None);
+    let item_log = MenuItem::new(MENU_LOG, true, None);
+    let item_check = MenuItem::new(MENU_CHECK, true, None);
+    let item_update = MenuItem::new(MENU_UPDATE, false, None);
+    let item_quit = MenuItem::new(MENU_QUIT, true, None);
+    menu.append(&item_refresh)
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_ensure)
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_log).map_err(|e| format!("menu: {e}"))?;
+    menu.append(&PredefinedMenuItem::separator())
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_check).map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_update)
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&PredefinedMenuItem::separator())
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_quit).map_err(|e| format!("menu: {e}"))?;
+
+    let id_refresh = item_refresh.id().clone();
+    let id_ensure = item_ensure.id().clone();
+    let id_log = item_log.id().clone();
+    let id_check = item_check.id().clone();
+    let id_update = item_update.id().clone();
+    let id_quit = item_quit.id().clone();
+
+    let state = Arc::new(Mutex::new(TrayState::default()));
+    // First probe on main thread so tooltip is ready.
+    refresh_state(&state);
+
+    let icon = icon_for_severity(TraySeverity::Ok)?;
+    let mut tray = TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_tooltip(tooltip_from(&state))
+        .with_icon(icon)
+        .with_title("spanreed")
+        .build()
+        .map_err(|e| format!("tray icon: {e}"))?;
+
+    apply_visual(&state, &mut tray, &item_update);
+
+    // Background: probe only (TrayIcon/MenuItem are !Send).
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_bg = stop.clone();
+    let state_bg = state.clone();
+    thread::spawn(move || {
+        while !stop_bg.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_secs(interval_secs));
+            if stop_bg.load(Ordering::Relaxed) {
+                break;
+            }
+            refresh_state(&state_bg);
+        }
+    });
+
+    let menu_channel = MenuEvent::receiver();
+
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
+
+        if let Event::NewEvents(_) = event {
+            let dirty = state.lock().map(|g| g.dirty).unwrap_or(false);
+            if dirty {
+                apply_visual(&state, &mut tray, &item_update);
+            }
+        }
+
+        while let Ok(ev) = menu_channel.try_recv() {
+            let id = ev.id;
+            if id == id_quit {
+                stop.store(true, Ordering::Relaxed);
+                *control_flow = ControlFlow::Exit;
+            } else if id == id_refresh {
+                refresh_state(&state);
+                apply_visual(&state, &mut tray, &item_update);
+            } else if id == id_ensure {
+                match setup::service_ensure(false) {
+                    Ok(m) => log::info!("ensure: {m}"),
+                    Err(e) => log::warn!("ensure: {e}"),
+                }
+                refresh_state(&state);
+                apply_visual(&state, &mut tray, &item_update);
+            } else if id == id_log {
+                open_path(&capture_log::capture_log_path());
+            } else if id == id_check {
+                run_update_check(&state);
+                apply_visual(&state, &mut tray, &item_update);
+            } else if id == id_update {
+                let exe = std::env::current_exe().unwrap_or_default();
+                let _ = Command::new(exe).args(["self-update", "--yes"]).spawn();
+            }
+        }
+    });
+}
+
+fn refresh_state(state: &Arc<Mutex<TrayState>>) {
+    let capture_up = setup::capture_ports_up();
+    let outputs = api::fetch_cached().unwrap_or_else(probe::probe_detected);
+    let max_used = tray_format::max_used_pct(&outputs);
+
+    let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
+    let prev_used = g.max_used;
+    let prev_up = g.capture_up;
+    g.capture_up = capture_up;
+    g.outputs = outputs;
+    g.max_used = max_used;
+    g.dirty = true;
+
+    let now = Instant::now();
+    if prev_up && !capture_up {
+        let cool = g
+            .last_notify_proxy
+            .map(|t| now.duration_since(t) > Duration::from_secs(300))
+            .unwrap_or(true);
+        if cool {
+            log::warn!("spanreed tray: capture proxy is DOWN");
+            g.last_notify_proxy = Some(now);
+        }
+    }
+    if let Some(band) = tray_format::crossed_threshold(prev_used, max_used) {
+        let cool = g
+            .last_notify_quota
+            .map(|t| now.duration_since(t) > Duration::from_secs(600))
+            .unwrap_or(true);
+        if cool {
+            log::warn!("spanreed tray: quota entered {band} band");
+            g.last_notify_quota = Some(now);
+        }
+    }
+}
+
+fn run_update_check(state: &Arc<Mutex<TrayState>>) {
+    if std::env::var_os("SPANREED_OFFLINE").is_some() {
+        let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
+        g.update_note = Some("Update: offline".into());
+        g.dirty = true;
+        return;
+    }
+    match self_update::check_for_update() {
+        Ok(r) if r.newer => {
+            let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
+            g.update_note = Some(format!("Update: {} available", r.latest));
+            g.dirty = true;
+        }
+        Ok(r) => {
+            let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
+            g.update_note = Some(format!("Update: up to date ({})", r.current));
+            g.dirty = true;
+        }
+        Err(e) => {
+            let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
+            g.update_note = Some(format!("Update: check failed ({e})"));
+            g.dirty = true;
+        }
+    }
+}
+
+fn tooltip_from(state: &Arc<Mutex<TrayState>>) -> String {
+    let g = state.lock().unwrap_or_else(|e| e.into_inner());
+    tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref())
+}
+
+fn apply_visual(state: &Arc<Mutex<TrayState>>, tray: &mut TrayIcon, item_update: &MenuItem) {
+    let (sev, tip, update_enabled) = {
+        let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
+        g.dirty = false;
+        let sev = tray_format::severity(g.capture_up, g.max_used);
+        let tip = tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref());
+        let update_enabled = g
+            .update_note
+            .as_deref()
+            .map(|n| n.contains("available"))
+            .unwrap_or(false);
+        (sev, tip, update_enabled)
+    };
+    item_update.set_enabled(update_enabled);
+    if let Ok(icon) = icon_for_severity(sev) {
+        let _ = tray.set_icon(Some(icon));
+        let _ = tray.set_tooltip(Some(tip));
+    }
+}
+
+fn icon_for_severity(sev: TraySeverity) -> Result<Icon, String> {
+    let img = image::load_from_memory(MASTER_PNG)
+        .map_err(|e| format!("decode behelit png: {e}"))?
+        .into_rgba8();
+    let tinted = tint_rgba(img, sev.tint_rgba());
+    let (w, h) = tinted.dimensions();
+    Icon::from_rgba(tinted.into_raw(), w, h).map_err(|e| format!("icon: {e}"))
+}
+
+fn tint_rgba(mut img: RgbaImage, tint: [u8; 4]) -> RgbaImage {
+    for p in img.pixels_mut() {
+        let a = p.0[3];
+        if a == 0 {
+            continue;
+        }
+        p.0[0] = ((p.0[0] as u16 * tint[0] as u16) / 255) as u8;
+        p.0[1] = ((p.0[1] as u16 * tint[1] as u16) / 255) as u8;
+        p.0[2] = ((p.0[2] as u16 * tint[2] as u16) / 255) as u8;
+        p.0[3] = ((a as u16 * tint[3] as u16) / 255) as u8;
+    }
+    img
+}
+
+/// Single-instance guard: create `…/spanreed/tray.lock` with our PID.
+/// Dropped on process exit (RAII removes the file).
+struct InstanceLock {
+    path: std::path::PathBuf,
+}
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_single_instance() -> Result<InstanceLock, String> {
+    let dir = crate::creds::data_home().join("spanreed");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir tray lock: {e}"))?;
+    let path = dir.join(LOCK_FILE);
+    if path.exists() {
+        // Stale lock from a crashed tray: if the PID is gone, take over.
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Ok(pid) = text.trim().parse::<u32>() {
+                if process_alive(pid) {
+                    return Err(format!(
+                        "tray already running (pid {pid}); quit the existing icon first"
+                    ));
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+    std::fs::write(&path, format!("{}\n", std::process::id()))
+        .map_err(|e| format!("write tray lock: {e}"))?;
+    Ok(InstanceLock { path })
+}
+
+fn process_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| {
+                let s = String::from_utf8_lossy(&o.stdout);
+                s.contains(&pid.to_string())
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(unix)]
+    {
+        // kill -0 pid: exists?
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+fn open_path(path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if !path.exists() {
+        let _ = std::fs::write(path, b"");
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("cmd")
+            .args(["/C", "start", "", &path.display().to_string()])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").arg(path).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = Command::new("xdg-open").arg(path).spawn();
+    }
+}
