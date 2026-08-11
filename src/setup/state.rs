@@ -15,6 +15,9 @@ pub struct SetupState {
     /// Daily plan share at 23:00 Europe/Madrid (requires share login).
     #[serde(default)]
     pub share_schedule: Option<ServiceState>,
+    /// Optional system tray companion at login.
+    #[serde(default)]
+    pub tray: Option<ServiceState>,
     #[serde(default)]
     pub wired: WiredState,
 }
