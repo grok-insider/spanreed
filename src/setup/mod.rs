@@ -12,6 +12,7 @@ mod detect;
 mod paths;
 mod service;
 mod state;
+mod tray_autostart;
 mod wire_grok;
 mod wire_opencode;
 
@@ -103,86 +104,105 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
     let det = detect::scan();
     println!("spanreed setup\n");
 
-    let (do_install, do_ledger, do_service, do_share_schedule, do_wire_grok, do_wire_opencode) =
-        if !flags.yes {
-            let do_install = prompt_yn(
-                "Install CLI to user PATH?",
-                true,
-                Some(format_hint_install()),
-            );
-            let do_ledger = prompt_yn("Create ledger directory?", true, None);
-            let do_service = prompt_yn(
-                "Start capture proxy at login (user service)?",
-                flags.service,
-                Some(format!(
-                    "listens {} + {}",
-                    grok_proxy::DEFAULT_GROK_CLI_BIND,
-                    grok_proxy::DEFAULT_XAI_API_BIND
-                )),
-            );
-            let do_share_schedule = prompt_yn(
-                "Enable daily plan share to grokinsider.net (once per day, catch-up when PC is on)?",
-                true,
-                Some(
-                    "requires `spanreed share login` once (Sign in with X); \
+    let (
+        do_install,
+        do_ledger,
+        do_service,
+        do_tray,
+        do_share_schedule,
+        do_wire_grok,
+        do_wire_opencode,
+    ) = if !flags.yes {
+        let do_install = prompt_yn(
+            "Install CLI to user PATH?",
+            true,
+            Some(format_hint_install()),
+        );
+        let do_ledger = prompt_yn("Create ledger directory?", true, None);
+        let do_service = prompt_yn(
+            "Start capture proxy at login (user service)?",
+            flags.service,
+            Some(format!(
+                "listens {} + {}",
+                grok_proxy::DEFAULT_GROK_CLI_BIND,
+                grok_proxy::DEFAULT_XAI_API_BIND
+            )),
+        );
+        let do_tray = prompt_yn(
+            "Start system tray icon at login (usage + capture status)?",
+            tray_autostart::default_enabled(do_service),
+            Some(
+                "Behelit icon; shows remaining quotas and whether Grok proxy is up \
+                     (needs a binary built with --features tray)"
+                    .into(),
+            ),
+        );
+        let do_share_schedule = prompt_yn(
+            "Enable daily plan share to grokinsider.net (once per day, catch-up when PC is on)?",
+            true,
+            Some(
+                "requires `spanreed share login` once (Sign in with X); \
                      uploads provider+plan metrics to the public pool; \
                      prefers evening, also runs on login if yesterday's timer was missed"
-                        .into(),
-                ),
-            );
-            let (do_wire_grok, do_wire_opencode) = if flags.no_wire {
-                (false, false)
-            } else {
-                (
-                    prompt_yn(
-                        "Wire Grok Build → capture :18736?",
-                        det.grok.detected,
-                        Some(det.grok.hint()),
-                    ),
-                    prompt_yn(
-                        "Wire OpenCode xAI → capture :18737?",
-                        det.opencode.detected,
-                        Some(det.opencode.hint()),
-                    ),
-                )
-            };
-            if !prompt_yn("Apply?", true, None) {
-                println!("Aborted.");
-                return ExitCode::SUCCESS;
-            }
-            println!();
-            (
-                do_install,
-                do_ledger,
-                do_service,
-                do_share_schedule,
-                do_wire_grok,
-                do_wire_opencode,
-            )
+                    .into(),
+            ),
+        );
+        let (do_wire_grok, do_wire_opencode) = if flags.no_wire {
+            (false, false)
         } else {
-            // --yes: service only if --service; share schedule ON by default;
-            // wire only if detected and not --no-wire
-            let do_install = true;
-            let do_ledger = true;
-            let do_service = flags.service;
-            let do_share_schedule = true;
-            let do_wire_grok = !flags.no_wire && det.grok.detected;
-            let do_wire_opencode = !flags.no_wire && det.opencode.detected;
-            println!(
-                "Non-interactive: install={do_install} ledger={do_ledger} service={do_service} \
-                 share_schedule={do_share_schedule} wire_grok={do_wire_grok} \
-                 wire_opencode={do_wire_opencode} dry_run={}\n",
-                flags.dry_run
-            );
             (
-                do_install,
-                do_ledger,
-                do_service,
-                do_share_schedule,
-                do_wire_grok,
-                do_wire_opencode,
+                prompt_yn(
+                    "Wire Grok Build → capture :18736?",
+                    det.grok.detected,
+                    Some(det.grok.hint()),
+                ),
+                prompt_yn(
+                    "Wire OpenCode xAI → capture :18737?",
+                    det.opencode.detected,
+                    Some(det.opencode.hint()),
+                ),
             )
         };
+        if !prompt_yn("Apply?", true, None) {
+            println!("Aborted.");
+            return ExitCode::SUCCESS;
+        }
+        println!();
+        (
+            do_install,
+            do_ledger,
+            do_service,
+            do_tray,
+            do_share_schedule,
+            do_wire_grok,
+            do_wire_opencode,
+        )
+    } else {
+        // --yes: service only if --service; tray follows service default on Win/mac;
+        // share schedule ON by default; wire only if detected and not --no-wire
+        let do_install = true;
+        let do_ledger = true;
+        let do_service = flags.service;
+        let do_tray = tray_autostart::default_enabled(do_service);
+        let do_share_schedule = true;
+        let do_wire_grok = !flags.no_wire && det.grok.detected;
+        let do_wire_opencode = !flags.no_wire && det.opencode.detected;
+        println!(
+            "Non-interactive: install={do_install} ledger={do_ledger} service={do_service} \
+                 tray={do_tray} share_schedule={do_share_schedule} wire_grok={do_wire_grok} \
+                 wire_opencode={do_wire_opencode} dry_run={}\n",
+            flags.dry_run
+        );
+        (
+            do_install,
+            do_ledger,
+            do_service,
+            do_tray,
+            do_share_schedule,
+            do_wire_grok,
+            do_wire_opencode,
+        )
+    };
 
     let mut state = state::load().unwrap_or_default();
     let mut path_changed = false;
@@ -237,6 +257,26 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
         }
     } else {
         println!("  Capture:  not enabled (run `spanreed capture ensure` or `--service`)");
+    }
+
+    if do_tray {
+        match tray_autostart::resolve_bin()
+            .and_then(|bin| tray_autostart::enable(&bin, flags.dry_run))
+        {
+            Ok(msg) => {
+                println!("  Tray:     {msg}");
+                state.tray = Some(state::ServiceState {
+                    enabled: true,
+                    kind: tray_autostart::kind_label().into(),
+                });
+            }
+            Err(e) => {
+                eprintln!("  Tray:     error: {e}");
+                errors.push(e);
+            }
+        }
+    } else {
+        println!("  Tray:     not enabled (run `spanreed tray` or re-run setup)");
     }
 
     // Always ensure install id (device fingerprint for share).
@@ -344,6 +384,18 @@ fn run_uninstall(flags: SetupFlags) -> ExitCode {
         kind: service::kind_label().into(),
     });
 
+    match tray_autostart::disable(flags.dry_run) {
+        Ok(msg) => println!("  Tray:     {msg}"),
+        Err(e) => {
+            eprintln!("  Tray:     {e}");
+            errors.push(e);
+        }
+    }
+    state.tray = Some(state::ServiceState {
+        enabled: false,
+        kind: tray_autostart::kind_label().into(),
+    });
+
     match crate::share_schedule::disable(flags.dry_run) {
         Ok(msg) => println!("  Share:    {msg}"),
         Err(e) => {
@@ -449,6 +501,7 @@ fn print_status() -> ExitCode {
 
     let svc = service::status();
     println!("  Capture service:  {svc}");
+    println!("  Tray autostart:   {}", tray_autostart::status());
     println!("  Share schedule:   {}", crate::share_schedule::status());
 
     println!(

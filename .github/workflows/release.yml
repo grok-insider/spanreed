@@ -269,12 +269,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.target }}
+      # Linux musl stays without `tray` so the static binary check still holds.
+      # Windows + macOS release assets include the Behelit system tray.
       - name: Build (zigbuild static)
         if: matrix.cross == 'zig'
         run: cargo zigbuild --release --target "$TARGET"
-      - name: Build (native)
+      - name: Build (native + tray)
         if: matrix.cross != 'zig'
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} --features tray
       - name: Verify Linux binary is static
         if: matrix.cross == 'zig'
         run: |
