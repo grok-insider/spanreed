@@ -4,6 +4,16 @@ All notable, user-facing changes to spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] - 2026-08-11
+
+- ci: install GTK/AppIndicator deps for Linux tray feature check
+- docs: note Linux GTK deps for tray CI
+- fix: cfg-gate tray_autostart Command and RUN_VALUE
+- ci: build and test with --features tray (musl release stays static)
+- fix: silence tray_format dead_code without tray feature
+- docs: how to enable tray feature in CI and release builds
+- feat: self-update and Behelit system tray
+
 ## [0.0.3] - 2026-08-10
 
 - feat(share): require X-linked login for community pool
