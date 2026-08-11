@@ -29,6 +29,11 @@ jobs:
       - run: cargo test --all
         env:
           SPANREED_OFFLINE: "1"
+      # tray-icon on Linux needs GTK / AppIndicator (not needed for default CLI builds).
+      - name: Install tray system deps (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev pkg-config
       # Tray feature must compile on Linux CI (even if SNI host is absent at runtime).
       - run: cargo check --all-targets --features tray
       - run: cargo clippy --all-targets --features tray -- -D warnings
