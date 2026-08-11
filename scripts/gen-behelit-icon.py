@@ -9,11 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def draw_behelit(size: int) -> Image.Image:
+    """White silhouette master (runtime-tinted). Slight outer pad for 16px trays."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     m = max(1, size // 16)
-    left, top = m + size // 8, m
-    right, bottom = size - m - size // 10, size - m
+    # Keep a 1px clear margin so Windows doesn't clip the egg edge.
+    left, top = m + size // 8, m + 1
+    right, bottom = size - m - size // 10, size - m - 1
     fill = (255, 255, 255, 255)
     hole = (0, 0, 0, 0)
     d.ellipse([left, top, right, bottom], fill=fill)
@@ -22,15 +24,16 @@ def draw_behelit(size: int) -> Image.Image:
         d.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=hole)
 
     s = size
-    cut_ellipse(int(s * 0.38), int(s * 0.38), max(1, s // 10), max(1, s // 12))
-    cut_ellipse(int(s * 0.62), int(s * 0.48), max(1, s // 9), max(1, s // 11))
-    cut_ellipse(int(s * 0.52), int(s * 0.28), max(1, s // 14), max(1, s // 18))
-    cut_ellipse(int(s * 0.50), int(s * 0.68), max(1, s // 7), max(1, s // 14))
-    if s >= 24:
+    # Eyes / mouth: slightly larger holes so the face reads at 16px after tint.
+    cut_ellipse(int(s * 0.38), int(s * 0.38), max(1, s // 9), max(1, s // 11))
+    cut_ellipse(int(s * 0.62), int(s * 0.48), max(1, s // 8), max(1, s // 10))
+    cut_ellipse(int(s * 0.52), int(s * 0.28), max(1, s // 12), max(1, s // 16))
+    cut_ellipse(int(s * 0.50), int(s * 0.68), max(1, s // 6), max(1, s // 12))
+    if s >= 16:
         d.line(
             [(int(s * 0.55), int(s * 0.22)), (int(s * 0.70), int(s * 0.40))],
             fill=hole,
-            width=max(1, s // 20),
+            width=max(1, s // 16),
         )
     return img
 

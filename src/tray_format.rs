@@ -22,12 +22,19 @@ pub enum TraySeverity {
 
 impl TraySeverity {
     /// RGBA tint applied to the white Behelit master icon.
+    ///
+    /// Colors are **dark / saturated** so the silhouette stays visible on light
+    /// Windows taskbars (pale green/white washes out next to ENG/Wi‑Fi icons).
     pub fn tint_rgba(self) -> [u8; 4] {
         match self {
-            TraySeverity::Ok => [180, 255, 200, 255],
-            TraySeverity::Warning => [255, 200, 80, 255],
-            TraySeverity::Critical => [255, 90, 90, 255],
-            TraySeverity::ProxyDown => [255, 60, 60, 255],
+            // Forest green — readable on light and dark shells.
+            TraySeverity::Ok => [20, 120, 70, 255],
+            // Amber / gold.
+            TraySeverity::Warning => [200, 130, 20, 255],
+            // Strong red for high quota.
+            TraySeverity::Critical => [200, 40, 40, 255],
+            // Hot red for proxy down.
+            TraySeverity::ProxyDown => [180, 20, 30, 255],
         }
     }
 }
@@ -219,5 +226,11 @@ mod tests {
         let rgba = TraySeverity::Warning.tint_rgba();
         assert_eq!(rgba[3], 255);
         assert!(rgba[0] > 0);
+        // Ok must stay dark enough for light taskbars (not near-white).
+        let ok = TraySeverity::Ok.tint_rgba();
+        assert!(
+            (ok[0] as u16 + ok[1] as u16 + ok[2] as u16) < 400,
+            "ok tint too light for Windows light shell: {ok:?}"
+        );
     }
 }
