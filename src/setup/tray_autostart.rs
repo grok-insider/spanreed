@@ -4,10 +4,13 @@
 //! off on Linux (Waybar-first).
 
 use std::path::Path;
+
+#[cfg(any(windows, target_os = "macos"))]
 use std::process::Command;
 
 use super::paths;
 
+#[cfg(windows)]
 const RUN_VALUE: &str = "OpenUsageTray";
 
 #[cfg(windows)]
