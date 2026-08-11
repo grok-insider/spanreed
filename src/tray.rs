@@ -6,6 +6,11 @@
 //!
 //! Built only with `--features tray`. Does not own the capture worker — Quit
 //! leaves capture running.
+//!
+//! Menu actions that need user-visible feedback use a short toast/tooltip update
+//! (Windows: balloon tip when available, always tooltip + MessageBox fallback for
+//! long results like update checks). Never kill capture from the tray; use
+//! `capture ensure` only.
 
 use std::process::{Command, ExitCode};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,6 +49,8 @@ struct TrayState {
     capture_up: bool,
     max_used: Option<f64>,
     update_note: Option<String>,
+    /// Short status line shown at the top of the tooltip (action feedback).
+    status_note: Option<String>,
     last_notify_proxy: Option<Instant>,
     last_notify_quota: Option<Instant>,
     /// Background thread sets this; UI thread clears after repaint.
@@ -57,6 +64,7 @@ impl Default for TrayState {
             capture_up: false,
             max_used: None,
             update_note: None,
+            status_note: None,
             last_notify_proxy: None,
             last_notify_quota: None,
             dirty: true,
@@ -158,7 +166,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         .build()
         .map_err(|e| format!("tray icon: {e}"))?;
 
-    apply_visual(&state, &mut tray, &item_update);
+    apply_visual(&state, &mut tray, &item_update, &item_check);
 
     // Background: probe only (TrayIcon/MenuItem are !Send).
     let stop = Arc::new(AtomicBool::new(false));
@@ -182,7 +190,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         if let Event::NewEvents(_) = event {
             let dirty = state.lock().map(|g| g.dirty).unwrap_or(false);
             if dirty {
-                apply_visual(&state, &mut tray, &item_update);
+                apply_visual(&state, &mut tray, &item_update, &item_check);
             }
         }
 
@@ -192,26 +200,83 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 stop.store(true, Ordering::Relaxed);
                 *control_flow = ControlFlow::Exit;
             } else if id == id_refresh {
+                set_status(&state, "Refreshing usage…");
+                apply_visual(&state, &mut tray, &item_update, &item_check);
                 refresh_state(&state);
-                apply_visual(&state, &mut tray, &item_update);
+                set_status(&state, "Usage refreshed");
+                apply_visual(&state, &mut tray, &item_update, &item_check);
             } else if id == id_ensure {
-                match setup::service_ensure(false) {
-                    Ok(m) => log::info!("ensure: {m}"),
-                    Err(e) => log::warn!("ensure: {e}"),
-                }
+                set_status(&state, "Ensuring capture…");
+                apply_visual(&state, &mut tray, &item_update, &item_check);
+                let msg = match setup::service_ensure(false) {
+                    Ok(m) => {
+                        log::info!("ensure: {m}");
+                        format!("Capture: {m}")
+                    }
+                    Err(e) => {
+                        log::warn!("ensure: {e}");
+                        format!("Capture ensure failed: {e}")
+                    }
+                };
+                set_status(&state, &msg);
                 refresh_state(&state);
-                apply_visual(&state, &mut tray, &item_update);
+                apply_visual(&state, &mut tray, &item_update, &item_check);
+                user_notify("spanreed — capture", &msg);
             } else if id == id_log {
-                open_path(&capture_log::capture_log_path());
+                let path = capture_log::capture_log_path();
+                match open_path(&path) {
+                    Ok(()) => {
+                        let msg = format!("Opened log:\n{}", path.display());
+                        set_status(&state, "Opened capture log");
+                        apply_visual(&state, &mut tray, &item_update, &item_check);
+                        // Brief status only — opening the editor is the feedback.
+                        log::info!("tray: {msg}");
+                    }
+                    Err(e) => {
+                        let msg = format!("Could not open log:\n{}\n\n{}", path.display(), e);
+                        set_status(&state, "Failed to open capture log");
+                        apply_visual(&state, &mut tray, &item_update, &item_check);
+                        user_notify("spanreed — capture log", &msg);
+                    }
+                }
             } else if id == id_check {
-                run_update_check(&state);
-                apply_visual(&state, &mut tray, &item_update);
+                item_check.set_text("Checking for updates…");
+                set_status(&state, "Checking for updates…");
+                apply_visual(&state, &mut tray, &item_update, &item_check);
+
+                let summary = run_update_check(&state);
+                item_check.set_text(MENU_CHECK);
+                set_status(&state, &summary);
+                apply_visual(&state, &mut tray, &item_update, &item_check);
+                user_notify("spanreed — updates", &summary);
             } else if id == id_update {
+                set_status(&state, "Starting self-update…");
+                apply_visual(&state, &mut tray, &item_update, &item_check);
                 let exe = std::env::current_exe().unwrap_or_default();
-                let _ = Command::new(exe).args(["self-update", "--yes"]).spawn();
+                match Command::new(&exe).args(["self-update", "--yes"]).spawn() {
+                    Ok(_) => {
+                        user_notify(
+                            "spanreed — updates",
+                            "Self-update started in the background.\n\
+                             Capture will be restarted by the updater when needed.",
+                        );
+                    }
+                    Err(e) => {
+                        let msg = format!("Could not start self-update: {e}");
+                        set_status(&state, &msg);
+                        apply_visual(&state, &mut tray, &item_update, &item_check);
+                        user_notify("spanreed — updates", &msg);
+                    }
+                }
             }
         }
     });
+}
+
+fn set_status(state: &Arc<Mutex<TrayState>>, note: &str) {
+    let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
+    g.status_note = Some(note.to_string());
+    g.dirty = true;
 }
 
 fn refresh_state(state: &Arc<Mutex<TrayState>>) {
@@ -236,6 +301,7 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
         if cool {
             log::warn!("spanreed tray: capture proxy is DOWN");
             g.last_notify_proxy = Some(now);
+            g.status_note = Some("Capture proxy is DOWN".into());
         }
     }
     if let Some(band) = tray_format::crossed_threshold(prev_used, max_used) {
@@ -250,51 +316,98 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
     }
 }
 
-fn run_update_check(state: &Arc<Mutex<TrayState>>) {
+/// Run GitHub Releases check; returns a user-facing summary string.
+fn run_update_check(state: &Arc<Mutex<TrayState>>) -> String {
     if std::env::var_os("SPANREED_OFFLINE").is_some() {
+        let msg = "Offline (SPANREED_OFFLINE=1) — not checking GitHub.".to_string();
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.update_note = Some("Update: offline".into());
         g.dirty = true;
-        return;
+        return msg;
     }
     match self_update::check_for_update() {
         Ok(r) if r.newer => {
+            let msg = format!(
+                "Update available: {} → {} ({})\n\nUse “Install update…” to apply.",
+                r.current, r.latest, r.tag
+            );
             let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
             g.update_note = Some(format!("Update: {} available", r.latest));
             g.dirty = true;
+            msg
         }
         Ok(r) => {
+            let msg = format!("Up to date: {} ({})", r.current, r.tag);
             let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
             g.update_note = Some(format!("Update: up to date ({})", r.current));
             g.dirty = true;
+            msg
         }
         Err(e) => {
+            let msg = format!("Update check failed:\n{e}");
             let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
             g.update_note = Some(format!("Update: check failed ({e})"));
             g.dirty = true;
+            msg
         }
     }
 }
 
 fn tooltip_from(state: &Arc<Mutex<TrayState>>) -> String {
     let g = state.lock().unwrap_or_else(|e| e.into_inner());
-    tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref())
+    let mut parts = Vec::new();
+    if let Some(s) = g.status_note.as_deref() {
+        if !s.is_empty() {
+            parts.push(s.to_string());
+        }
+    }
+    parts.push(tray_format::format_tooltip(
+        &g.outputs,
+        g.capture_up,
+        g.update_note.as_deref(),
+    ));
+    parts.join("\n")
 }
 
-fn apply_visual(state: &Arc<Mutex<TrayState>>, tray: &mut TrayIcon, item_update: &MenuItem) {
-    let (sev, tip, update_enabled) = {
+fn apply_visual(
+    state: &Arc<Mutex<TrayState>>,
+    tray: &mut TrayIcon,
+    item_update: &MenuItem,
+    item_check: &MenuItem,
+) {
+    let (sev, tip, update_enabled, check_label) = {
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.dirty = false;
         let sev = tray_format::severity(g.capture_up, g.max_used);
-        let tip = tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref());
+        let mut tip_parts = Vec::new();
+        if let Some(s) = g.status_note.as_deref() {
+            if !s.is_empty() {
+                tip_parts.push(s.to_string());
+            }
+        }
+        tip_parts.push(tray_format::format_tooltip(
+            &g.outputs,
+            g.capture_up,
+            g.update_note.as_deref(),
+        ));
+        let tip = tip_parts.join("\n");
         let update_enabled = g
             .update_note
             .as_deref()
             .map(|n| n.contains("available"))
             .unwrap_or(false);
-        (sev, tip, update_enabled)
+        // Keep check label stable unless mid-check (caller sets text).
+        let check_label = MENU_CHECK.to_string();
+        let _ = &g;
+        (sev, tip, update_enabled, check_label)
     };
     item_update.set_enabled(update_enabled);
+    // Don't clobber "Checking…" if the menu item was set by the handler mid-flight
+    // unless we're past that (handler restores MENU_CHECK after check).
+    let current = item_check.text();
+    if current != "Checking for updates…" {
+        item_check.set_text(check_label);
+    }
     if let Ok(icon) = icon_for_severity(sev) {
         let _ = tray.set_icon(Some(icon));
         let _ = tray.set_tooltip(Some(tip));
@@ -375,7 +488,6 @@ fn process_alive(pid: u32) -> bool {
     }
     #[cfg(unix)]
     {
-        // kill -0 pid: exists?
         Command::new("kill")
             .args(["-0", &pid.to_string()])
             .status()
@@ -389,25 +501,141 @@ fn process_alive(pid: u32) -> bool {
     }
 }
 
-fn open_path(path: &std::path::Path) {
+/// Open a path with the OS default handler. Creates an empty file if missing.
+///
+/// On Windows the tray is windowless, so `cmd /C start` is unreliable; use
+/// PowerShell `Start-Process` instead (same pattern as capture autostart).
+pub fn open_path(path: &std::path::Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir log dir: {e}"))?;
     }
     if !path.exists() {
-        let _ = std::fs::write(path, b"");
+        std::fs::write(path, b"").map_err(|e| format!("create log file: {e}"))?;
     }
+
     #[cfg(windows)]
     {
-        let _ = Command::new("cmd")
-            .args(["/C", "start", "", &path.display().to_string()])
-            .spawn();
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let p = path.display().to_string().replace('\'', "''");
+        // LiteralPath opens with the default app for .log (usually Notepad).
+        let script = format!("Start-Process -LiteralPath '{p}'");
+        let out = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("powershell Start-Process: {e}"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(if err.trim().is_empty() {
+                format!("Start-Process failed (status {})", out.status)
+            } else {
+                err.trim().to_string()
+            });
+        }
+        Ok(())
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("open").arg(path).spawn();
+        let st = Command::new("open")
+            .arg(path)
+            .status()
+            .map_err(|e| format!("open: {e}"))?;
+        if st.success() {
+            Ok(())
+        } else {
+            Err(format!("open exited {st}"))
+        }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let _ = Command::new("xdg-open").arg(path).spawn();
+        let st = Command::new("xdg-open")
+            .arg(path)
+            .status()
+            .map_err(|e| format!("xdg-open: {e}"))?;
+        if st.success() {
+            Ok(())
+        } else {
+            Err(format!("xdg-open exited {st}"))
+        }
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        Err(format!("open not supported: {}", path.display()))
+    }
+}
+
+/// Blocking user-visible notification (MessageBox on Windows; stderr elsewhere).
+///
+/// Used for actions that otherwise have no UI feedback from a windowless tray.
+fn user_notify(title: &str, body: &str) {
+    log::info!("tray notify: {title}: {body}");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // Escape for PowerShell single-quoted strings.
+        let t = title.replace('\'', "''");
+        let b = body.replace('\'', "''");
+        let script = format!(
+            "Add-Type -AssemblyName PresentationFramework; \
+             [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
+        );
+        let _ = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        // Best-effort: try notify-send, else stderr.
+        let _ = Command::new("notify-send").args([title, body]).spawn();
+        eprintln!("spanreed tray: {title}: {body}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn open_path_creates_missing_file() {
+        let dir = std::env::temp_dir().join(format!("spanreed-tray-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("nested").join("test.log");
+        // On CI/headless, Start-Process may still succeed for notepad association.
+        // We only assert the file exists after the call (create side-effect).
+        let _ = open_path(&path);
+        assert!(
+            path.is_file(),
+            "open_path should create missing log file at {}",
+            path.display()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn capture_log_path_is_under_spanreed_logs() {
+        let p: PathBuf = capture_log::capture_log_path();
+        let s = p.to_string_lossy();
+        assert!(
+            s.contains("spanreed") && s.contains("capture.log"),
+            "unexpected log path {s}"
+        );
     }
 }
