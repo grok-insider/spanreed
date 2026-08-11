@@ -68,11 +68,37 @@ spanreed capture serve --watchdog # auto-restart worker; log under spanreed/logs
 spanreed capture ensure           # start capture+watchdog if ports 18736/18737 are down
 spanreed capture status           # exit 0 if listening, 1 if DOWN; shows log path
 spanreed probe grok --cost        # quotas + captured tokens / $ estimate
+spanreed self-update --check      # compare to latest GitHub Release
+spanreed self-update              # download, verify .sha256, replace binary
+spanreed tray                     # system tray (build with --features tray)
 ```
 
 If Grok Build or OpenCode “stops working” while wired to the local proxy, check
 capture first (`setup status` / `capture status`). A dead proxy with live wiring
 looks like a CLI failure. Fix: `spanreed capture ensure`.
+
+### Updates
+
+```sh
+spanreed self-update --check      # exit 0 if current, 2 if newer
+spanreed self-update --dry-run    # download + checksum only
+spanreed self-update --yes        # apply without prompt
+```
+
+Assets come from GitHub Releases (same as the installer). Checksums are verified
+before replace; capture is restarted via `capture ensure` when possible.
+
+### System tray (optional)
+
+```sh
+cargo build --release --features tray
+spanreed tray                     # Behelit icon: capture health + % remaining
+```
+
+Windows/macOS release binaries include the tray feature. Linux musl release
+builds stay headless (use Waybar + `spanreed waybar`); tray is still available
+on local `linux-gnu` builds with `--features tray`. Setup can register tray
+autostart separately from the capture service.
 
 Capture logs (Windows): `%LOCALAPPDATA%\spanreed\logs\capture.log`.
 After upgrading spanreed on Windows, re-run `spanreed setup` (or
