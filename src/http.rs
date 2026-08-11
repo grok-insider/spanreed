@@ -12,6 +12,13 @@ pub struct Response {
     pub body: String,
 }
 
+/// Binary HTTP response (e.g. release assets).
+#[derive(Debug)]
+pub struct BytesResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
 impl Response {
     pub fn json(&self) -> Option<serde_json::Value> {
         serde_json::from_str(self.body.trim()).ok()
@@ -122,5 +129,37 @@ impl Request {
         let status = resp.status().as_u16();
         let body = resp.text().map_err(|e| e.to_string())?;
         Ok(Response { status, body })
+    }
+
+    /// Download response body as raw bytes (release archives, etc.).
+    pub fn send_bytes(self) -> Result<BytesResponse, String> {
+        // Longer timeout for multi-MB release assets.
+        let mut builder = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .connect_timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .user_agent(format!(
+                "spanreed/{} (+{})",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS
+            ));
+        if let Some(proxy) = resolved_proxy() {
+            builder = builder.proxy(proxy.clone());
+        }
+        if self.insecure {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+        let client = builder.build().map_err(|e| e.to_string())?;
+        let mut req = client.request(self.method, &self.url);
+        for (k, v) in self.headers {
+            req = req.header(k, v);
+        }
+        if let Some(body) = self.body {
+            req = req.body(body);
+        }
+        let resp = req.send().map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let body = resp.bytes().map_err(|e| e.to_string())?.to_vec();
+        Ok(BytesResponse { status, body })
     }
 }

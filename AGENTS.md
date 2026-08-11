@@ -38,7 +38,10 @@ declare it in `src/main.rs`.
 | `src/api.rs`            | Local HTTP API on `127.0.0.1:6736` (`/usage`, `/health`) with background refresh. |
 | `src/cost.rs`           | Local-log cost engine (Claude/Codex): parallel + `memchr` + mtime pre-filter + dedup + TTL cache; produces `Last 30 Days` + `Usage Trend`. |
 | `src/grok_ledger.rs`    | Grok capture ledger (`grok-usage.jsonl`). Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
-| `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service, wire Grok Build + OpenCode xAI to the local capture proxy. |
+| `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service, optional tray autostart, wire Grok Build + OpenCode xAI to the local capture proxy. |
+| `src/self_update.rs`    | `spanreed self-update`: GitHub Releases check + sha256-verified binary replace. |
+| `src/tray_format.rs`    | Pure tooltip / severity helpers for the tray (always compiled). |
+| `src/tray.rs`           | `spanreed tray` (feature `tray`): Behelit system tray icon + menu. |
 | `src/capture_log.rs`    | Capture/watchdog log file (`…/spanreed/logs/capture.log`) with size rotation. |
 | `src/capture_watchdog.rs` | `capture serve --watchdog`: restart worker when ports die / process exits. |
 | `src/forecast.rs`       | Week/month Expected lines from pool-% density samples. |
