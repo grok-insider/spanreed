@@ -1,6 +1,11 @@
 //! Pure formatting helpers for the system tray (no GUI deps).
 //!
 //! Always compiled so unit tests cover tooltip / severity without `feature = "tray"`.
+//! Production callers live in `tray.rs` (feature-gated). Without that feature some
+//! helpers are only hit by unit tests (and a few only by the tray UI), so clippy
+//! would otherwise flag dead_code under default features / `-D warnings`.
+
+#![cfg_attr(not(feature = "tray"), allow(dead_code))]
 
 use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
 use crate::output;
@@ -201,5 +206,18 @@ mod tests {
         assert!(t.contains("Session 96% left"));
         assert!(t.contains("Weekly 99% left"));
         assert!(t.contains("Max 20x"));
+    }
+
+    #[test]
+    fn max_used_and_tint_used_by_tray_contract() {
+        let out = ProviderOutput::new(
+            "grok",
+            "Grok",
+            vec![MetricLine::percent("Weekly", 90.0, None)],
+        );
+        assert_eq!(max_used_pct(&[out]), Some(90.0));
+        let rgba = TraySeverity::Warning.tint_rgba();
+        assert_eq!(rgba[3], 255);
+        assert!(rgba[0] > 0);
     }
 }
