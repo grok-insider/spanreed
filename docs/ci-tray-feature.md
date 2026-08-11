@@ -1,46 +1,24 @@
-# CI / release: enabling the `tray` feature
+﻿# CI / release: enabling the `tray` feature
 
 Desktop release binaries (Windows + macOS) should build with `--features tray`.
 Linux **musl** release artifacts stay without tray so the static binary check holds.
 
-Apply these edits to `.github/workflows/` (requires a token with the `workflow` scope):
+## `ci.yml` (rust job on Ubuntu)
 
-## `ci.yml` (rust job)
+Install GTK / AppIndicator before `--features tray`:
 
-After `cargo test --all` with `SPANREED_OFFLINE=1`:
-
-```yaml
-      - run: cargo check --all-targets --features tray
-      - run: cargo clippy --all-targets --features tray -- -D warnings
-        env:
-          SPANREED_OFFLINE: "1"
+```bash
+sudo apt-get update
+sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev pkg-config
 ```
 
-On the informational `cross` matrix (macos/windows), after the offline tests:
+Then `cargo check/clippy --features tray`. Win/mac cross jobs need no extra apt packages.
 
-```yaml
-      - run: cargo check --all-targets --features tray
-      - run: cargo test --all --features tray
-        env:
-          SPANREED_OFFLINE: "1"
-```
+## `release.yml`
 
-## `release.yml` (artifacts job)
+Native (non-musl) builds use `--features tray`; musl zigbuild stays without tray.
 
-Replace the native build step with:
-
-```yaml
-      # Linux musl stays without `tray` so the static binary check still holds.
-      # Windows + macOS release assets include the Behelit system tray.
-      - name: Build (zigbuild static)
-        if: matrix.cross == 'zig'
-        run: cargo zigbuild --release --target "$TARGET"
-      - name: Build (native + tray)
-        if: matrix.cross != 'zig'
-        run: cargo build --release --target ${{ matrix.target }} --features tray
-```
-
-Local verification (any platform):
+## Local
 
 ```bash
 cargo build --release --features tray
