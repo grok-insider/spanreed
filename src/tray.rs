@@ -30,7 +30,11 @@ use crate::model::ProviderOutput;
 use crate::probe;
 use crate::self_update;
 use crate::setup;
+use crate::share;
+use crate::share_schedule;
+use crate::share_session;
 use crate::tray_format::{self, TraySeverity};
+use crate::util;
 
 const DEFAULT_INTERVAL_SECS: u64 = 60;
 const MASTER_PNG: &[u8] = include_bytes!("assets/tray/behelit-32.png");
@@ -42,6 +46,9 @@ pub const MENU_ENSURE: &str = "Ensure capture";
 pub const MENU_LOG: &str = "Open capture log";
 pub const MENU_CHECK: &str = "Check for updates";
 pub const MENU_UPDATE: &str = "Install update…";
+pub const MENU_LINK_SHARE: &str = "Link share (X)…";
+pub const MENU_SHARE_NOW: &str = "Share now";
+pub const MENU_UNLINK_SHARE: &str = "Unlink share";
 pub const MENU_QUIT: &str = "Quit tray";
 
 struct TrayState {
@@ -49,6 +56,8 @@ struct TrayState {
     capture_up: bool,
     max_used: Option<f64>,
     update_note: Option<String>,
+    share_logged_in: bool,
+    share_line: String,
     /// Short status line shown at the top of the tooltip (action feedback).
     status_note: Option<String>,
     last_notify_proxy: Option<Instant>,
@@ -64,6 +73,8 @@ impl Default for TrayState {
             capture_up: false,
             max_used: None,
             update_note: None,
+            share_logged_in: false,
+            share_line: tray_format::format_share_line(false, None, ""),
             status_note: None,
             last_notify_proxy: None,
             last_notify_quota: None,
@@ -100,7 +111,7 @@ pub fn cmd(args: &[String]) -> ExitCode {
                 println!(
                     "spanreed tray — system tray status (Behelit icon)\n\n\
                      \t--interval S   Refresh every S seconds (default {DEFAULT_INTERVAL_SECS})\n\
-                     Menu: Refresh, Ensure capture, Open log, Check/Install update, Quit tray"
+                     Menu: Refresh, Ensure, Open log, Link/Share/Unlink, Check/Install update, Quit tray"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -131,12 +142,20 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     let item_log = MenuItem::new(MENU_LOG, true, None);
     let item_check = MenuItem::new(MENU_CHECK, true, None);
     let item_update = MenuItem::new(MENU_UPDATE, false, None);
+    let item_share_primary = MenuItem::new(MENU_LINK_SHARE, true, None);
+    let item_unlink = MenuItem::new(MENU_UNLINK_SHARE, false, None);
     let item_quit = MenuItem::new(MENU_QUIT, true, None);
     menu.append(&item_refresh)
         .map_err(|e| format!("menu: {e}"))?;
     menu.append(&item_ensure)
         .map_err(|e| format!("menu: {e}"))?;
     menu.append(&item_log).map_err(|e| format!("menu: {e}"))?;
+    menu.append(&PredefinedMenuItem::separator())
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_share_primary)
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_unlink)
+        .map_err(|e| format!("menu: {e}"))?;
     menu.append(&PredefinedMenuItem::separator())
         .map_err(|e| format!("menu: {e}"))?;
     menu.append(&item_check).map_err(|e| format!("menu: {e}"))?;
@@ -149,6 +168,8 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     let id_refresh = item_refresh.id().clone();
     let id_ensure = item_ensure.id().clone();
     let id_log = item_log.id().clone();
+    let id_share_primary = item_share_primary.id().clone();
+    let id_unlink = item_unlink.id().clone();
     let id_check = item_check.id().clone();
     let id_update = item_update.id().clone();
     let id_quit = item_quit.id().clone();
@@ -166,7 +187,14 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         .build()
         .map_err(|e| format!("tray icon: {e}"))?;
 
-    apply_visual(&state, &mut tray, &item_update, &item_check);
+    apply_visual(
+        &state,
+        &mut tray,
+        &item_update,
+        &item_check,
+        &item_share_primary,
+        &item_unlink,
+    );
 
     // Background: probe only (TrayIcon/MenuItem are !Send).
     let stop = Arc::new(AtomicBool::new(false));
@@ -190,7 +218,14 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         if let Event::NewEvents(_) = event {
             let dirty = state.lock().map(|g| g.dirty).unwrap_or(false);
             if dirty {
-                apply_visual(&state, &mut tray, &item_update, &item_check);
+                apply_visual(
+                    &state,
+                    &mut tray,
+                    &item_update,
+                    &item_check,
+                    &item_share_primary,
+                    &item_unlink,
+                );
             }
         }
 
@@ -201,73 +236,229 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 *control_flow = ControlFlow::Exit;
             } else if id == id_refresh {
                 set_status(&state, "Refreshing usage…");
-                apply_visual(&state, &mut tray, &item_update, &item_check);
-                refresh_state(&state);
-                set_status(&state, "Usage refreshed");
-                apply_visual(&state, &mut tray, &item_update, &item_check);
+                apply_visual(
+                    &state,
+                    &mut tray,
+                    &item_update,
+                    &item_check,
+                    &item_share_primary,
+                    &item_unlink,
+                );
+                let st = state.clone();
+                thread::spawn(move || {
+                    refresh_state(&st);
+                    set_status(&st, "Usage refreshed");
+                });
             } else if id == id_ensure {
                 set_status(&state, "Ensuring capture…");
-                apply_visual(&state, &mut tray, &item_update, &item_check);
-                let msg = match setup::service_ensure(false) {
-                    Ok(m) => {
-                        log::info!("ensure: {m}");
-                        format!("Capture: {m}")
-                    }
-                    Err(e) => {
-                        log::warn!("ensure: {e}");
-                        format!("Capture ensure failed: {e}")
-                    }
-                };
-                set_status(&state, &msg);
-                refresh_state(&state);
-                apply_visual(&state, &mut tray, &item_update, &item_check);
-                user_notify("spanreed — capture", &msg);
+                apply_visual(
+                    &state,
+                    &mut tray,
+                    &item_update,
+                    &item_check,
+                    &item_share_primary,
+                    &item_unlink,
+                );
+                let st = state.clone();
+                thread::spawn(move || {
+                    let msg = match setup::service_ensure(false) {
+                        Ok(m) => {
+                            log::info!("ensure: {m}");
+                            format!("Capture: {m}")
+                        }
+                        Err(e) => {
+                            log::warn!("ensure: {e}");
+                            format!("Capture ensure failed: {e}")
+                        }
+                    };
+                    set_status(&st, &msg);
+                    refresh_state(&st);
+                    user_notify("spanreed — capture", &msg, false);
+                });
             } else if id == id_log {
                 let path = capture_log::capture_log_path();
                 match open_path(&path) {
                     Ok(()) => {
                         let msg = format!("Opened log:\n{}", path.display());
                         set_status(&state, "Opened capture log");
-                        apply_visual(&state, &mut tray, &item_update, &item_check);
-                        // Brief status only — opening the editor is the feedback.
+                        apply_visual(
+                    &state,
+                    &mut tray,
+                    &item_update,
+                    &item_check,
+                    &item_share_primary,
+                    &item_unlink,
+                );
                         log::info!("tray: {msg}");
                     }
                     Err(e) => {
                         let msg = format!("Could not open log:\n{}\n\n{}", path.display(), e);
                         set_status(&state, "Failed to open capture log");
-                        apply_visual(&state, &mut tray, &item_update, &item_check);
-                        user_notify("spanreed — capture log", &msg);
+                        apply_visual(
+                    &state,
+                    &mut tray,
+                    &item_update,
+                    &item_check,
+                    &item_share_primary,
+                    &item_unlink,
+                );
+                        user_notify("spanreed — capture log", &msg, true);
+                    }
+                }
+            } else if id == id_share_primary {
+                let logged_in = state
+                    .lock()
+                    .map(|g| g.share_logged_in)
+                    .unwrap_or(false);
+                if logged_in {
+                    set_status(&state, "Sharing usage…");
+                    apply_visual(
+                        &state,
+                        &mut tray,
+                        &item_update,
+                        &item_check,
+                        &item_share_primary,
+                        &item_unlink,
+                    );
+                    let st = state.clone();
+                    thread::spawn(move || {
+                        let msg = match share::share_once(false) {
+                            Ok(m) => m,
+                            Err(e) => e,
+                        };
+                        set_status(&st, &msg);
+                        refresh_state(&st);
+                        user_notify("spanreed — share", &msg, true);
+                    });
+                } else {
+                    set_status(&state, "Starting share login…");
+                    apply_visual(
+                        &state,
+                        &mut tray,
+                        &item_update,
+                        &item_check,
+                        &item_share_primary,
+                        &item_unlink,
+                    );
+                    let st = state.clone();
+                    thread::spawn(move || match share_session::start_device_login() {
+                        Ok(pending) => {
+                            let _ = open_url(&pending.verification_uri);
+                            let code_msg = format!(
+                                "Approve in the browser.\nCode: {}\n{}",
+                                pending.user_code, pending.verification_uri
+                            );
+                            set_status(&st, &format!("Share code: {}", pending.user_code));
+                            user_notify("spanreed — share login", &code_msg, true);
+                            match share_session::wait_device_login(&pending) {
+                                Ok(_) => {
+                                    let _ = share_schedule::enable(false);
+                                    set_status(&st, "Share linked");
+                                    refresh_state(&st);
+                                    user_notify(
+                                        "spanreed — share",
+                                        "Linked. Daily share can run without the browser.",
+                                        true,
+                                    );
+                                }
+                                Err(e) => {
+                                    set_status(&st, &e);
+                                    user_notify("spanreed — share login", &e, true);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            set_status(&st, &e);
+                            user_notify("spanreed — share login", &e, true);
+                        }
+                    });
+                }
+            } else if id == id_unlink {
+                match share_session::clear() {
+                    Ok(()) => {
+                        set_status(&state, "Share unlinked");
+                        refresh_state(&state);
+                        apply_visual(
+                            &state,
+                            &mut tray,
+                            &item_update,
+                            &item_check,
+                            &item_share_primary,
+                            &item_unlink,
+                        );
+                        user_notify("spanreed — share", "Local share session removed.", false);
+                    }
+                    Err(e) => {
+                        set_status(&state, &e);
+                        user_notify("spanreed — share", &e, true);
                     }
                 }
             } else if id == id_check {
                 item_check.set_text("Checking for updates…");
                 set_status(&state, "Checking for updates…");
-                apply_visual(&state, &mut tray, &item_update, &item_check);
-
-                let summary = run_update_check(&state);
-                item_check.set_text(MENU_CHECK);
-                set_status(&state, &summary);
-                apply_visual(&state, &mut tray, &item_update, &item_check);
-                user_notify("spanreed — updates", &summary);
+                apply_visual(
+                    &state,
+                    &mut tray,
+                    &item_update,
+                    &item_check,
+                    &item_share_primary,
+                    &item_unlink,
+                );
+                let st = state.clone();
+                thread::spawn(move || {
+                    let summary = run_update_check(&st);
+                    set_status(&st, &summary);
+                    user_notify("spanreed — updates", &summary, true);
+                });
             } else if id == id_update {
+                if let Some(why) = self_update::apply_blocked_reason() {
+                    set_status(&state, why);
+                    apply_visual(
+                    &state,
+                    &mut tray,
+                    &item_update,
+                    &item_check,
+                    &item_share_primary,
+                    &item_unlink,
+                );
+                    user_notify("spanreed — updates", why, true);
+                    continue;
+                }
                 set_status(&state, "Starting self-update…");
-                apply_visual(&state, &mut tray, &item_update, &item_check);
+                apply_visual(
+                    &state,
+                    &mut tray,
+                    &item_update,
+                    &item_check,
+                    &item_share_primary,
+                    &item_unlink,
+                );
                 let exe = std::env::current_exe().unwrap_or_default();
-                match Command::new(&exe).args(["self-update", "--yes"]).spawn() {
-                    Ok(_) => {
+                let st = state.clone();
+                thread::spawn(move || match Command::new(&exe)
+                    .args(["self-update", "--yes"])
+                    .status()
+                {
+                    Ok(s) if s.success() => {
+                        set_status(&st, "Self-update finished — restart tray if the icon dies");
                         user_notify(
                             "spanreed — updates",
-                            "Self-update started in the background.\n\
-                             Capture will be restarted by the updater when needed.",
+                            "Self-update finished.\n\
+                             Capture was restarted when needed. Restart the tray if the icon is gone.",
+                            true,
                         );
+                    }
+                    Ok(s) => {
+                        let msg = format!("self-update exited {s}");
+                        set_status(&st, &msg);
+                        user_notify("spanreed — updates", &msg, true);
                     }
                     Err(e) => {
                         let msg = format!("Could not start self-update: {e}");
-                        set_status(&state, &msg);
-                        apply_visual(&state, &mut tray, &item_update, &item_check);
-                        user_notify("spanreed — updates", &msg);
+                        set_status(&st, &msg);
+                        user_notify("spanreed — updates", &msg, true);
                     }
-                }
+                });
             }
         }
     });
@@ -290,6 +481,13 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
     g.capture_up = capture_up;
     g.outputs = outputs;
     g.max_used = max_used;
+    g.share_logged_in = share_session::is_logged_in();
+    let today = util::today_day_key_madrid();
+    g.share_line = tray_format::format_share_line(
+        g.share_logged_in,
+        share::last_shared_day().as_deref(),
+        &today,
+    );
     g.dirty = true;
 
     let now = Instant::now();
@@ -302,6 +500,13 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
             log::warn!("spanreed tray: capture proxy is DOWN");
             g.last_notify_proxy = Some(now);
             g.status_note = Some("Capture proxy is DOWN".into());
+            drop(g);
+            user_notify(
+                "spanreed — capture",
+                "Capture proxy is DOWN. Run Ensure capture or `spanreed capture ensure`.",
+                false,
+            );
+            return;
         }
     }
     if let Some(band) = tray_format::crossed_threshold(prev_used, max_used) {
@@ -327,8 +532,13 @@ fn run_update_check(state: &Arc<Mutex<TrayState>>) -> String {
     }
     match self_update::check_for_update() {
         Ok(r) if r.newer => {
+            let how = if let Some(why) = self_update::apply_blocked_reason() {
+                format!("\n\nCannot auto-install: {why}")
+            } else {
+                "\n\nUse “Install update…” to apply.".into()
+            };
             let msg = format!(
-                "Update available: {} → {} ({})\n\nUse “Install update…” to apply.",
+                "Update available: {} → {} ({}){how}",
                 r.current, r.latest, r.tag
             );
             let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -361,6 +571,9 @@ fn tooltip_from(state: &Arc<Mutex<TrayState>>) -> String {
             parts.push(s.to_string());
         }
     }
+    if !g.share_line.is_empty() {
+        parts.push(g.share_line.clone());
+    }
     parts.push(tray_format::format_tooltip(
         &g.outputs,
         g.capture_up,
@@ -374,8 +587,10 @@ fn apply_visual(
     tray: &mut TrayIcon,
     item_update: &MenuItem,
     item_check: &MenuItem,
+    item_share_primary: &MenuItem,
+    item_unlink: &MenuItem,
 ) {
-    let (sev, tip, update_enabled, check_label) = {
+    let (sev, tip, update_enabled, check_label, share_logged_in) = {
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.dirty = false;
         let sev = tray_format::severity(g.capture_up, g.max_used);
@@ -385,22 +600,30 @@ fn apply_visual(
                 tip_parts.push(s.to_string());
             }
         }
+        if !g.share_line.is_empty() {
+            tip_parts.push(g.share_line.clone());
+        }
         tip_parts.push(tray_format::format_tooltip(
             &g.outputs,
             g.capture_up,
             g.update_note.as_deref(),
         ));
         let tip = tip_parts.join("\n");
-        let update_enabled = g
-            .update_note
-            .as_deref()
-            .map(|n| n.contains("available"))
-            .unwrap_or(false);
-        // Keep check label stable unless mid-check (caller sets text).
+        let update_enabled = self_update::can_apply_self_update()
+            && g.update_note
+                .as_deref()
+                .map(|n| n.contains("available"))
+                .unwrap_or(false);
         let check_label = MENU_CHECK.to_string();
-        let _ = &g;
-        (sev, tip, update_enabled, check_label)
+        let share_logged_in = g.share_logged_in;
+        (sev, tip, update_enabled, check_label, share_logged_in)
     };
+    item_share_primary.set_text(if share_logged_in {
+        MENU_SHARE_NOW
+    } else {
+        MENU_LINK_SHARE
+    });
+    item_unlink.set_enabled(share_logged_in);
     item_update.set_enabled(update_enabled);
     // Don't clobber "Checking…" if the menu item was set by the handler mid-flight
     // unless we're past that (handler restores MENU_CHECK after check).
@@ -501,6 +724,61 @@ fn process_alive(pid: u32) -> bool {
     }
 }
 
+fn open_url(url: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let u = url.replace('\'', "''");
+        let script = format!("Start-Process '{u}'");
+        let out = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("powershell Start-Process: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let st = Command::new("open")
+            .arg(url)
+            .status()
+            .map_err(|e| format!("open: {e}"))?;
+        if st.success() {
+            Ok(())
+        } else {
+            Err(format!("open exited {st}"))
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let st = Command::new("xdg-open")
+            .arg(url)
+            .status()
+            .map_err(|e| format!("xdg-open: {e}"))?;
+        if st.success() {
+            Ok(())
+        } else {
+            Err(format!("xdg-open exited {st}"))
+        }
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        Err(format!("open url not supported: {url}"))
+    }
+}
+
 /// Open a path with the OS default handler. Creates an empty file if missing.
 ///
 /// On Windows the tray is windowless, so `cmd /C start` is unreliable; use
@@ -572,16 +850,19 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// Blocking user-visible notification (MessageBox on Windows; stderr elsewhere).
+/// User-visible notification.
 ///
-/// Used for actions that otherwise have no UI feedback from a windowless tray.
-fn user_notify(title: &str, body: &str) {
+/// `modal`: Windows MessageBox for long copy (update check). Refresh/ensure use
+/// tooltip + Linux `notify-send` only — do not spawn WPF for every click.
+fn user_notify(title: &str, body: &str, modal: bool) {
     log::info!("tray notify: {title}: {body}");
     #[cfg(windows)]
     {
+        if !modal {
+            return;
+        }
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // Escape for PowerShell single-quoted strings.
         let t = title.replace('\'', "''");
         let b = body.replace('\'', "''");
         let script = format!(
@@ -602,9 +883,17 @@ fn user_notify(title: &str, body: &str) {
     }
     #[cfg(not(windows))]
     {
-        // Best-effort: try notify-send, else stderr.
-        let _ = Command::new("notify-send").args([title, body]).spawn();
-        eprintln!("spanreed tray: {title}: {body}");
+        let short = if body.len() > 280 {
+            format!("{}…", body.chars().take(277).collect::<String>())
+        } else {
+            body.to_string()
+        };
+        let _ = Command::new("notify-send")
+            .args(["-a", "spanreed", "--", title, &short])
+            .spawn();
+        if modal {
+            eprintln!("spanreed tray: {title}: {body}");
+        }
     }
 }
 
