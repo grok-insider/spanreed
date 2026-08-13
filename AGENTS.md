@@ -45,6 +45,8 @@ declare it in `src/main.rs`.
 | `src/capture_log.rs`    | Capture/watchdog log file (`…/spanreed/logs/capture.log`) with size rotation. |
 | `src/capture_watchdog.rs` | `capture serve --watchdog`: restart worker when ports die / process exits. |
 | `src/forecast.rs`       | Week/month Expected lines from pool-% density samples. |
+| `src/epoch.rs`          | Early weekly reset detection (gift/outage) vs scheduled rollover. |
+| `src/pool_baseline.rs`  | First-seen Weekly % per provider/week for span scaling. |
 | `src/pricing.rs`        | Model price table: embedded LiteLLM snapshot (`pricing-data.json`) + runtime-refreshed remote cache (7-day TTL) + user override; model-name matching and tiered cost math. |
 
 ## The `Provider` trait
