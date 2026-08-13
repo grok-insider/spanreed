@@ -39,6 +39,11 @@
             pkgs.xdg-utils
             pkgs.libnotify
           ];
+          # tray-icon dlopens Ayatana at runtime (not a link-time NEEDED).
+          trayLibPath = lib.makeLibraryPath [
+            pkgs.libayatana-appindicator
+            pkgs.gtk3
+          ];
         in
         pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed";
@@ -74,6 +79,7 @@
           postFixup = ''
             wrapProgram "$out/bin/spanreed" \
               --prefix PATH : "${runtimePath}" \
+              --prefix LD_LIBRARY_PATH : "${trayLibPath}" \
               "''${gappsWrapperArgs[@]}"
           '';
 
