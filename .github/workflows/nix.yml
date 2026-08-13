@@ -1,0 +1,35 @@
+name: Nix
+
+# Keep `github:grok-insider/spanreed` buildable. Push the gnu+tray closure to
+# Cachix on master / tags when CACHIX_AUTH_TOKEN is set.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: nix-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: nix build (x86_64-linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+      - uses: cachix/cachix-action@v16
+        with:
+          name: grok-insider
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+      - run: nix flake show --all-systems
+      - run: nix build --print-build-logs
+      - run: nix run . -- --help

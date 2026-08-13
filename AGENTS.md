@@ -41,10 +41,12 @@ declare it in `src/main.rs`.
 | `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service, optional tray autostart, wire Grok Build + OpenCode xAI to the local capture proxy. |
 | `src/self_update.rs`    | `spanreed self-update`: GitHub Releases check + sha256-verified binary replace. |
 | `src/tray_format.rs`    | Pure tooltip / severity helpers for the tray (always compiled). |
-| `src/tray.rs`           | `spanreed tray` (feature `tray`): Behelit system tray icon + menu. |
+| `src/tray.rs`           | `spanreed tray` (feature `tray`): Behelit SNI/tray icon + menu. Nix package builds this; musl GH zips do not. |
 | `src/capture_log.rs`    | Capture/watchdog log file (`…/spanreed/logs/capture.log`) with size rotation. |
 | `src/capture_watchdog.rs` | `capture serve --watchdog`: restart worker when ports die / process exits. |
 | `src/forecast.rs`       | Week/month Expected lines from pool-% density samples. |
+| `src/epoch.rs`          | Early weekly reset detection (gift/outage) vs scheduled rollover. |
+| `src/pool_baseline.rs`  | First-seen Weekly % per provider/week for span scaling. |
 | `src/pricing.rs`        | Model price table: embedded LiteLLM snapshot (`pricing-data.json`) + runtime-refreshed remote cache (7-day TTL) + user override; model-name matching and tiered cost math. |
 
 ## The `Provider` trait
@@ -222,6 +224,7 @@ SPANREED_OFFLINE=1 cargo test --all
 
 | Surface | Role |
 |---------|------|
+| **GitHub flake** | Linux gnu+tray: `nix run` / `nix profile install github:grok-insider/spanreed` and `homeManagerModules.default`. Upgrade: `nix profile upgrade` or `nix flake update` that input. |
 | **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
 | **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |

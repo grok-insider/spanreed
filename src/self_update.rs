@@ -113,6 +113,12 @@ pub fn cmd(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if !dry_run && !can_apply_self_update() {
+        let why = apply_blocked_reason().unwrap_or("self-update apply is disabled");
+        eprintln!("self-update: {why}");
+        return ExitCode::FAILURE;
+    }
+
     if !yes && !dry_run && !confirm_apply(&result) {
         eprintln!("self-update: cancelled");
         return ExitCode::FAILURE;
@@ -151,6 +157,52 @@ fn repo() -> String {
 
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// True when this process must not replace its own binary (Nix store / env).
+pub fn install_is_nix_managed() -> bool {
+    if std::env::var_os("SPANREED_NIX").is_some() {
+        return true;
+    }
+    exe_is_under_nix_store(std::env::current_exe().ok().as_deref())
+}
+
+fn exe_is_under_nix_store(exe: Option<&Path>) -> bool {
+    let Some(exe) = exe else {
+        return false;
+    };
+    let resolved = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
+    resolved.starts_with("/nix/store")
+}
+
+/// Whether the tray/CLI should offer “Install update”.
+///
+/// Linux tray builds must not apply GH musl assets (those binaries have no tray).
+/// Nix-managed installs are immutable.
+pub fn can_apply_self_update() -> bool {
+    if install_is_nix_managed() {
+        return false;
+    }
+    if cfg!(all(feature = "tray", target_os = "linux")) {
+        return false;
+    }
+    true
+}
+
+pub fn apply_blocked_reason() -> Option<&'static str> {
+    if install_is_nix_managed() {
+        return Some(
+            "this install is Nix-managed — update with \
+             `nix profile upgrade` or `nix flake update` the \
+             github:grok-insider/spanreed input, then rebuild",
+        );
+    }
+    if cfg!(all(feature = "tray", target_os = "linux")) {
+        return Some(
+            "Linux tray builds cannot self-replace with musl GH assets (those have no tray)",
+        );
+    }
+    None
 }
 
 /// Triple used in GitHub Release asset names (matches install scripts).
@@ -278,6 +330,9 @@ fn download_bytes(url: &str) -> Result<Vec<u8>, String> {
 pub fn apply_update(r: &CheckResult, dry_run: bool) -> Result<String, String> {
     if offline() {
         return Err("SPANREED_OFFLINE=1".into());
+    }
+    if let Some(why) = apply_blocked_reason() {
+        return Err(why.into());
     }
 
     eprintln!("downloading {} …", r.asset_name);
@@ -575,5 +630,27 @@ mod tests {
             t.contains("linux") || t.contains("darwin") || t.contains("windows"),
             "unexpected triple {t}"
         );
+    }
+
+    #[test]
+    fn nix_store_path_is_managed() {
+        assert!(exe_is_under_nix_store(Some(Path::new(
+            "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-spanreed-0.0.4/bin/spanreed"
+        ))));
+        assert!(!exe_is_under_nix_store(Some(Path::new(
+            "/home/friend/.local/bin/spanreed"
+        ))));
+        assert!(!exe_is_under_nix_store(None));
+    }
+
+    #[test]
+    fn spanreed_nix_env_blocks_apply() {
+        std::env::set_var("SPANREED_NIX", "1");
+        assert!(install_is_nix_managed());
+        assert!(!can_apply_self_update());
+        let why = apply_blocked_reason().unwrap();
+        assert!(why.contains("Nix-managed"));
+        assert!(why.contains("github:grok-insider/spanreed"));
+        std::env::remove_var("SPANREED_NIX");
     }
 }
