@@ -4,6 +4,18 @@ All notable, user-facing changes to spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.6] - 2026-08-13
+
+- ci: ship CLIs with one merge to master as one release
+- docs: pin Nix flake install URLs to release tags
+- feat: detect early weekly resets without inflating at 100% week
+- feat: record per-provider weekly pool % at first probe
+- fix: do not scale mid-week observation as if the pool started at 0%
+- feat: link and send community share from the tray
+- docs: install and update from github:grok-insider/spanreed
+- fix: wrap Ayatana/GTK on LD_LIBRARY_PATH for tray dlopen
+- feat: enable Linux SNI tray in Nix and fix tray feedback
+
 ## [0.0.5] - 2026-08-11
 
 - fix: tray menu feedback and safe Windows binary replace
