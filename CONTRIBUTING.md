@@ -37,7 +37,9 @@ This repo uses **Model A**:
    **Manual Version Bump** workflow (repo admins).
 
 Never push directly to `master`. Do not hand-edit `CHANGELOG.md` outside a
-Release PR.
+Release PR. The git tag `vX.Y.Z` is created **when that Release PR merges**,
+not when `dev` lands on `master`. Document Nix/install URLs as
+`github:grok-insider/spanreed/vX.Y.Z` only after the tag exists.
 
 ## Adding a provider
 

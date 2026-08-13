@@ -213,7 +213,9 @@ SPANREED_OFFLINE=1 cargo test --all
 
 - **Patch (Z):** automatic after a merge into `master` with `feat`/`fix` since the
   last tag — bot opens `release-plz-vX.Y.Z` (AI changelog via
-  `release-changelog-action@v1`). Merge that PR to tag + attach binaries.
+  `release-changelog-action@v1`). Merge that PR → `release-plz` creates **`vX.Y.Z`
+  tag + GitHub Release**, then CI attaches binaries. Do not advertise a flake
+  URL until that tag exists.
 - **Minor / major (Y / X):** Actions → **Manual Version Bump** (repo admin only).
   Opens `release-plz-manual-v…` into `master`. A normal `dev` → `master` PR does
   **not** choose major/minor by itself.
@@ -224,7 +226,7 @@ SPANREED_OFFLINE=1 cargo test --all
 
 | Surface | Role |
 |---------|------|
-| **GitHub flake** | Linux gnu+tray: `nix run` / `nix profile install github:grok-insider/spanreed` and `homeManagerModules.default`. Upgrade: `nix profile upgrade` or `nix flake update` that input. |
+| **GitHub flake (stable)** | Linux gnu+tray: pin the **release tag** — `nix run` / `nix profile install github:grok-insider/spanreed/vX.Y.Z` and `homeManagerModules.default`. The tag is created **with** the GitHub Release. Floating `github:grok-insider/spanreed` follows `master` and is **not** stable. Org rule: [`../AGENTS.md`](../AGENTS.md). |
 | **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
 | **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
