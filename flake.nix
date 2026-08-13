@@ -84,7 +84,8 @@
           '';
 
           meta = {
-            description = "Linux-native AI subscription usage tracker (daemon + CLI + Waybar)";
+            description = "Linux-native AI subscription usage tracker (daemon + CLI + Waybar + tray)";
+            homepage = "https://github.com/grok-insider/spanreed";
             mainProgram = "spanreed";
             license = lib.licenses.mit;
             platforms = systems;
@@ -96,6 +97,12 @@
         default = packageFor system;
         spanreed = default;
       });
+
+      overlays.default = final: prev: {
+        spanreed = self.packages.${prev.stdenv.hostPlatform.system}.default;
+      };
+
+      formatter = forAllSystems (system: (import nixpkgs { inherit system; }).nixfmt-rfc-style);
 
       apps = forAllSystems (system: {
         default = {

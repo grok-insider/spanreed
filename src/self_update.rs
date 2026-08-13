@@ -192,7 +192,9 @@ pub fn can_apply_self_update() -> bool {
 pub fn apply_blocked_reason() -> Option<&'static str> {
     if install_is_nix_managed() {
         return Some(
-            "this install is Nix-managed — update via flake (`nix flake update spanreed` + rebuild)",
+            "this install is Nix-managed — update with \
+             `nix profile upgrade` or `nix flake update` the \
+             github:grok-insider/spanreed input, then rebuild",
         );
     }
     if cfg!(all(feature = "tray", target_os = "linux")) {
@@ -646,7 +648,9 @@ mod tests {
         std::env::set_var("SPANREED_NIX", "1");
         assert!(install_is_nix_managed());
         assert!(!can_apply_self_update());
-        assert!(apply_blocked_reason().unwrap().contains("Nix-managed"));
+        let why = apply_blocked_reason().unwrap();
+        assert!(why.contains("Nix-managed"));
+        assert!(why.contains("github:grok-insider/spanreed"));
         std::env::remove_var("SPANREED_NIX");
     }
 }
