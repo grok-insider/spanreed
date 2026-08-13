@@ -66,6 +66,17 @@ pub fn severity(capture_up: bool, max_used: Option<f64>) -> TraySeverity {
     }
 }
 
+/// Tooltip / menu helper: community share session (no tokens).
+pub fn format_share_line(logged_in: bool, last_day: Option<&str>, today: &str) -> String {
+    if !logged_in {
+        return "Share: not linked".into();
+    }
+    if last_day == Some(today) {
+        return format!("Share: sent today ({today})");
+    }
+    "Share: linked".into()
+}
+
 /// Multi-line tooltip for the tray icon.
 pub fn format_tooltip(
     outputs: &[ProviderOutput],
@@ -213,6 +224,19 @@ mod tests {
         assert!(t.contains("Session 96% left"));
         assert!(t.contains("Weekly 99% left"));
         assert!(t.contains("Max 20x"));
+    }
+
+    #[test]
+    fn share_line_states() {
+        assert_eq!(
+            format_share_line(false, None, "2026-08-13"),
+            "Share: not linked"
+        );
+        assert_eq!(format_share_line(true, None, "2026-08-13"), "Share: linked");
+        assert_eq!(
+            format_share_line(true, Some("2026-08-13"), "2026-08-13"),
+            "Share: sent today (2026-08-13)"
+        );
     }
 
     #[test]
