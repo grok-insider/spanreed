@@ -48,6 +48,9 @@ pub struct ShareProvider {
     /// Structured plan economics (100% pool API $). Schema v2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub economics: Option<crate::share_economics::ProviderEconomics>,
+    /// Early pool resets observed on this install (does not change at 100% week).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resets: Vec<crate::epoch::ResetEvent>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -92,11 +95,17 @@ pub fn snapshot_from_outputs(outputs: &[ProviderOutput], version: &str) -> Share
         if economics.is_some() {
             any_econ = true;
         }
+        let since = util::now_ms().saturating_sub(2 * 86_400_000);
+        let resets: Vec<_> = crate::epoch::recent_events(since)
+            .into_iter()
+            .filter(|e| e.provider == o.provider_id)
+            .collect();
         providers.push(ShareProvider {
             id: o.provider_id.clone(),
             plan: o.plan.clone().filter(|p| !p.trim().is_empty()),
             lines,
             economics,
+            resets,
         });
     }
     ShareSnapshot {

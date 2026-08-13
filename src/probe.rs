@@ -20,6 +20,7 @@ pub fn probe_one(id: &str) -> Option<ProviderOutput> {
     let out = providers::by_id(id).map(|p| p.probe());
     if let Some(o) = &out {
         crate::pool_baseline::note_from_output(o);
+        crate::epoch::note_jumps_from_outputs(std::slice::from_ref(o));
     }
     out
 }
@@ -43,5 +44,6 @@ where
     for o in &outs {
         crate::pool_baseline::note_from_output(o);
     }
+    crate::epoch::note_jumps_from_outputs(&outs);
     outs
 }

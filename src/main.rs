@@ -24,6 +24,7 @@ mod capture_watchdog;
 mod client_id;
 mod cost;
 mod creds;
+mod epoch;
 mod forecast;
 mod grok_ledger;
 mod grok_proxy;
