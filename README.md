@@ -41,6 +41,50 @@ allowed, plus an **HKCU Run** fallback. The watchdog detaches from the console
 (`FreeConsole`) so login does **not** leave a visible `cmd` window; logs go to
 `%LOCALAPPDATA%\spanreed\logs\capture.log`.
 
+### With Nix (Linux)
+
+Install or update by pointing Nix at this repository (gnu build **with tray**).
+GitHub Release musl zips stay headless; use this flake on a desktop.
+
+```sh
+# try without installing
+nix run github:grok-insider/spanreed -- probe
+
+# user profile
+nix profile install github:grok-insider/spanreed
+nix profile upgrade spanreed
+
+# pin a release tag
+nix profile install github:grok-insider/spanreed/v0.0.5
+```
+
+First `nix run`/`nix profile` may ask to trust `nixConfig` (Cachix
+`grok-insider.cachix.org`). Accept it, or add the substituter in your NixOS
+`nix.settings`. Integration line: `github:grok-insider/spanreed/dev`.
+
+Flake input + Home Manager:
+
+```nix
+{
+  inputs.spanreed.url = "github:grok-insider/spanreed";
+  # optional: inputs.spanreed.inputs.nixpkgs.follows = "nixpkgs";
+
+  # home-manager:
+  imports = [ inputs.spanreed.homeManagerModules.default ];
+  programs.spanreed = {
+    enable = true;
+    serve.enable = true;
+    capture.enable = true;
+    tray.enable = true; # needs Waybar `tray` (or another SNI host)
+  };
+}
+```
+
+Then `nix flake update spanreed` and rebuild. Overlay: `overlays.default`
+exposes `pkgs.spanreed`.
+
+Nix-managed installs refuse `self-update --yes` (the store path is immutable).
+
 ### From a local build
 
 ```sh
@@ -95,10 +139,12 @@ cargo build --release --features tray
 spanreed tray                     # Behelit icon: capture health + % remaining
 ```
 
-Windows/macOS release binaries include the tray feature. Linux musl release
-builds stay headless (use Waybar + `spanreed waybar`); tray is still available
-on local `linux-gnu` builds with `--features tray`. Setup can register tray
-autostart separately from the capture service.
+Windows/macOS release binaries include the tray feature. Linux **musl** release
+builds stay headless (use Waybar + `spanreed waybar`). The Nix package and
+local `linux-gnu` builds enable `--features tray` (GTK3 + Ayatana SNI). On
+Hyprland the icon appears in Waybar’s `tray` module next to `custom/spanreed`.
+Home Manager: `programs.spanreed.tray.enable = true`. Nix-managed installs
+refuse `self-update --yes` — upgrade the flake input or `nix profile upgrade`.
 
 Capture logs (Windows): `%LOCALAPPDATA%\spanreed\logs\capture.log`.
 After upgrading spanreed on Windows, re-run `spanreed setup` (or
@@ -111,13 +157,7 @@ cargo build --release
 # binary: ./target/release/spanreed
 ```
 
-With Nix:
-
-```sh
-nix build
-# or, from a checkout:
-nix run . -- probe
-```
+From a checkout: `nix build` / `nix run . -- probe`. From GitHub, see **With Nix** above.
 
 On Linux, `secret-tool` (libsecret) is only needed if a provider keeps its token
 in the Secret Service instead of a file.
