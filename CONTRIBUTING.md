@@ -27,19 +27,18 @@ Run fmt, clippy, and tests before sharing a change.
 
 ## Git workflow
 
-This repo uses **Model A**:
+This repo uses **Model A for CLIs**: `dev` is integration; **`master` is the
+last release only**.
 
 1. Branch from **`dev`**, open a PR into **`dev`**.
-2. When a batch is ready to ship, open one PR **`dev` → `master`** (guard allows
-   only `dev` or release-bot heads into `master`).
-3. After merge to `master`, automation may open a **patch** Release PR
-   (`release-plz-v*`). Deliberate **minor/major** bumps use the
-   **Manual Version Bump** workflow (repo admins).
+2. When a batch is ready to ship, merge the bot **Release PR**
+   (`release-plz-v*` or `release-plz-manual-*`) into **`master`**. That PR is
+   `dev` + version bump + changelog. Do **not** open a bare `dev` → `master` PR.
+3. That merge creates tag `vX.Y.Z` + GitHub Release. Document Nix URLs as
+   `github:grok-insider/spanreed/vX.Y.Z` only after the tag exists.
 
 Never push directly to `master`. Do not hand-edit `CHANGELOG.md` outside a
-Release PR. The git tag `vX.Y.Z` is created **when that Release PR merges**,
-not when `dev` lands on `master`. Document Nix/install URLs as
-`github:grok-insider/spanreed/vX.Y.Z` only after the tag exists.
+Release PR.
 
 ## Adding a provider
 

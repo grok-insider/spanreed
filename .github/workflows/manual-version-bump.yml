@@ -49,10 +49,10 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout master
+      - name: Checkout dev
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: dev
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
 
