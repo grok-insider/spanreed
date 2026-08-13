@@ -222,6 +222,7 @@ SPANREED_OFFLINE=1 cargo test --all
 
 | Surface | Role |
 |---------|------|
+| **GitHub flake** | Linux gnu+tray: `nix run` / `nix profile install github:grok-insider/spanreed` and `homeManagerModules.default`. Upgrade: `nix profile upgrade` or `nix flake update` that input. |
 | **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
 | **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
