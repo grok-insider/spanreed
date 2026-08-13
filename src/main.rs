@@ -31,6 +31,7 @@ mod history;
 mod http;
 mod model;
 mod output;
+mod pool_baseline;
 mod pricing;
 mod probe;
 mod proc;
