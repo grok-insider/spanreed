@@ -18,6 +18,8 @@ use crate::util;
 pub const MIN_PCT_DELTA: f64 = 3.0;
 /// Minimum Weekly % for one-shot density (tokens/pct_now) when no band yet.
 pub const MIN_PCT_ONESHOT: f64 = 5.0;
+/// First sample at or below this % is treated as week origin (oneshot ok).
+pub const NEAR_ORIGIN_PCT: f64 = 5.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PctSample {
@@ -67,11 +69,31 @@ pub fn density_from_band(a: &PctSample, b: &PctSample) -> Option<(f64, f64)> {
 }
 
 /// One-shot tokens/cost per % from origin (only when pct is high enough).
+///
+/// Callers must only use this when observation started near 0% pool. A mid-week
+/// capture start (e.g. first sample at 70%) must use [`density_from_band`].
 pub fn density_oneshot(tokens: u64, cost_usd: f64, weekly_pct: f64) -> Option<(f64, f64)> {
     if weekly_pct < MIN_PCT_ONESHOT {
         return None;
     }
     Some((tokens as f64 / weekly_pct, cost_usd / weekly_pct))
+}
+
+/// Scale observed $ across a pool span `[pct_lo, pct_hi]` up to 100%.
+pub fn scale_span_to_full(obs: f64, pct_lo: f64, pct_hi: f64) -> Option<f64> {
+    if !obs.is_finite() || obs < 0.0 {
+        return None;
+    }
+    let d = pct_hi - pct_lo;
+    if !d.is_finite() || d < MIN_PCT_DELTA - f64::EPSILON {
+        return None;
+    }
+    Some(obs * (100.0 / d))
+}
+
+/// True when the earliest sample this week is close enough to 0% to oneshot.
+pub fn origin_is_near_zero(first_weekly_pct: f64) -> bool {
+    first_weekly_pct.is_finite() && first_weekly_pct <= NEAR_ORIGIN_PCT
 }
 
 /// Project full week to 100% pool using density.
@@ -206,7 +228,46 @@ pub fn record_sample(sample: &PctSample) -> Option<(f64, f64, bool)> {
         return Some((tok, cost, false));
     }
 
+    // Oneshot divides by current pool % as if tokens started at 0%. If the
+    // first sample this week is already mid-pool, wait for a Δpct band.
+    let origin_pct = prior
+        .first()
+        .map(|s| s.weekly_pct)
+        .unwrap_or(sample.weekly_pct);
+    if !origin_is_near_zero(origin_pct) {
+        return None;
+    }
+
     density_oneshot(sample.tokens, sample.cost_usd, sample.weekly_pct).map(|(t, c)| (t, c, true))
+}
+
+/// Earliest recorded Weekly % for this provider's latest week (if any).
+pub fn earliest_weekly_pct(provider: &str) -> Option<f64> {
+    let path = samples_path();
+    let Ok(f) = std::fs::File::open(path) else {
+        return None;
+    };
+    let mut best: Option<PctSample> = None;
+    for line in BufReader::new(f).lines().map_while(Result::ok) {
+        let Ok(s) = serde_json::from_str::<PctSample>(&line) else {
+            continue;
+        };
+        if s.provider != provider {
+            continue;
+        }
+        match &best {
+            None => best = Some(s),
+            Some(b) if s.week_id > b.week_id || (s.week_id == b.week_id && s.ts_ms < b.ts_ms) => {
+                best = Some(s);
+            }
+            _ => {}
+        }
+    }
+    best.filter(|s| {
+        // Only the current week: drop samples whose week_id is stale (>10d old ts).
+        util::now_ms().saturating_sub(s.ts_ms) < 10 * 86_400_000
+    })
+    .map(|s| s.weekly_pct)
 }
 
 fn load_samples_for_week(provider: &str, week_id: &str) -> Vec<PctSample> {
@@ -459,5 +520,13 @@ mod tests {
         let (t, c) = density_oneshot(10_000_000, 50.0, 10.0).unwrap();
         assert!((t - 1_000_000.0).abs() < 1.0);
         assert!((c - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn scale_span_uses_delta_not_origin() {
+        // $20 observed while pool moved 70% → 80% ⇒ $200 @ 100%, not $25.
+        let v = scale_span_to_full(20.0, 70.0, 80.0).unwrap();
+        assert!((v - 200.0).abs() < 1e-9);
+        assert!(scale_span_to_full(20.0, 78.0, 80.0).is_none()); // Δ < 3
     }
 }

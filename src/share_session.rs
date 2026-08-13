@@ -115,36 +115,19 @@ pub fn ensure_access(base: &str) -> Result<String, String> {
     Ok(refresh_access(base)?.access_token)
 }
 
-/// Device authorization login (RFC 8628-style).
-pub fn cmd_login() -> std::process::ExitCode {
-    if share::is_offline() {
-        eprintln!("share login: SPANREED_OFFLINE=1 — not starting device flow");
-        return std::process::ExitCode::SUCCESS;
-    }
-    let base = share::api_base();
-    let url = format!("{}/v1/usage/device/code", base.trim_end_matches('/'));
-    let res = match Request::post(url).send() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("share login: {e}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    if res.status < 200 || res.status >= 300 {
-        eprintln!(
-            "share login: HTTP {}: {}",
-            res.status,
-            res.body.chars().take(200).collect::<String>()
-        );
-        return std::process::ExitCode::FAILURE;
-    }
-    let v = match res.json() {
-        Some(j) => j,
-        None => {
-            eprintln!("share login: invalid json from device/code");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
+/// In-flight device authorization (RFC 8628-style).
+#[derive(Debug, Clone)]
+pub struct PendingLogin {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub interval_secs: u64,
+    pub expires_in: u64,
+}
+
+pub fn parse_device_code_json(body: &str) -> Result<PendingLogin, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| "share login: invalid json from device/code")?;
     let device_code = v
         .get("device_code")
         .and_then(|x| x.as_str())
@@ -155,101 +138,147 @@ pub fn cmd_login() -> std::process::ExitCode {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
-    let verification = v
+    let verification_uri = v
         .get("verification_uri_complete")
         .and_then(|x| x.as_str())
         .or_else(|| v.get("verification_uri").and_then(|x| x.as_str()))
-        .unwrap_or("https://grokinsider.net/open-usage/link");
-    let interval = v
+        .unwrap_or("https://grokinsider.net/open-usage/link")
+        .to_string();
+    let interval_secs = v
         .get("interval")
         .and_then(|x| x.as_u64())
         .unwrap_or(5)
         .max(2);
     let expires_in = v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(600);
-
     if device_code.is_empty() || user_code.is_empty() {
-        eprintln!("share login: missing device_code/user_code");
-        return std::process::ExitCode::FAILURE;
+        return Err("share login: missing device_code/user_code".into());
     }
+    Ok(PendingLogin {
+        device_code,
+        user_code,
+        verification_uri,
+        interval_secs,
+        expires_in,
+    })
+}
+
+pub fn start_device_login() -> Result<PendingLogin, String> {
+    if share::is_offline() {
+        return Err("SPANREED_OFFLINE=1 — not starting device flow".into());
+    }
+    let base = share::api_base();
+    let url = format!("{}/v1/usage/device/code", base.trim_end_matches('/'));
+    let res = Request::post(url).send()?;
+    if res.status < 200 || res.status >= 300 {
+        return Err(format!(
+            "share login: HTTP {}: {}",
+            res.status,
+            res.body.chars().take(200).collect::<String>()
+        ));
+    }
+    parse_device_code_json(&res.body)
+}
+
+/// One poll. `Ok(None)` = still pending. `Ok(Some)` = saved session.
+pub fn poll_device_login(pending: &PendingLogin) -> Result<Option<ShareSession>, String> {
+    let base = share::api_base();
+    let poll_url = format!("{}/v1/usage/device/poll", base.trim_end_matches('/'));
+    let body = serde_json::json!({ "device_code": pending.device_code });
+    let res = Request::post(&poll_url)
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .map_err(|e| e.to_string())?;
+    if res.status == 400 {
+        return Ok(None);
+    }
+    if res.status < 200 || res.status >= 300 {
+        return Err(format!(
+            "share login: poll HTTP {}: {}",
+            res.status,
+            res.body.chars().take(160).collect::<String>()
+        ));
+    }
+    let v = res
+        .json()
+        .ok_or_else(|| "share login: poll invalid json".to_string())?;
+    let access = v
+        .get("access_token")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let refresh = v
+        .get("refresh_token")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    if access.is_empty() || refresh.is_empty() {
+        return Err("share login: missing tokens in poll response".into());
+    }
+    let sess = ShareSession {
+        access_token: access,
+        refresh_token: refresh,
+        token_type: v
+            .get("token_type")
+            .and_then(|x| x.as_str())
+            .unwrap_or("Bearer")
+            .to_string(),
+        expires_in: v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(900),
+        obtained_at_unix: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    };
+    save(&sess)?;
+    Ok(Some(sess))
+}
+
+/// Poll until approved, failed, or `expires_in` elapses.
+pub fn wait_device_login(pending: &PendingLogin) -> Result<ShareSession, String> {
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(pending.expires_in.max(1));
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_secs(pending.interval_secs));
+        match poll_device_login(pending) {
+            Ok(Some(s)) => return Ok(s),
+            Ok(None) => continue,
+            Err(e) if e.contains("poll error") => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err("share login: timed out waiting for approval".into())
+}
+
+/// Device authorization login (RFC 8628-style).
+pub fn cmd_login() -> std::process::ExitCode {
+    let pending = match start_device_login() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("share login: {e}");
+            return if e.contains("OFFLINE") {
+                std::process::ExitCode::SUCCESS
+            } else {
+                std::process::ExitCode::FAILURE
+            };
+        }
+    };
 
     println!("spanreed share login\n");
-    println!("  1. Open:  {verification}");
-    println!("  2. Code:  {user_code}");
+    println!("  1. Open:  {}", pending.verification_uri);
+    println!("  2. Code:  {}", pending.user_code);
     println!("  3. Sign in with X and approve this CLI\n");
-    println!("Waiting for approval (up to {expires_in}s)…");
+    println!("Waiting for approval (up to {}s)…", pending.expires_in);
 
-    let poll_url = format!("{}/v1/usage/device/poll", base.trim_end_matches('/'));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(expires_in);
-    while std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_secs(interval));
-        let body = serde_json::json!({ "device_code": device_code });
-        let res = match Request::post(&poll_url)
-            .header("Content-Type", "application/json")
-            .body(body.to_string())
-            .send()
-        {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("share login: poll error: {e}");
-                continue;
-            }
-        };
-        if res.status == 400 {
-            // authorization_pending
-            continue;
+    match wait_device_login(&pending) {
+        Ok(_) => {
+            println!("Logged in. Daily share can run without the browser.");
+            std::process::ExitCode::SUCCESS
         }
-        if res.status < 200 || res.status >= 300 {
-            eprintln!(
-                "share login: poll HTTP {}: {}",
-                res.status,
-                res.body.chars().take(160).collect::<String>()
-            );
-            return std::process::ExitCode::FAILURE;
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::ExitCode::FAILURE
         }
-        let v = match res.json() {
-            Some(j) => j,
-            None => {
-                eprintln!("share login: poll invalid json");
-                return std::process::ExitCode::FAILURE;
-            }
-        };
-        let access = v
-            .get("access_token")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string();
-        let refresh = v
-            .get("refresh_token")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string();
-        if access.is_empty() || refresh.is_empty() {
-            eprintln!("share login: missing tokens in poll response");
-            return std::process::ExitCode::FAILURE;
-        }
-        let sess = ShareSession {
-            access_token: access,
-            refresh_token: refresh,
-            token_type: v
-                .get("token_type")
-                .and_then(|x| x.as_str())
-                .unwrap_or("Bearer")
-                .to_string(),
-            expires_in: v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(900),
-            obtained_at_unix: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0),
-        };
-        if let Err(e) = save(&sess) {
-            eprintln!("share login: save session: {e}");
-            return std::process::ExitCode::FAILURE;
-        }
-        println!("Logged in. Daily share can run without the browser.");
-        return std::process::ExitCode::SUCCESS;
     }
-    eprintln!("share login: timed out waiting for approval");
-    std::process::ExitCode::FAILURE
 }
 
 pub fn cmd_logout() -> std::process::ExitCode {
@@ -280,5 +309,30 @@ pub fn cmd_status() -> std::process::ExitCode {
             println!("share: not logged in — run: spanreed share login");
             std::process::ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_device_code_fixture() {
+        let body = r#"{
+            "device_code": "dev-1",
+            "user_code": "ABCD-1234",
+            "verification_uri_complete": "https://grokinsider.net/open-usage/link?code=ABCD-1234",
+            "interval": 5,
+            "expires_in": 600
+        }"#;
+        let p = parse_device_code_json(body).unwrap();
+        assert_eq!(p.user_code, "ABCD-1234");
+        assert!(p.verification_uri.contains("ABCD-1234"));
+        assert_eq!(p.interval_secs, 5);
+    }
+
+    #[test]
+    fn parse_device_code_requires_codes() {
+        assert!(parse_device_code_json(r#"{"device_code":"x"}"#).is_err());
     }
 }

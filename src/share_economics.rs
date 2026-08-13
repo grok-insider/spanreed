@@ -5,7 +5,9 @@
 //! Σ tokens_i × price_i (already done by local cost engines); we never pick
 //! a single Sol/Terra/Luna price on the server/web.
 
-use crate::forecast::{density_oneshot, project_week_to_full};
+use crate::forecast::{
+    density_oneshot, origin_is_near_zero, project_week_to_full, scale_span_to_full,
+};
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
 
 /// Minimum pool % for safe scale-to-100% (matches forecast oneshot spirit).
@@ -27,6 +29,12 @@ pub struct ProviderEconomics {
     pub pool_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pool_pct: Option<f64>,
+    /// Weekly % when this install first saw the provider this week.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool_pct_at_start: Option<f64>,
+    /// True when local $ likely miss other hosts (or start was mid-pool).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub partial_observation: bool,
     /// Observed tokens in the aligned window (e.g. since weekly reset).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens_obs: Option<u64>,
@@ -63,6 +71,67 @@ pub fn scale_to_full_pool(api_usd_obs: f64, pool_pct: f64) -> Option<f64> {
         return None;
     }
     Some(api_usd_obs * (100.0 / pool_pct))
+}
+
+/// Pure at 100% week estimate. `pct_start` is first-seen pool % this week.
+///
+/// Dual-PC / half-ledger is not detectable here; callers may set
+/// `partial_observation` when density is implausible.
+pub fn estimate_full_week(
+    obs_usd: f64,
+    obs_tokens: Option<u64>,
+    pct_now: f64,
+    pct_start: Option<f64>,
+) -> FullWeekEst {
+    let lo = pct_start.unwrap_or(pct_now);
+    let from_origin = origin_is_near_zero(lo);
+    if let Some(lo) = pct_start.filter(|p| *p + crate::forecast::MIN_PCT_DELTA <= pct_now) {
+        if let Some(usd) = scale_span_to_full(obs_usd, lo, pct_now) {
+            let d = (pct_now - lo).max(crate::forecast::MIN_PCT_DELTA);
+            return FullWeekEst {
+                usd: Some(usd),
+                tokens: obs_tokens.map(|t| ((t as f64) * (100.0 / d)).round() as u64),
+                method: "scale_by_pool_span",
+                partial: !from_origin,
+            };
+        }
+    }
+    if from_origin {
+        if let (Some(tok), Some((tp, cp))) = (
+            obs_tokens,
+            density_oneshot(obs_tokens.unwrap_or(0), obs_usd, pct_now),
+        ) {
+            let proj = project_week_to_full(tok, obs_usd, pct_now, tp, cp, pct_now < 5.0);
+            return FullWeekEst {
+                usd: Some(proj.cost_usd),
+                tokens: Some(proj.tokens),
+                method: "density_oneshot_to_100",
+                partial: false,
+            };
+        }
+        if let Some(v) = scale_to_full_pool(obs_usd, pct_now) {
+            return FullWeekEst {
+                usd: Some(v),
+                tokens: obs_tokens.and_then(|t| scale_tokens_to_full(t, pct_now)),
+                method: "scale_by_pool_pct",
+                partial: false,
+            };
+        }
+    }
+    FullWeekEst {
+        usd: None,
+        tokens: None,
+        method: "incomplete_window_no_scale",
+        partial: true,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FullWeekEst {
+    pub usd: Option<f64>,
+    pub tokens: Option<u64>,
+    pub method: &'static str,
+    pub partial: bool,
 }
 
 pub fn scale_tokens_to_full(tokens_obs: u64, pool_pct: f64) -> Option<u64> {
@@ -193,21 +262,12 @@ pub fn from_output(o: &ProviderOutput, by_model: Vec<ModelEconomics>) -> Option<
         .map(parse_usd_and_tokens)
         .unwrap_or((None, None));
 
-    // Prefer multi-model sum when present.
-    let model_usd: Option<f64> = if by_model.is_empty() {
-        None
-    } else {
-        Some(by_model.iter().map(|m| m.api_usd_list).sum())
-    };
-    let model_tok: Option<u64> = if by_model.is_empty() {
-        None
-    } else {
-        Some(by_model.iter().map(|m| m.tokens).sum())
-    };
-
-    let api_usd_obs = model_usd.or(usd_since).or(usd_30d);
-    let tokens_obs = model_tok.or(tok_since).or(tok_30d);
-    let observed_window = if model_usd.is_some() || usd_since.is_some() {
+    // Weekly pool % only aligns with *since weekly reset* $ / tokens.
+    // Last-30d model mix must not be scaled by Weekly % (mid-week start or
+    // 30d ≫ one week both explode at 100%).
+    let api_usd_obs = usd_since.or(usd_30d);
+    let tokens_obs = tok_since.or(tok_30d);
+    let observed_window = if usd_since.is_some() {
         Some("since_weekly_reset".into())
     } else if usd_30d.is_some() {
         Some("last_30d".into())
@@ -229,21 +289,23 @@ pub fn from_output(o: &ProviderOutput, by_model: Vec<ModelEconomics>) -> Option<
         None
     };
 
+    let mut pool_pct_at_start = None;
+    let mut partial_observation = false;
     if full_week_api.is_none() {
         if let (Some(usd), Some(pct)) = (api_usd_obs, pool_pct) {
-            // Prefer density oneshot when pct high enough
-            if let (Some(tok), Some((tp, cp))) = (
-                tokens_obs,
-                density_oneshot(tokens_obs.unwrap_or(0), usd, pct),
-            ) {
-                let proj = project_week_to_full(tok, usd, pct, tp, cp, pct < 5.0);
-                full_week_api = Some(proj.cost_usd);
-                full_week_tok = Some(proj.tokens);
-                method = Some("density_oneshot_to_100".into());
-            } else if let Some(v) = scale_to_full_pool(usd, pct) {
-                full_week_api = Some(v);
-                full_week_tok = tokens_obs.and_then(|t| scale_tokens_to_full(t, pct));
-                method = Some("scale_by_pool_pct".into());
+            let weekly_aligned = observed_window.as_deref() == Some("since_weekly_reset");
+            if weekly_aligned {
+                let week_id = crate::pool_baseline::week_and_pct(o).map(|(w, _)| w);
+                let first_pct = week_id
+                    .as_deref()
+                    .and_then(|w| crate::pool_baseline::baseline_pct(&o.provider_id, w))
+                    .or_else(|| crate::forecast::earliest_weekly_pct(&o.provider_id));
+                pool_pct_at_start = first_pct;
+                let est = estimate_full_week(usd, tokens_obs, pct, first_pct);
+                full_week_api = est.usd;
+                full_week_tok = est.tokens;
+                method = Some(est.method.into());
+                partial_observation = est.partial;
             }
         }
     }
@@ -258,6 +320,8 @@ pub fn from_output(o: &ProviderOutput, by_model: Vec<ModelEconomics>) -> Option<
     Some(ProviderEconomics {
         pool_label,
         pool_pct,
+        pool_pct_at_start,
+        partial_observation,
         tokens_obs,
         api_usd_obs,
         observed_window,
@@ -345,6 +409,107 @@ mod tests {
         let (u, t) = parse_usd_and_tokens("$34.09 · 51M tokens");
         assert!((u.unwrap() - 34.09).abs() < 0.01);
         assert_eq!(t, Some(51_000_000));
+    }
+
+    /// $300 plan, true capacity ~$1000/week at 100% pool, ~$4286/month (×30/7).
+    #[test]
+    fn fixture_300_plan_week_estimates() {
+        struct Case {
+            start: Option<f64>,
+            now: f64,
+            obs: f64,
+            want: Option<f64>,
+            method: &'static str,
+        }
+        let cases = [
+            Case {
+                start: Some(4.0),
+                now: 40.0,
+                obs: 400.0,
+                want: Some(400.0 * 100.0 / 36.0),
+                method: "scale_by_pool_span",
+            },
+            Case {
+                start: Some(10.0),
+                now: 40.0,
+                obs: 300.0,
+                want: Some(1000.0),
+                method: "scale_by_pool_span",
+            },
+            Case {
+                start: Some(5.0),
+                now: 20.0,
+                obs: 150.0,
+                want: Some(1000.0),
+                method: "scale_by_pool_span",
+            },
+            Case {
+                start: Some(10.0),
+                now: 11.0,
+                obs: 20.0,
+                want: None,
+                method: "incomplete_window_no_scale",
+            },
+            Case {
+                start: Some(70.0),
+                now: 81.0,
+                obs: 20.0,
+                want: Some(20.0 * 100.0 / 11.0),
+                method: "scale_by_pool_span",
+            },
+            Case {
+                start: None,
+                now: 81.0,
+                obs: 20.0,
+                want: None,
+                method: "incomplete_window_no_scale",
+            },
+            Case {
+                start: Some(0.0),
+                now: 80.0,
+                obs: 400.0,
+                want: Some(500.0),
+                method: "scale_by_pool_span",
+            },
+        ];
+        for c in cases {
+            let e = estimate_full_week(c.obs, Some(10_000_000), c.now, c.start);
+            assert_eq!(e.method, c.method, "now={} start={:?}", c.now, c.start);
+            match (e.usd, c.want) {
+                (Some(g), Some(w)) => assert!((g - w).abs() < 0.5, "got {g} want {w}"),
+                (None, None) => {}
+                other => panic!("usd mismatch {other:?}"),
+            }
+        }
+        // Dual-PC: $400 at 80% from 0% looks like $500/week, not $1000.
+        let dual = estimate_full_week(400.0, None, 80.0, Some(0.0));
+        assert!((dual.usd.unwrap() - 500.0).abs() < 0.01);
+        // Never scale 30d $ by weekly % (caller must not pass 30d as obs).
+    }
+
+    #[test]
+    fn mid_week_start_does_not_oneshot() {
+        let o = ProviderOutput::new(
+            "grok",
+            "Grok",
+            vec![
+                MetricLine::percent("Weekly", 81.0, None),
+                MetricLine::text(
+                    crate::model::MetricKind::Cost,
+                    "Since weekly reset",
+                    "$20.00 · 10M tokens",
+                ),
+            ],
+        );
+        let e = from_output(&o, vec![]).unwrap();
+        assert_eq!(e.pool_pct, Some(81.0));
+        assert!((e.api_usd_obs.unwrap() - 20.0).abs() < 0.01);
+        // No first sample near 0% → do not claim $20/0.81 ≈ $25 as full week.
+        assert!(e.full_week_api_usd.is_none());
+        assert_eq!(
+            e.full_pool_method.as_deref(),
+            Some("incomplete_window_no_scale")
+        );
     }
 
     #[test]

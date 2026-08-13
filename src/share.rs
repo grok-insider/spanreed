@@ -48,6 +48,9 @@ pub struct ShareProvider {
     /// Structured plan economics (100% pool API $). Schema v2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub economics: Option<crate::share_economics::ProviderEconomics>,
+    /// Early pool resets observed on this install (does not change at 100% week).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resets: Vec<crate::epoch::ResetEvent>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -92,11 +95,17 @@ pub fn snapshot_from_outputs(outputs: &[ProviderOutput], version: &str) -> Share
         if economics.is_some() {
             any_econ = true;
         }
+        let since = util::now_ms().saturating_sub(2 * 86_400_000);
+        let resets: Vec<_> = crate::epoch::recent_events(since)
+            .into_iter()
+            .filter(|e| e.provider == o.provider_id)
+            .collect();
         providers.push(ShareProvider {
             id: o.provider_id.clone(),
             plan: o.plan.clone().filter(|p| !p.trim().is_empty()),
             lines,
             economics,
+            resets,
         });
     }
     ShareSnapshot {
@@ -281,91 +290,78 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
     }
 
     let force = args.iter().any(|a| a == "--force");
+    match share_once(force) {
+        Ok(msg) => {
+            println!("{msg}");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) if e.starts_with("share: SPANREED_OFFLINE") => {
+            eprintln!("{e}");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) if e.contains("already sent") => {
+            eprintln!("{e}");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
 
+/// Probe + POST. `force` bypasses the local same-day skip.
+pub fn share_once(force: bool) -> Result<String, String> {
     if is_offline() {
-        eprintln!("share: SPANREED_OFFLINE=1 — not sending");
-        return std::process::ExitCode::SUCCESS;
+        return Err("share: SPANREED_OFFLINE=1 — not sending".into());
     }
 
     let day = util::today_day_key_madrid();
     if !force && !is_due_today() {
-        eprintln!("share: already sent for {day} (use --force to retry)");
-        return std::process::ExitCode::SUCCESS;
+        return Err(format!(
+            "share: already sent for {day} (use --force to retry)"
+        ));
     }
 
     let base = api_base();
-    let access = match crate::share_session::ensure_access(&base) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("share: {e}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
+    let access = crate::share_session::ensure_access(&base)?;
 
     let outputs = probe::probe_detected();
     let version = env!("CARGO_PKG_VERSION");
     let snap = snapshot_from_outputs(&outputs, version);
     if snap.providers.is_empty() {
-        eprintln!("share: no shareable metrics from detected providers");
-        return std::process::ExitCode::FAILURE;
+        return Err("share: no shareable metrics from detected providers".into());
     }
 
-    let client_id = match crate::client_id::ensure() {
-        Ok(id) => id,
-        Err(e) => {
-            eprintln!("share: client_id: {e}");
-            return std::process::ExitCode::FAILURE;
+    let client_id = crate::client_id::ensure().map_err(|e| format!("share: client_id: {e}"))?;
+
+    let outcome = match post_snapshot(&base, &access, &snap, &client_id) {
+        Ok(o) => o,
+        Err(e) if e.contains("unauthorized") => {
+            let sess = crate::share_session::refresh_access(&base)?;
+            post_snapshot(&base, &sess.access_token, &snap, &client_id)?
         }
+        Err(e) => return Err(e),
     };
 
-    match post_snapshot(&base, &access, &snap, &client_id) {
-        Ok(PostOutcome::Accepted(status)) => {
+    match outcome {
+        PostOutcome::Accepted(status) => {
             if let Err(e) = mark_shared_day(&day) {
-                eprintln!("share: warning: could not record day: {e}");
+                return Ok(format!(
+                    "shared {} provider(s) to {base} (HTTP {status}, day {day}); warning: {e}",
+                    snap.providers.len()
+                ));
             }
-            println!(
+            Ok(format!(
                 "shared {} provider(s) to {base} (HTTP {status}, day {day})",
                 snap.providers.len()
-            );
-            std::process::ExitCode::SUCCESS
+            ))
         }
-        Ok(PostOutcome::AlreadyCounted) => {
-            if let Err(e) = mark_shared_day(&day) {
-                eprintln!("share: warning: could not record day: {e}");
-            }
-            eprintln!("share: rate-limited for {day} (HTTP 429) — marked local day");
-            std::process::ExitCode::SUCCESS
-        }
-        Err(e) if e.contains("unauthorized") => {
-            // Try one refresh then retry
-            match crate::share_session::refresh_access(&base) {
-                Ok(sess) => match post_snapshot(&base, &sess.access_token, &snap, &client_id) {
-                    Ok(PostOutcome::Accepted(status)) => {
-                        let _ = mark_shared_day(&day);
-                        println!(
-                            "shared {} provider(s) to {base} (HTTP {status}, day {day})",
-                            snap.providers.len()
-                        );
-                        std::process::ExitCode::SUCCESS
-                    }
-                    Ok(PostOutcome::AlreadyCounted) => {
-                        let _ = mark_shared_day(&day);
-                        std::process::ExitCode::SUCCESS
-                    }
-                    Err(e2) => {
-                        eprintln!("{e2}");
-                        std::process::ExitCode::FAILURE
-                    }
-                },
-                Err(re) => {
-                    eprintln!("share: {re}");
-                    std::process::ExitCode::FAILURE
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::ExitCode::FAILURE
+        PostOutcome::AlreadyCounted => {
+            let _ = mark_shared_day(&day);
+            Ok(format!(
+                "share: rate-limited for {day} (HTTP 429) — marked local day"
+            ))
         }
     }
 }

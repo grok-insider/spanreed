@@ -17,7 +17,12 @@ pub fn probe_all() -> Vec<ProviderOutput> {
 
 /// Probe a single provider by id (forced).
 pub fn probe_one(id: &str) -> Option<ProviderOutput> {
-    providers::by_id(id).map(|p| p.probe())
+    let out = providers::by_id(id).map(|p| p.probe());
+    if let Some(o) = &out {
+        crate::pool_baseline::note_from_output(o);
+        crate::epoch::note_jumps_from_outputs(std::slice::from_ref(o));
+    }
+    out
 }
 
 fn probe_filtered<F>(filter: F) -> Vec<ProviderOutput>
@@ -35,5 +40,10 @@ where
         .map(|p| thread::spawn(move || p.probe()))
         .collect();
 
-    handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    let outs: Vec<_> = handles.into_iter().filter_map(|h| h.join().ok()).collect();
+    for o in &outs {
+        crate::pool_baseline::note_from_output(o);
+    }
+    crate::epoch::note_jumps_from_outputs(&outs);
+    outs
 }
