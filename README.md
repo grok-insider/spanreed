@@ -95,10 +95,12 @@ cargo build --release --features tray
 spanreed tray                     # Behelit icon: capture health + % remaining
 ```
 
-Windows/macOS release binaries include the tray feature. Linux musl release
-builds stay headless (use Waybar + `spanreed waybar`); tray is still available
-on local `linux-gnu` builds with `--features tray`. Setup can register tray
-autostart separately from the capture service.
+Windows/macOS release binaries include the tray feature. Linux **musl** release
+builds stay headless (use Waybar + `spanreed waybar`). The Nix package and
+local `linux-gnu` builds enable `--features tray` (GTK3 + Ayatana SNI). On
+Hyprland the icon appears in Waybar’s `tray` module next to `custom/spanreed`.
+Home Manager: `programs.spanreed.tray.enable = true`. Nix-managed installs
+refuse `self-update --yes` (rebuild the flake instead).
 
 Capture logs (Windows): `%LOCALAPPDATA%\spanreed\logs\capture.log`.
 After upgrading spanreed on Windows, re-run `spanreed setup` (or
