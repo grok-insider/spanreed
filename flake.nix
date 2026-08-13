@@ -34,7 +34,11 @@
           # Secret Service rather than a plaintext file. We wrap it onto PATH so
           # the feature works out of the box, but the binary runs fine without
           # it (file-based credentials are the common case).
-          runtimePath = lib.makeBinPath [ pkgs.libsecret ];
+          runtimePath = lib.makeBinPath [
+            pkgs.libsecret
+            pkgs.xdg-utils
+            pkgs.libnotify
+          ];
         in
         pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed";
@@ -46,20 +50,31 @@
             lockFile = ./Cargo.lock;
           };
 
+          # GNU Linux desktop build: SNI tray (GTK3 + Ayatana). musl GH
+          # release zips stay headless and are not this derivation.
+          buildFeatures = [ "tray" ];
+
           nativeBuildInputs = [
             pkgs.makeBinaryWrapper
+            pkgs.pkg-config
+            pkgs.wrapGAppsHook3
             # rusqlite is built with the `bundled` feature, which compiles the
             # vendored SQLite amalgamation — needs a C toolchain at build time.
             pkgs.stdenv.cc
           ];
 
-          # reqwest uses rustls (no system OpenSSL); rusqlite bundles SQLite.
-          # So there are no system library buildInputs.
-          buildInputs = [ ];
+          buildInputs = [
+            pkgs.gtk3
+            pkgs.libayatana-appindicator
+            pkgs.xdotool
+          ];
 
+          # wrapGAppsHook3 + wrapProgram: apply GLib/GTK env in our wrapper.
+          dontWrapGApps = true;
           postFixup = ''
             wrapProgram "$out/bin/spanreed" \
-              --prefix PATH : "${runtimePath}"
+              --prefix PATH : "${runtimePath}" \
+              "''${gappsWrapperArgs[@]}"
           '';
 
           meta = {
@@ -155,6 +170,24 @@
                 '';
               };
             };
+
+            tray = {
+              enable = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Run `spanreed tray` as a user service (Behelit SNI icon).
+                  Requires a StatusNotifier host (Waybar `tray` on Hyprland).
+                  Does not replace `spanreed waybar`.
+                '';
+              };
+
+              interval = lib.mkOption {
+                type = lib.types.int;
+                default = 60;
+                description = "Refresh interval in seconds for the tray (min 5).";
+              };
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -204,6 +237,22 @@
 
               Install.WantedBy = [ "default.target" ];
             };
+
+            systemd.user.services.spanreed-tray = lib.mkIf cfg.tray.enable {
+              Unit = {
+                Description = "spanreed system tray (Behelit)";
+                After = [ "graphical-session.target" ];
+                PartOf = [ "graphical-session.target" ];
+              };
+
+              Service = {
+                ExecStart = "${cfg.package}/bin/spanreed tray --interval ${toString cfg.tray.interval}";
+                Restart = "on-failure";
+                RestartSec = 5;
+              };
+
+              Install.WantedBy = [ "graphical-session.target" ];
+            };
           };
         };
 
@@ -224,6 +273,12 @@
               pkgs.clippy
               pkgs.rust-analyzer
               pkgs.libsecret
+              pkgs.pkg-config
+              pkgs.gtk3
+              pkgs.libayatana-appindicator
+              pkgs.xdotool
+              pkgs.libnotify
+              pkgs.xdg-utils
             ];
           };
         });

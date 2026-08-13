@@ -202,26 +202,30 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             } else if id == id_refresh {
                 set_status(&state, "Refreshing usage…");
                 apply_visual(&state, &mut tray, &item_update, &item_check);
-                refresh_state(&state);
-                set_status(&state, "Usage refreshed");
-                apply_visual(&state, &mut tray, &item_update, &item_check);
+                let st = state.clone();
+                thread::spawn(move || {
+                    refresh_state(&st);
+                    set_status(&st, "Usage refreshed");
+                });
             } else if id == id_ensure {
                 set_status(&state, "Ensuring capture…");
                 apply_visual(&state, &mut tray, &item_update, &item_check);
-                let msg = match setup::service_ensure(false) {
-                    Ok(m) => {
-                        log::info!("ensure: {m}");
-                        format!("Capture: {m}")
-                    }
-                    Err(e) => {
-                        log::warn!("ensure: {e}");
-                        format!("Capture ensure failed: {e}")
-                    }
-                };
-                set_status(&state, &msg);
-                refresh_state(&state);
-                apply_visual(&state, &mut tray, &item_update, &item_check);
-                user_notify("spanreed — capture", &msg);
+                let st = state.clone();
+                thread::spawn(move || {
+                    let msg = match setup::service_ensure(false) {
+                        Ok(m) => {
+                            log::info!("ensure: {m}");
+                            format!("Capture: {m}")
+                        }
+                        Err(e) => {
+                            log::warn!("ensure: {e}");
+                            format!("Capture ensure failed: {e}")
+                        }
+                    };
+                    set_status(&st, &msg);
+                    refresh_state(&st);
+                    user_notify("spanreed — capture", &msg, false);
+                });
             } else if id == id_log {
                 let path = capture_log::capture_log_path();
                 match open_path(&path) {
@@ -229,45 +233,60 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                         let msg = format!("Opened log:\n{}", path.display());
                         set_status(&state, "Opened capture log");
                         apply_visual(&state, &mut tray, &item_update, &item_check);
-                        // Brief status only — opening the editor is the feedback.
                         log::info!("tray: {msg}");
                     }
                     Err(e) => {
                         let msg = format!("Could not open log:\n{}\n\n{}", path.display(), e);
                         set_status(&state, "Failed to open capture log");
                         apply_visual(&state, &mut tray, &item_update, &item_check);
-                        user_notify("spanreed — capture log", &msg);
+                        user_notify("spanreed — capture log", &msg, true);
                     }
                 }
             } else if id == id_check {
                 item_check.set_text("Checking for updates…");
                 set_status(&state, "Checking for updates…");
                 apply_visual(&state, &mut tray, &item_update, &item_check);
-
-                let summary = run_update_check(&state);
-                item_check.set_text(MENU_CHECK);
-                set_status(&state, &summary);
-                apply_visual(&state, &mut tray, &item_update, &item_check);
-                user_notify("spanreed — updates", &summary);
+                let st = state.clone();
+                thread::spawn(move || {
+                    let summary = run_update_check(&st);
+                    set_status(&st, &summary);
+                    user_notify("spanreed — updates", &summary, true);
+                });
             } else if id == id_update {
+                if let Some(why) = self_update::apply_blocked_reason() {
+                    set_status(&state, why);
+                    apply_visual(&state, &mut tray, &item_update, &item_check);
+                    user_notify("spanreed — updates", why, true);
+                    continue;
+                }
                 set_status(&state, "Starting self-update…");
                 apply_visual(&state, &mut tray, &item_update, &item_check);
                 let exe = std::env::current_exe().unwrap_or_default();
-                match Command::new(&exe).args(["self-update", "--yes"]).spawn() {
-                    Ok(_) => {
+                let st = state.clone();
+                thread::spawn(move || match Command::new(&exe)
+                    .args(["self-update", "--yes"])
+                    .status()
+                {
+                    Ok(s) if s.success() => {
+                        set_status(&st, "Self-update finished — restart tray if the icon dies");
                         user_notify(
                             "spanreed — updates",
-                            "Self-update started in the background.\n\
-                             Capture will be restarted by the updater when needed.",
+                            "Self-update finished.\n\
+                             Capture was restarted when needed. Restart the tray if the icon is gone.",
+                            true,
                         );
+                    }
+                    Ok(s) => {
+                        let msg = format!("self-update exited {s}");
+                        set_status(&st, &msg);
+                        user_notify("spanreed — updates", &msg, true);
                     }
                     Err(e) => {
                         let msg = format!("Could not start self-update: {e}");
-                        set_status(&state, &msg);
-                        apply_visual(&state, &mut tray, &item_update, &item_check);
-                        user_notify("spanreed — updates", &msg);
+                        set_status(&st, &msg);
+                        user_notify("spanreed — updates", &msg, true);
                     }
-                }
+                });
             }
         }
     });
@@ -302,6 +321,13 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
             log::warn!("spanreed tray: capture proxy is DOWN");
             g.last_notify_proxy = Some(now);
             g.status_note = Some("Capture proxy is DOWN".into());
+            drop(g);
+            user_notify(
+                "spanreed — capture",
+                "Capture proxy is DOWN. Run Ensure capture or `spanreed capture ensure`.",
+                false,
+            );
+            return;
         }
     }
     if let Some(band) = tray_format::crossed_threshold(prev_used, max_used) {
@@ -327,8 +353,13 @@ fn run_update_check(state: &Arc<Mutex<TrayState>>) -> String {
     }
     match self_update::check_for_update() {
         Ok(r) if r.newer => {
+            let how = if let Some(why) = self_update::apply_blocked_reason() {
+                format!("\n\nCannot auto-install: {why}")
+            } else {
+                "\n\nUse “Install update…” to apply.".into()
+            };
             let msg = format!(
-                "Update available: {} → {} ({})\n\nUse “Install update…” to apply.",
+                "Update available: {} → {} ({}){how}",
                 r.current, r.latest, r.tag
             );
             let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -391,11 +422,11 @@ fn apply_visual(
             g.update_note.as_deref(),
         ));
         let tip = tip_parts.join("\n");
-        let update_enabled = g
-            .update_note
-            .as_deref()
-            .map(|n| n.contains("available"))
-            .unwrap_or(false);
+        let update_enabled = self_update::can_apply_self_update()
+            && g.update_note
+                .as_deref()
+                .map(|n| n.contains("available"))
+                .unwrap_or(false);
         // Keep check label stable unless mid-check (caller sets text).
         let check_label = MENU_CHECK.to_string();
         let _ = &g;
@@ -572,16 +603,19 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
     }
 }
 
-/// Blocking user-visible notification (MessageBox on Windows; stderr elsewhere).
+/// User-visible notification.
 ///
-/// Used for actions that otherwise have no UI feedback from a windowless tray.
-fn user_notify(title: &str, body: &str) {
+/// `modal`: Windows MessageBox for long copy (update check). Refresh/ensure use
+/// tooltip + Linux `notify-send` only — do not spawn WPF for every click.
+fn user_notify(title: &str, body: &str, modal: bool) {
     log::info!("tray notify: {title}: {body}");
     #[cfg(windows)]
     {
+        if !modal {
+            return;
+        }
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // Escape for PowerShell single-quoted strings.
         let t = title.replace('\'', "''");
         let b = body.replace('\'', "''");
         let script = format!(
@@ -602,9 +636,17 @@ fn user_notify(title: &str, body: &str) {
     }
     #[cfg(not(windows))]
     {
-        // Best-effort: try notify-send, else stderr.
-        let _ = Command::new("notify-send").args([title, body]).spawn();
-        eprintln!("spanreed tray: {title}: {body}");
+        let short = if body.len() > 280 {
+            format!("{}…", body.chars().take(277).collect::<String>())
+        } else {
+            body.to_string()
+        };
+        let _ = Command::new("notify-send")
+            .args(["-a", "spanreed", "--", title, &short])
+            .spawn();
+        if modal {
+            eprintln!("spanreed tray: {title}: {body}");
+        }
     }
 }
 
