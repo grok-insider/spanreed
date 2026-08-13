@@ -4,6 +4,10 @@ All notable, user-facing changes to spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.5] - 2026-08-11
+
+- fix: tray menu feedback and safe Windows binary replace
+
 ## [0.0.4] - 2026-08-11
 
 - ci: install GTK/AppIndicator deps for Linux tray feature check
