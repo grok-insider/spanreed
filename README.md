@@ -47,26 +47,26 @@ Install or update by pointing Nix at this repository (gnu build **with tray**).
 GitHub Release musl zips stay headless; use this flake on a desktop.
 
 ```sh
-# try without installing
-nix run github:grok-insider/spanreed -- probe
-
-# user profile
-nix profile install github:grok-insider/spanreed
-nix profile upgrade spanreed
-
-# pin a release tag
+# stable = last GitHub Release tag (created with the release, not with master)
+nix run github:grok-insider/spanreed/v0.0.5 -- probe
 nix profile install github:grok-insider/spanreed/v0.0.5
+
+# unreleased integration line
+nix run github:grok-insider/spanreed/dev -- probe
 ```
+
+Do **not** use `github:grok-insider/spanreed` without a tag: that follows
+`master`, which can sit ahead of the last release.
 
 First `nix run`/`nix profile` may ask to trust `nixConfig` (Cachix
 `grok-insider.cachix.org`). Accept it, or add the substituter in your NixOS
-`nix.settings`. Integration line: `github:grok-insider/spanreed/dev`.
+`nix.settings`.
 
 Flake input + Home Manager:
 
 ```nix
 {
-  inputs.spanreed.url = "github:grok-insider/spanreed";
+  inputs.spanreed.url = "github:grok-insider/spanreed/v0.0.5";
   # optional: inputs.spanreed.inputs.nixpkgs.follows = "nixpkgs";
 
   # home-manager:
@@ -80,7 +80,8 @@ Flake input + Home Manager:
 }
 ```
 
-Then `nix flake update spanreed` and rebuild. Overlay: `overlays.default`
+After a new GitHub Release, bump the tag in the input URL, then
+`nix flake update spanreed` and rebuild. Overlay: `overlays.default`
 exposes `pkgs.spanreed`.
 
 Nix-managed installs refuse `self-update --yes` (the store path is immutable).

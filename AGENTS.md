@@ -198,8 +198,8 @@ Remote: **https://github.com/grok-insider/spanreed** (public).
 
 | Branch | Role |
 |--------|------|
-| `dev` | Integration line for human work (`feat/*` → PR → `dev`) |
-| `master` | Ship line; only `dev` or release-bot heads (`release-plz-*`, `release-plz-manual-*`) |
+| `dev` | Integration line (`feat/*` → PR → `dev`). May sit ahead of the last tag. |
+| `master` | Last release only. PRs from `release-plz-*` / `release-plz-manual-*` (not a naked `dev` head). |
 
 Local gate before any PR:
 
@@ -211,12 +211,12 @@ SPANREED_OFFLINE=1 cargo test --all
 
 ### Releases
 
-- **Patch (Z):** automatic after a merge into `master` with `feat`/`fix` since the
-  last tag — bot opens `release-plz-vX.Y.Z` (AI changelog via
-  `release-changelog-action@v1`). Merge that PR to tag + attach binaries.
-- **Minor / major (Y / X):** Actions → **Manual Version Bump** (repo admin only).
-  Opens `release-plz-manual-v…` into `master`. A normal `dev` → `master` PR does
-  **not** choose major/minor by itself.
+- **One merge to `master` = one release.** Do not land bare `dev` on `master`.
+- **Patch (Z):** push to `dev` (or workflow_dispatch) opens `release-plz-vX.Y.Z`
+  **from `dev`** (bump + AI changelog). Merge that PR → tag `vX.Y.Z` + GH Release
+  + binaries.
+- **Minor / major (Y / X):** Actions → **Manual Version Bump** from `dev`
+  (`release-plz-manual-v…` → `master`).
 - Do **not** hand-edit `CHANGELOG.md` outside a Release PR.
 - No crates.io (`publish = false` only in `release-plz.toml`).
 
@@ -224,7 +224,7 @@ SPANREED_OFFLINE=1 cargo test --all
 
 | Surface | Role |
 |---------|------|
-| **GitHub flake** | Linux gnu+tray: `nix run` / `nix profile install github:grok-insider/spanreed` and `homeManagerModules.default`. Upgrade: `nix profile upgrade` or `nix flake update` that input. |
+| **GitHub flake (stable)** | Linux gnu+tray: pin the **release tag** — `nix run` / `nix profile install github:grok-insider/spanreed/vX.Y.Z` and `homeManagerModules.default`. The tag is created **with** the GitHub Release. Floating `github:grok-insider/spanreed` follows `master` and is **not** stable. Org rule: [`../AGENTS.md`](../AGENTS.md). |
 | **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
 | **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
