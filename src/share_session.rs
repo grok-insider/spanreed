@@ -25,7 +25,7 @@ pub struct ShareSession {
 }
 
 fn session_path() -> PathBuf {
-    creds::config_home().join("spanreed").join(SESSION_FILE)
+    crate::app::config_dir().join(SESSION_FILE)
 }
 
 pub fn load() -> Option<ShareSession> {
@@ -63,8 +63,7 @@ pub fn is_logged_in() -> bool {
 
 /// Refresh access token using stored refresh; updates disk session.
 pub fn refresh_access(base: &str) -> Result<ShareSession, String> {
-    let mut sess =
-        load().ok_or_else(|| "not logged in — run: spanreed share login".to_string())?;
+    let mut sess = load().ok_or_else(|| "not logged in — run: spanreed share login".to_string())?;
     let url = format!("{}/auth/refresh", base.trim_end_matches('/'));
     let body = serde_json::json!({ "refresh_token": sess.refresh_token });
     let res = Request::post(url)

@@ -31,7 +31,7 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "spanreed\bin"
 $Dest = Join-Path $InstallDir "spanreed.exe"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-function Stop-OpenUsageCapture {
+function Stop-SpanreedCapture {
     Get-CimInstance Win32_Process -Filter "Name='spanreed.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -match 'capture' } |
         ForEach-Object {
@@ -41,15 +41,15 @@ function Stop-OpenUsageCapture {
     Start-Sleep -Milliseconds 400
 }
 
-function Copy-OpenUsageBinary {
+function Copy-SpanreedBinary {
     param([string]$Source, [string]$Destination)
-    Stop-OpenUsageCapture
+    Stop-SpanreedCapture
     try {
         Copy-Item -LiteralPath $Source -Destination $Destination -Force
     } catch {
         # Windows may still hold a handle briefly; retry once.
         Start-Sleep -Milliseconds 500
-        Stop-OpenUsageCapture
+        Stop-SpanreedCapture
         Copy-Item -LiteralPath $Source -Destination $Destination -Force
     }
 }
@@ -58,7 +58,7 @@ if ($FromPath) {
     if (-not (Test-Path -LiteralPath $FromPath)) {
         throw "binary not found: $FromPath"
     }
-    Copy-OpenUsageBinary -Source $FromPath -Destination $Dest
+    Copy-SpanreedBinary -Source $FromPath -Destination $Dest
     Write-Host "Installed $Dest from $FromPath"
 } else {
     # Asset names include the semver: spanreed-0.0.1-x86_64-pc-windows-msvc.zip
@@ -80,7 +80,7 @@ if ($FromPath) {
         Expand-Archive -LiteralPath $Zip -DestinationPath $Tmp -Force
         $Bin = Get-ChildItem -Path $Tmp -Recurse -Filter "spanreed.exe" | Select-Object -First 1
         if (-not $Bin) { throw "archive did not contain spanreed.exe" }
-        Copy-OpenUsageBinary -Source $Bin.FullName -Destination $Dest
+        Copy-SpanreedBinary -Source $Bin.FullName -Destination $Dest
         Write-Host "Installed $Dest (release $ResolvedTag)"
     } finally {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Tmp

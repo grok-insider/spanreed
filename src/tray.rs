@@ -1,4 +1,4 @@
-//! System tray companion: Behelit icon, usage tooltip, capture health, updates.
+//! System tray companion: Spanreed icon, usage tooltip, capture health, updates.
 //!
 //! ```text
 //! spanreed tray [--interval S]
@@ -37,7 +37,7 @@ use crate::tray_format::{self, TraySeverity};
 use crate::util;
 
 const DEFAULT_INTERVAL_SECS: u64 = 60;
-const MASTER_PNG: &[u8] = include_bytes!("assets/tray/behelit-32.png");
+const MASTER_PNG: &[u8] = include_bytes!("assets/tray/spanreed-32.png");
 const LOCK_FILE: &str = "tray.lock";
 
 /// Menu labels (kept in one place so docs/tests stay aligned).
@@ -109,7 +109,7 @@ pub fn cmd(args: &[String]) -> ExitCode {
             }
             "-h" | "--help" => {
                 println!(
-                    "spanreed tray — system tray status (Behelit icon)\n\n\
+                    "spanreed tray — system tray status (Spanreed icon)\n\n\
                      \t--interval S   Refresh every S seconds (default {DEFAULT_INTERVAL_SECS})\n\
                      Menu: Refresh, Ensure, Open log, Link/Share/Unlink, Check/Install update, Quit tray"
                 );
@@ -183,7 +183,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         .with_menu(Box::new(menu))
         .with_tooltip(tooltip_from(&state))
         .with_icon(icon)
-        .with_title("spanreed")
+        .with_title(crate::app::APP_NAME)
         .build()
         .map_err(|e| format!("tray icon: {e}"))?;
 
@@ -523,7 +523,7 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
 
 /// Run GitHub Releases check; returns a user-facing summary string.
 fn run_update_check(state: &Arc<Mutex<TrayState>>) -> String {
-    if std::env::var_os("SPANREED_OFFLINE").is_some() {
+    if crate::app::env_offline() {
         let msg = "Offline (SPANREED_OFFLINE=1) — not checking GitHub.".to_string();
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.update_note = Some("Update: offline".into());
@@ -639,7 +639,7 @@ fn apply_visual(
 
 fn icon_for_severity(sev: TraySeverity) -> Result<Icon, String> {
     let img = image::load_from_memory(MASTER_PNG)
-        .map_err(|e| format!("decode behelit png: {e}"))?
+        .map_err(|e| format!("decode spanreed png: {e}"))?
         .into_rgba8();
     let tinted = tint_rgba(img, sev.tint_rgba());
     let (w, h) = tinted.dimensions();
@@ -673,7 +673,7 @@ impl Drop for InstanceLock {
 }
 
 fn acquire_single_instance() -> Result<InstanceLock, String> {
-    let dir = crate::creds::data_home().join("spanreed");
+    let dir = crate::app::data_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir tray lock: {e}"))?;
     let path = dir.join(LOCK_FILE);
     if path.exists() {

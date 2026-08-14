@@ -11,7 +11,7 @@ use std::process::Command;
 use super::paths;
 
 #[cfg(windows)]
-const RUN_VALUE: &str = "OpenUsageTray";
+const RUN_VALUE: &str = "SpanreedTray";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
