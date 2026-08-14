@@ -270,7 +270,7 @@ jobs:
         with:
           shared-key: release-${{ matrix.target }}
       # Linux musl stays without `tray` so the static binary check still holds.
-      # Windows + macOS release assets include the Behelit system tray.
+      # Windows + macOS release assets include the Spanreed system tray.
       - name: Build (zigbuild static)
         if: matrix.cross == 'zig'
         run: cargo zigbuild --release --target "$TARGET"

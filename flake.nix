@@ -189,7 +189,7 @@
                 type = lib.types.bool;
                 default = false;
                 description = ''
-                  Run `spanreed tray` as a user service (Behelit SNI icon).
+                  Run `spanreed tray` as a user service (Spanreed SNI icon).
                   Requires a StatusNotifier host (Waybar `tray` on Hyprland).
                   Does not replace `spanreed waybar`.
                 '';
@@ -253,7 +253,7 @@
 
             systemd.user.services.spanreed-tray = lib.mkIf cfg.tray.enable {
               Unit = {
-                Description = "spanreed system tray (Behelit)";
+                Description = "spanreed system tray (Spanreed)";
                 After = [ "graphical-session.target" ];
                 PartOf = [ "graphical-session.target" ];
               };

@@ -16,7 +16,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::creds;
 use crate::model::{BarChartPoint, MetricKind, MetricLine};
 use crate::pricing;
 use crate::usage_stats::{self, CacheTotals, ModelCost};
@@ -102,9 +101,7 @@ impl UsageRecord {
 
 /// Path to the append-only ledger JSONL.
 pub fn ledger_path() -> PathBuf {
-    creds::data_home()
-        .join("spanreed")
-        .join("grok-usage.jsonl")
+    crate::app::data_dir().join("grok-usage.jsonl")
 }
 
 /// Append one usage record. Best-effort; logs and returns Err on IO failure.

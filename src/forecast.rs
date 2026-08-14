@@ -10,7 +10,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::creds;
 use crate::model::{MetricKind, MetricLine};
 use crate::util;
 
@@ -182,15 +181,11 @@ fn median_u64(v: &mut [u64]) -> u64 {
 }
 
 fn samples_path() -> PathBuf {
-    creds::data_home()
-        .join("spanreed")
-        .join("pct-samples.jsonl")
+    crate::app::data_dir().join("pct-samples.jsonl")
 }
 
 fn weeks_path() -> PathBuf {
-    creds::data_home()
-        .join("spanreed")
-        .join("cost-weeks.jsonl")
+    crate::app::data_dir().join("cost-weeks.jsonl")
 }
 
 /// Append sample and return median density for this week if computable.

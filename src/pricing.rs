@@ -199,16 +199,14 @@ pub fn table() -> &'static PricingMap {
     static TABLE: OnceLock<PricingMap> = OnceLock::new();
     TABLE.get_or_init(|| {
         let remote = creds::read_file(&remote_cache_path());
-        let override_path = creds::config_home().join("spanreed").join("pricing.json");
+        let override_path = crate::app::config_dir().join("pricing.json");
         let user = creds::read_file(&override_path);
         build_table(EMBEDDED, remote.as_deref(), user.as_deref())
     })
 }
 
 fn remote_cache_path() -> PathBuf {
-    creds::cache_home()
-        .join("spanreed")
-        .join("pricing-remote.json")
+    crate::app::cache_dir().join("pricing-remote.json")
 }
 
 /// True when the key (after normalization) belongs to a family we price.
@@ -275,7 +273,7 @@ fn younger_than(path: &std::path::Path, ttl: Duration) -> bool {
 /// so an offline machine doesn't pay a connect timeout on every probe.
 /// No-op when `SPANREED_OFFLINE` is set.
 pub fn ensure_fresh() {
-    if creds::env("SPANREED_OFFLINE").is_some() {
+    if crate::app::env_offline() {
         return;
     }
     let path = remote_cache_path();
