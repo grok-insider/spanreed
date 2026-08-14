@@ -102,7 +102,7 @@ pub fn cmd(args: &[String]) -> ExitCode {
 
 fn run_setup(flags: SetupFlags) -> ExitCode {
     let det = detect::scan();
-    println!("spanreed setup\n");
+    println!("{} setup\n", crate::app::APP_NAME);
 
     let (
         do_install,
@@ -132,7 +132,7 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             "Start system tray icon at login (usage + capture status)?",
             tray_autostart::default_enabled(do_service),
             Some(
-                "Behelit icon; shows remaining quotas and whether Grok proxy is up \
+                "Spanreed icon; shows remaining quotas and whether Grok proxy is up \
                      (needs a binary built with --features tray)"
                     .into(),
             ),

@@ -21,7 +21,7 @@ pub enum TraySeverity {
 }
 
 impl TraySeverity {
-    /// RGBA tint applied to the white Behelit master icon.
+    /// RGBA tint applied to the white Spanreed master icon.
     ///
     /// Colors are **dark / saturated** so the silhouette stays visible on light
     /// Windows taskbars (pale green/white washes out next to ENG/Wi‑Fi icons).

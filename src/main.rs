@@ -15,10 +15,11 @@
 //!   spanreed auth logout copilot  Forget the stored Copilot credential.
 //!   spanreed update-pricing [out] Fetch + filter the upstream price table.
 //!   spanreed self-update […]     Check/install latest GitHub Release binary.
-//!   spanreed tray […]            System tray (feature `tray`: Behelit icon).
+//!   spanreed tray […]            System tray (feature `tray`: Spanreed icon).
 
 mod activity;
 mod api;
+mod app;
 mod capture_log;
 mod capture_watchdog;
 mod client_id;
@@ -257,9 +258,7 @@ fn cmd_probe(args: &[String]) -> ExitCode {
     };
 
     if outputs.is_empty() {
-        println!(
-            "No providers detected. Try `spanreed list` or `spanreed probe <id> --force`."
-        );
+        println!("No providers detected. Try `spanreed list` or `spanreed probe <id> --force`.");
         return ExitCode::SUCCESS;
     }
 

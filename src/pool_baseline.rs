@@ -24,7 +24,7 @@ pub struct PoolBaseline {
 pub type BaselineMap = HashMap<String, PoolBaseline>;
 
 fn path() -> PathBuf {
-    creds::data_home().join("spanreed").join(FILE)
+    crate::app::data_dir().join(FILE)
 }
 
 pub fn load() -> BaselineMap {

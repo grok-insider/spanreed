@@ -34,7 +34,7 @@ impl Response {
 fn resolved_proxy() -> &'static Option<reqwest::Proxy> {
     static PROXY: OnceLock<Option<reqwest::Proxy>> = OnceLock::new();
     PROXY.get_or_init(|| {
-        let path = creds::config_home().join("spanreed").join("config.json");
+        let path = crate::app::config_dir().join("config.json");
         let cfg = creds::read_json(&path)?;
         let proxy = cfg.get("proxy")?;
         if !proxy
@@ -64,7 +64,7 @@ fn client_with(insecure: bool) -> reqwest::Result<reqwest::blocking::Client> {
         .connect_timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         // OS tag follows the build target (linux/macos/windows/...).
-        .user_agent(format!("spanreed/0.1 (+{})", std::env::consts::OS));
+        .user_agent(crate::app::user_agent());
     if let Some(proxy) = resolved_proxy() {
         builder = builder.proxy(proxy.clone());
     }
@@ -138,11 +138,7 @@ impl Request {
             .timeout(Duration::from_secs(120))
             .connect_timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::limited(10))
-            .user_agent(format!(
-                "spanreed/{} (+{})",
-                env!("CARGO_PKG_VERSION"),
-                std::env::consts::OS
-            ));
+            .user_agent(crate::app::user_agent());
         if let Some(proxy) = resolved_proxy() {
             builder = builder.proxy(proxy.clone());
         }
