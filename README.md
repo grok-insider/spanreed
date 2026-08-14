@@ -1,6 +1,14 @@
-# spanreed
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/tray/spanreed-dark.png">
+    <img src="assets/tray/spanreed-light.png" alt="Spanreed" width="168">
+  </picture>
+</p>
 
-Track AI coding subscription usage from the terminal.
+<h1 align="center">Spanreed</h1>
+
+<p align="center">Track AI coding subscription usage from the terminal.</p>
+
 
 One Rust binary (`spanreed`) reads credentials that your local AI CLIs already
 store, probes each provider’s usage API, and prints:
