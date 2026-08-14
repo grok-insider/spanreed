@@ -49,9 +49,7 @@ impl HistorySample {
 
 /// Default history path under XDG data.
 pub fn history_path() -> PathBuf {
-    creds::data_home()
-        .join("spanreed")
-        .join("usage-history.jsonl")
+    crate::app::data_dir().join("usage-history.jsonl")
 }
 
 /// Extract percent progress samples from probe outputs.

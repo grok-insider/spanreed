@@ -19,7 +19,7 @@ use crate::creds;
 use crate::http;
 use crate::setup;
 
-const DEFAULT_REPO: &str = "grok-insider/spanreed";
+const DEFAULT_REPO: &str = crate::app::GITHUB_REPO;
 
 #[derive(Debug, Clone)]
 pub struct CheckResult {
@@ -148,7 +148,7 @@ fn print_help() {
 }
 
 fn offline() -> bool {
-    creds::env("SPANREED_OFFLINE").is_some()
+    crate::app::env_offline()
 }
 
 fn repo() -> String {
@@ -298,10 +298,7 @@ pub fn check_for_update() -> Result<CheckResult, String> {
 }
 
 fn confirm_apply(r: &CheckResult) -> bool {
-    eprint!(
-        "Install spanreed {} → {} now? [y/N] ",
-        r.current, r.latest
-    );
+    eprint!("Install spanreed {} → {} now? [y/N] ", r.current, r.latest);
     let _ = io::stderr().flush();
     let mut line = String::new();
     if io::stdin().read_line(&mut line).is_err() {

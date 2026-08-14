@@ -137,7 +137,7 @@ before replace; capture is restarted via `capture ensure` when possible.
 
 ```sh
 cargo build --release --features tray
-spanreed tray                     # Behelit icon: capture health + % remaining
+spanreed tray                     # Spanreed icon: capture health + % remaining
 ```
 
 Windows/macOS release binaries include the tray feature. Linux **musl** release

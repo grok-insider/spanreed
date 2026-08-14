@@ -551,9 +551,7 @@ fn cache_path(source: Source) -> PathBuf {
     // v2: includes by_model + cache totals (old blobs without fields still
     // deserialize via #[serde(default)] but we bump the filename so probes
     // recompute once after upgrade instead of serving empty breakdowns).
-    creds::cache_home()
-        .join("spanreed")
-        .join(format!("{}-cost-v2.json", source.id()))
+    crate::app::cache_dir().join(format!("{}-cost-v2.json", source.id()))
 }
 
 #[derive(Serialize, Deserialize)]

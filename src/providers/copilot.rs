@@ -38,7 +38,7 @@ const GH_KEYRING_SERVICE: &str = "gh:github.com";
 pub struct Copilot;
 
 fn config_dir() -> PathBuf {
-    creds::config_home().join("spanreed")
+    crate::app::config_dir()
 }
 
 fn token_path() -> PathBuf {
@@ -324,8 +324,7 @@ pub fn cmd_auth(args: &[String]) -> Result<(), String> {
         token_for_gh_user(u).ok_or_else(|| {
             format!("no token for gh user '{u}'. Run `gh auth login -u {u}` or pass --token-stdin.")
         })?
-    } else if let Some(t) = creds::env("SPANREED_GITHUB_TOKEN").or_else(|| creds::env("GH_TOKEN"))
-    {
+    } else if let Some(t) = creds::env("SPANREED_GITHUB_TOKEN").or_else(|| creds::env("GH_TOKEN")) {
         t
     } else {
         resolve_token_interactive()?
@@ -426,11 +425,7 @@ impl Provider for Copilot {
         let token = match stored_token() {
             Some(t) => t,
             None => {
-                return ProviderOutput::error(
-                    ID,
-                    NAME,
-                    "Not linked. Run `spanreed auth copilot`.",
-                )
+                return ProviderOutput::error(ID, NAME, "Not linked. Run `spanreed auth copilot`.")
             }
         };
 
