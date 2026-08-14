@@ -1810,30 +1810,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "spanreed"
-version = "0.0.6"
-dependencies = [
- "dirs 5.0.1",
- "env_logger",
- "flate2",
- "image",
- "libc",
- "log",
- "memchr",
- "regex-lite",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tao",
- "tar",
- "time",
- "tray-icon",
- "zip",
-]
-
-[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2480,6 +2456,30 @@ checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "spanreed"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "env_logger",
+ "flate2",
+ "image",
+ "libc",
+ "log",
+ "memchr",
+ "regex-lite",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tao",
+ "tar",
+ "time",
+ "tray-icon",
+ "zip",
 ]
 
 [[package]]

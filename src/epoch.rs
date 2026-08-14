@@ -11,7 +11,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::creds;
 use crate::util;
 
 /// Slack: if we are within this of the old end, treat as scheduled rollover.
@@ -81,9 +80,7 @@ fn parse_ms_loose(s: &str) -> Option<i64> {
 }
 
 pub fn reset_events_path() -> PathBuf {
-    creds::data_home()
-        .join("spanreed")
-        .join("reset-events.jsonl")
+    crate::app::data_dir().join("reset-events.jsonl")
 }
 
 pub fn append_event(ev: &ResetEvent) -> Result<(), String> {

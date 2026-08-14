@@ -328,7 +328,7 @@ mod platform {
     use super::*;
     use std::os::windows::process::CommandExt;
 
-    const TASK_NAME: &str = "OpenUsageShare";
+    const TASK_NAME: &str = "SpanreedShare";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     pub fn kind_label() -> &'static str {

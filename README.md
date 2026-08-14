@@ -48,8 +48,8 @@ GitHub Release musl zips stay headless; use this flake on a desktop.
 
 ```sh
 # stable = last GitHub Release tag (created with the release, not with master)
-nix run github:grok-insider/spanreed/v0.0.5 -- probe
-nix profile install github:grok-insider/spanreed/v0.0.5
+nix run github:grok-insider/spanreed/v0.1.0 -- probe
+nix profile install github:grok-insider/spanreed/v0.1.0
 
 # unreleased integration line
 nix run github:grok-insider/spanreed/dev -- probe
@@ -66,7 +66,7 @@ Flake input + Home Manager:
 
 ```nix
 {
-  inputs.spanreed.url = "github:grok-insider/spanreed/v0.0.5";
+  inputs.spanreed.url = "github:grok-insider/spanreed/v0.1.0";
   # optional: inputs.spanreed.inputs.nixpkgs.follows = "nixpkgs";
 
   # home-manager:
@@ -137,7 +137,7 @@ before replace; capture is restarted via `capture ensure` when possible.
 
 ```sh
 cargo build --release --features tray
-spanreed tray                     # Behelit icon: capture health + % remaining
+spanreed tray                     # Spanreed icon: capture health + % remaining
 ```
 
 Windows/macOS release binaries include the tray feature. Linux **musl** release
