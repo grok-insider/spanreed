@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/tray/spanreed-dark.png">
-    <img src="assets/tray/spanreed-light.png" alt="Spanreed" width="168">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <img src="assets/logo-light.png" alt="Spanreed" width="192">
   </picture>
 </p>
 
