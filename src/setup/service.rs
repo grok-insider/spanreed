@@ -215,7 +215,7 @@ mod platform {
 mod platform {
     use super::*;
 
-    const LABEL: &str = "net.spanreed.capture";
+    const LABEL: &str = "net.grokinsider.spanreed-capture";
 
     fn plist_path() -> PathBuf {
         crate::creds::expand(&format!("~/Library/LaunchAgents/{LABEL}.plist"))
@@ -356,8 +356,8 @@ mod platform {
     use super::*;
     use std::os::windows::process::CommandExt;
 
-    const TASK_NAME: &str = "OpenUsageCapture";
-    const RUN_VALUE: &str = "OpenUsageCapture";
+    const TASK_NAME: &str = "SpanreedCapture";
+    const RUN_VALUE: &str = "SpanreedCapture";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     fn run_command_value(bin: &std::path::Path) -> String {

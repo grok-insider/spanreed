@@ -114,10 +114,7 @@ fn build_client(extra_proxy: Option<&str>) -> Result<reqwest::blocking::Client, 
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent(format!(
-            "spanreed-capture/0.1 (+{})",
-            std::env::consts::OS
-        ));
+        .user_agent(format!("spanreed-capture/0.1 (+{})", std::env::consts::OS));
     if let Some(url) = extra_proxy {
         let p = reqwest::Proxy::all(url).map_err(|e| format!("invalid egress proxy: {e}"))?;
         let no_proxy = reqwest::NoProxy::from_string("localhost,127.0.0.1,::1");
@@ -328,9 +325,7 @@ type HttpRequest = (String, String, HashMap<String, String>, Vec<u8>);
 
 fn is_local_health_path(path: &str) -> bool {
     let p = path.split('?').next().unwrap_or(path);
-    p == "/__spanreed/health"
-        || p == "/__spanreed/health/"
-        || p.ends_with("/__spanreed/health")
+    p == "/__spanreed/health" || p == "/__spanreed/health/" || p.ends_with("/__spanreed/health")
 }
 
 fn write_health_response(client: &mut TcpStream, label: &str) -> Result<(), String> {

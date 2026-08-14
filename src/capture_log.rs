@@ -7,6 +7,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
+#[cfg(windows)]
 use crate::creds;
 use crate::util;
 
@@ -18,12 +19,12 @@ pub fn log_dir() -> PathBuf {
     {
         dirs::data_local_dir()
             .unwrap_or_else(|| creds::expand("~/AppData/Local"))
-            .join("spanreed")
+            .join(crate::app::APP_ID)
             .join("logs")
     }
     #[cfg(not(windows))]
     {
-        creds::data_home().join("spanreed").join("logs")
+        crate::app::data_dir().join("logs")
     }
 }
 

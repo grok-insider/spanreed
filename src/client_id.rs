@@ -1,7 +1,7 @@
 //! Stable install id for community share device tracking.
 //!
 //! Generated once (setup or first share), stored under the spanreed config
-//! dir. Sent as `X-OpenUsage-Client`. Voting identity is the Grok Insider
+//! dir. Sent as `X-Spanreed-Client`. Voting identity is the Grok Insider
 //! account (Bearer); this id is only a device fingerprint (HMAC on server).
 
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use crate::creds;
 const FILE_NAME: &str = "client_id";
 
 fn path() -> PathBuf {
-    creds::config_home().join("spanreed").join(FILE_NAME)
+    crate::app::config_dir().join(FILE_NAME)
 }
 
 fn looks_like_uuid(s: &str) -> bool {

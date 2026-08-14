@@ -179,9 +179,7 @@ pub fn is_offline() -> bool {
 }
 
 fn last_share_path() -> PathBuf {
-    crate::creds::config_home()
-        .join("spanreed")
-        .join(LAST_SHARE_DAY_FILE)
+    crate::app::config_dir().join(LAST_SHARE_DAY_FILE)
 }
 
 /// Last successfully recorded share day (`YYYY-MM-DD`), if any.
@@ -238,7 +236,7 @@ pub fn post_snapshot(
     let res = Request::post(url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {access_token}"))
-        .header("X-OpenUsage-Client", client_id)
+        .header("X-Spanreed-Client", client_id)
         .header(
             "User-Agent",
             format!("spanreed/{} (+share)", env!("CARGO_PKG_VERSION")),
