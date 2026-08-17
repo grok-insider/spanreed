@@ -17,7 +17,9 @@
 //!   spanreed self-update […]     Check/install latest GitHub Release binary.
 //!   spanreed tray […]            System tray (feature `tray`: Spanreed icon).
 
+mod accounts;
 mod activity;
+mod addons;
 mod api;
 mod app;
 mod capture_log;
@@ -25,6 +27,7 @@ mod capture_watchdog;
 mod client_id;
 mod cost;
 mod creds;
+mod drivers;
 mod epoch;
 mod forecast;
 mod grok_ledger;
@@ -85,6 +88,9 @@ fn main() -> ExitCode {
 
     match cmd {
         "list" => cmd_list(),
+        "account" => accounts::cmd(rest),
+        "addon" => addons::cmd_addon(rest),
+        "plugin" => addons::cmd_addon(rest),
         "probe" => cmd_probe(rest),
         "waybar" => cmd_waybar(),
         "json" => cmd_json(),
@@ -103,6 +109,9 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         other => {
+            if let Some(code) = addons::dispatch_prefix(other, rest) {
+                return code;
+            }
             eprintln!("unknown command: {other}\n");
             print_help();
             ExitCode::FAILURE
@@ -123,7 +132,7 @@ fn print_help() {
          \tspanreed json                 Raw JSON of detected provider outputs\n\
          \tspanreed serve [--interval S] Local HTTP API on 127.0.0.1:6736\n\
          \tspanreed history [id]         Show recorded rate-limit history (JSONL)\n\
-         \tspanreed capture serve        Dual capture: Grok CLI :18736 + api.x.ai :18737\n\
+         \tspanreed capture serve        Fabric :18736  /v1 grok  /xai api.x.ai  /acct/ID\n\
          \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
          \t  --watchdog                   Keep capture alive (restart on exit; logs to\n\
          \t                               %%LOCALAPPDATA%%/spanreed/logs/capture.log;\n\
@@ -156,7 +165,9 @@ fn print_help() {
          \tspanreed self-update         Install latest GitHub Release (sha256 verified)\n\
          \t  --check [--json]             Report only (exit 2 if newer)\n\
          \t  --yes --dry-run              Apply without prompt / download-only verify\n\
-         \tspanreed tray [--interval S] System tray companion (needs --features tray)\n\n\
+         \tspanreed tray [--interval S] System tray companion (needs --features tray)\n\
+         \tspanreed account …           Identities (add/import/use/login grok)\n\
+         \tspanreed plugin list         Drivers (in-process / toml / PATH)\n\n\
          PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
          \t           synthetic, kimi, copilot, factory, devin,\n\
          \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
@@ -219,6 +230,14 @@ fn cmd_list() -> ExitCode {
     for p in providers::all() {
         let detected = if p.detect() { "detected" } else { "—" };
         println!("{:<14} {:<12} {}", p.id(), detected, p.name());
+    }
+    for acc in accounts::list_provider("grok") {
+        let flag = if acc.active { "active" } else { "account" };
+        println!("{:<14} {:<12} Grok ({})", acc.id, flag, acc.alias);
+    }
+    for (id, name, detected) in addons::extra_provider_ids() {
+        let flag = if detected { "detected" } else { "—" };
+        println!("{id:<14} {flag:<12} {name} (addon)");
     }
     ExitCode::SUCCESS
 }
@@ -385,22 +404,31 @@ fn cmd_capture(args: &[String]) -> ExitCode {
                 .position(|a| a == "--xai-api-bind")
                 .and_then(|i| rest.get(i + 1))
                 .cloned();
-            let listeners = vec![
-                grok_proxy::ListenerConfig {
-                    bind: grok_bind.unwrap_or_else(|| grok_proxy::DEFAULT_GROK_CLI_BIND.into()),
-                    upstream: grok_proxy::UPSTREAM_GROK_CLI.into(),
-                    label: "grok-cli".into(),
-                },
-                grok_proxy::ListenerConfig {
-                    bind: xai_bind.unwrap_or_else(|| grok_proxy::DEFAULT_XAI_API_BIND.into()),
-                    upstream: grok_proxy::UPSTREAM_XAI_API.into(),
-                    label: "xai-api".into(),
-                },
-            ];
-            capture_log::append(&format!(
-                "capture serve start binds={}/{}",
-                listeners[0].bind, listeners[1].bind
-            ));
+            let grok_tokens: grok_proxy::TokenSource =
+                std::sync::Arc::new(|alias: Option<&str>| drivers::grok::resolve_token(alias));
+            let fabric = grok_bind.unwrap_or_else(|| grok_proxy::DEFAULT_GROK_CLI_BIND.into());
+            let mut listeners = vec![grok_proxy::ListenerConfig {
+                bind: fabric.clone(),
+                upstream: grok_proxy::UPSTREAM_GROK_CLI.into(),
+                label: "fabric".into(),
+                inject_bearer: None,
+                token_source: Some(grok_tokens),
+                force_xai: false,
+            }];
+            // Compat: old OpenCode still on :18737 → same as /xai on the fabric.
+            if let Some(xai) = xai_bind.or_else(|| Some(grok_proxy::DEFAULT_XAI_API_BIND.into())) {
+                if xai != fabric {
+                    listeners.push(grok_proxy::ListenerConfig {
+                        bind: xai,
+                        upstream: grok_proxy::UPSTREAM_XAI_API.into(),
+                        label: "xai-compat".into(),
+                        inject_bearer: None,
+                        token_source: None,
+                        force_xai: true,
+                    });
+                }
+            }
+            capture_log::append(&format!("capture serve start fabric={}", listeners[0].bind));
             match grok_proxy::run_capture(&listeners) {
                 Ok(()) => {
                     capture_log::append("capture serve exit ok");
@@ -432,7 +460,7 @@ fn cmd_capture(args: &[String]) -> ExitCode {
             println!(
                 "capture: {}",
                 if up {
-                    "listening (18736 + 18737)"
+                    "listening (127.0.0.1:18736)"
                 } else {
                     "DOWN — run `spanreed capture ensure`"
                 }

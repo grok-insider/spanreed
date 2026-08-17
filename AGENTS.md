@@ -13,6 +13,10 @@ each provider's usage API, and renders the result.
 - No async runtime: probes are blocking I/O fanned out over threads.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.
+- **Accounts** are host-owned (`src/accounts.rs`, `spanreed account`). Drivers
+  (`src/drivers/`) implement login/refresh/billing. Grok uses native device-code.
+- **Addons** are a session-shaped protocol (today still one-shot JSON + inproc
+  trait) for extra CLI prefixes. See `docs/addons.md`.
 - Credentials are read from where each CLI stores them: XDG paths, plaintext
   files, SQLite state DBs (`rusqlite`, read-only), the GitHub CLI, `/proc`, and
   the OS secret store — Secret Service via `secret-tool` on Linux, Keychain on
@@ -26,7 +30,10 @@ declare it in `src/main.rs`.
 
 | File | Owns |
 |------|------|
-| `src/main.rs`           | CLI entry + subcommand dispatch (`list`, `probe`, `waybar`, `json`, `serve`, `help`). |
+| `src/main.rs`           | CLI entry + subcommand dispatch (`list`, `probe`, `waybar`, `json`, `serve`, `addon`, `help`). |
+| `src/addons/`           | Addon protocol, host (PATH/toml/inproc), grok-bridge shim. |
+| `src/accounts.rs`       | Host identity registry + secrets. |
+| `src/drivers/`          | First-party identity drivers (`grok` login/probe/fabric token). |
 | `src/app.rs`            | Product identity (`spanreed`): dirs, bin name, GitHub repo. |
 | `src/probe.rs`          | Probe orchestration: runs detected (or all/one) providers concurrently. |
 | `src/providers/mod.rs`  | The `Provider` trait, the `all()` registry, and `by_id()`. Register new providers here. |

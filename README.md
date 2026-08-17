@@ -42,7 +42,7 @@ The installer downloads the binary from GitHub Releases, then runs
 - create the Grok capture ledger  
 - start the capture proxy at login (optional; **windowless** on Windows)  
 - wire **Grok Build** → `http://127.0.0.1:18736/v1`  
-- wire **OpenCode xAI** → `http://127.0.0.1:18737/v1`  
+- wire **OpenCode xAI** → `http://127.0.0.1:18736/xai/v1`  
 
 On Windows, capture autostart uses a user **Scheduled Task** (Hidden) when
 allowed, plus an **HKCU Run** fallback. The watchdog detaches from the console
@@ -118,7 +118,7 @@ spanreed setup status
 spanreed setup uninstall          # unwire + stop capture service
 spanreed capture serve            # run capture in the foreground
 spanreed capture serve --watchdog # auto-restart worker; log under spanreed/logs
-spanreed capture ensure           # start capture+watchdog if ports 18736/18737 are down
+spanreed capture ensure           # start capture+watchdog if :18736 is down
 spanreed capture status           # exit 0 if listening, 1 if DOWN; shows log path
 spanreed probe grok --cost        # quotas + captured tokens / $ estimate
 spanreed self-update --check      # compare to latest GitHub Release
@@ -186,8 +186,16 @@ spanreed json                  # raw JSON (full detail, includes kind)
 spanreed serve [--interval S]  # HTTP API on 127.0.0.1:6736
 spanreed setup                 # install + optional capture service + wire clients
 spanreed auth copilot          # opt-in GitHub token for Copilot
+spanreed account add grok --name mine   # SuperGrok login (device-code, no grok binary)
+spanreed account ls | use grok/mine
+spanreed plugin list
 spanreed help
 ```
+
+Grok Build stays on `http://127.0.0.1:18736/v1` (active account).
+A second account in parallel: `GROK_CLI_CHAT_PROXY_BASE_URL=http://127.0.0.1:18736/acct/mine/v1`.
+OpenCode: `http://127.0.0.1:18736/xai/v1`.
+See `docs/addons.md`.
 
 With no arguments, `spanreed` runs `probe`. Default probe shows **rate-limit
 quotas only**; add flags for extra blocks. `json` / `waybar` / `serve` always

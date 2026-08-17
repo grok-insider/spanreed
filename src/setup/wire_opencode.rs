@@ -20,7 +20,11 @@ pub fn is_wired_to_capture(det: &Detection, state: &SetupState) -> bool {
         return state.wired.opencode_xai.is_some();
     };
     match read_xai_base_url(&path) {
-        Some(url) => url == OPENCODE_XAI_CAPTURE_BASE_URL || url.contains("127.0.0.1:18737"),
+        Some(url) => {
+            url == OPENCODE_XAI_CAPTURE_BASE_URL
+                || url.contains("127.0.0.1:18736/xai")
+                || url.contains("127.0.0.1:18737")
+        }
         None => false,
     }
 }

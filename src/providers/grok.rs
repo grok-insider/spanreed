@@ -453,7 +453,8 @@ impl Provider for Grok {
     }
 
     fn detect(&self) -> bool {
-        auth_path().exists()
+        // Host accounts are probed separately as grok/<alias>.
+        crate::accounts::list_provider("grok").is_empty() && auth_path().exists()
     }
 
     fn probe(&self) -> ProviderOutput {

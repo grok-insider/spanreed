@@ -1,12 +1,15 @@
 //! Local reverse proxy that captures official Grok/xAI API `usage` objects.
 //!
-//! Dual listeners (typical setup):
-//! - `127.0.0.1:18736` → `https://cli-chat-proxy.grok.com`  (Grok CLI)
-//! - `127.0.0.1:18737` → `https://api.x.ai`                 (OpenCode xAI)
+//! One fabric on `127.0.0.1:18736`; path selects upstream and account:
+//! - `/v1/…`                  → cli-chat-proxy + active SuperGrok account
+//! - `/acct/<alias>/v1/…`     → cli-chat-proxy + that account
+//! - `/xai/v1/…`              → api.x.ai (OpenCode)
+//! - `/acct/<alias>/xai/v1/…` → api.x.ai tagged with that account
+//!
+//! `:18737` is a compatibility shim (every path treated as `/xai…`).
 //!
 //! Upstream HTTPS honors `HTTP(S)_PROXY` so geo/VPN (e.g. sing-box :7897) still
-//! applies. Clients talk to localhost in clear HTTP — no one-shot env needed if
-//! wrappers/config permanently point at these ports.
+//! applies. Clients talk to localhost in clear HTTP.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -14,6 +17,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Resolve a fabric inject token. `None` = default/active account.
+pub type TokenSource = Arc<dyn Fn(Option<&str>) -> Option<String> + Send + Sync>;
 
 use crate::grok_ledger;
 use crate::util;
@@ -39,11 +45,17 @@ const HOP_BY_HOP: &[&str] = &[
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// One capture listener: local bind → fixed HTTPS upstream.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ListenerConfig {
     pub bind: String,
     pub upstream: String,
     pub label: String,
+    /// When set, replace `Authorization` and send `X-XAI-Token-Auth`.
+    pub inject_bearer: Option<String>,
+    /// Host fabric: `/acct/<alias>/…` selects a token; other paths use active.
+    pub token_source: Option<TokenSource>,
+    /// Compat :18737 — treat bare `/v1` as `/xai/v1`.
+    pub force_xai: bool,
 }
 
 /// Run dual (or custom) capture listeners until process exit.
@@ -104,6 +116,9 @@ pub fn run(bind: Option<&str>, upstream: Option<&str>) -> Result<(), String> {
         bind,
         upstream,
         label: "grok-cli".into(),
+        inject_bearer: None,
+        token_source: None,
+        force_xai: false,
     }])
 }
 
@@ -135,7 +150,7 @@ fn accept_loop(listener: TcpListener, client: Arc<reqwest::blocking::Client>, cf
         let client = Arc::clone(&client);
         let cfg = cfg.clone();
         std::thread::spawn(move || {
-            if let Err(e) = handle_client(stream, &client, &cfg.upstream, &cfg.label) {
+            if let Err(e) = handle_client(stream, &client, &cfg) {
                 log::warn!("[{}] request failed: {e}", cfg.label);
             }
         });
@@ -145,16 +160,16 @@ fn accept_loop(listener: TcpListener, client: Arc<reqwest::blocking::Client>, cf
 fn handle_client(
     mut client: TcpStream,
     http: &reqwest::blocking::Client,
-    upstream_base: &str,
-    label: &str,
+    cfg: &ListenerConfig,
 ) -> Result<(), String> {
+    let label = cfg.label.as_str();
     client.set_read_timeout(Some(Duration::from_secs(600))).ok();
     client
         .set_write_timeout(Some(Duration::from_secs(600)))
         .ok();
 
     let mut reader = BufReader::new(client.try_clone().map_err(|e| e.to_string())?);
-    let (method, path, headers, body) = match read_http_request(&mut reader) {
+    let (method, raw_path, headers, body) = match read_http_request(&mut reader) {
         Ok(r) => r,
         // Bare TCP connect (port probe) sends no HTTP — not an error.
         Err(e) if e.contains("empty request line") => return Ok(()),
@@ -162,13 +177,28 @@ fn handle_client(
     };
 
     // Local health (not forwarded). Used by ops / `capture status` checks.
-    if is_local_health_path(&path) {
+    if is_local_health_path(&raw_path) {
         let _ = method;
         return write_health_response(&mut client, label);
     }
 
+    let routed =
+        if cfg.force_xai && !raw_path.starts_with("/xai") && !raw_path.starts_with("/acct/") {
+            parse_fabric_path(&format!("/xai{raw_path}"))
+        } else {
+            parse_fabric_path(&raw_path)
+        };
+
+    let inject_bearer = if routed.route == "grok" {
+        resolve_inject(cfg, routed.account_alias.as_deref())
+    } else {
+        None
+    };
+    let account_id = stamp_account_id(&routed);
+
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let upstream_base = upstream_base.trim_end_matches('/');
+    let upstream_base = routed.upstream.trim_end_matches('/');
+    let path = routed.path.as_str();
     let url = format!("{upstream_base}{path}");
 
     let mut req = http.request(
@@ -179,7 +209,17 @@ fn handle_client(
         if HOP_BY_HOP.iter().any(|h| h.eq_ignore_ascii_case(k)) {
             continue;
         }
+        if inject_bearer.is_some() && k.eq_ignore_ascii_case("authorization") {
+            continue;
+        }
+        if inject_bearer.is_some() && k.eq_ignore_ascii_case("x-xai-token-auth") {
+            continue;
+        }
         req = req.header(k.as_str(), v.as_str());
+    }
+    if let Some(token) = inject_bearer.as_deref() {
+        req = req.header("Authorization", format!("Bearer {token}"));
+        req = req.header("X-XAI-Token-Auth", "xai-grok-cli");
     }
     if let Some(host) = upstream_base
         .strip_prefix("https://")
@@ -270,7 +310,15 @@ fn handle_client(
         let _ = client.flush();
     }
 
-    record_usage_from_capture(label, seq, &captured, session_id, !client_ok);
+    record_usage_from_capture(
+        label,
+        seq,
+        &captured,
+        session_id,
+        account_id,
+        routed.route,
+        !client_ok,
+    );
     Ok(())
 }
 
@@ -280,6 +328,8 @@ fn record_usage_from_capture(
     seq: u64,
     captured: &[u8],
     session_id: Option<String>,
+    account_id: Option<String>,
+    route: &str,
     client_aborted: bool,
 ) {
     let text = String::from_utf8_lossy(captured);
@@ -297,7 +347,7 @@ fn record_usage_from_capture(
         }
         return;
     };
-    let rec = partial.into_record(util::now_ms(), session_id);
+    let rec = partial.into_record(util::now_ms(), session_id, account_id, Some(route.into()));
     if let Err(e) = grok_ledger::append(&rec) {
         log::warn!("[{label}] ledger append: {e}");
         return;
@@ -319,6 +369,83 @@ fn record_usage_from_capture(
             rec.cost_usd_ticks
         );
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FabricRoute {
+    pub path: String,
+    pub account_alias: Option<String>,
+    pub route: &'static str,
+    pub upstream: &'static str,
+}
+
+fn with_query(path: &str, query: Option<&str>) -> String {
+    match query {
+        Some(q) => format!("{path}?{q}"),
+        None => path.to_string(),
+    }
+}
+
+/// Path → upstream + account. Public for tests.
+pub fn parse_fabric_path(raw: &str) -> FabricRoute {
+    let (path_only, query) = match raw.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (raw, None),
+    };
+
+    if let Some(rest) = path_only.strip_prefix("/acct/") {
+        let (alias, after) = match rest.split_once('/') {
+            Some((a, t)) => (a, format!("/{t}")),
+            None => (rest, "/".into()),
+        };
+        if !alias.is_empty() {
+            if let Some(xai_rest) = after.strip_prefix("/xai") {
+                let p = if xai_rest.is_empty() { "/" } else { xai_rest };
+                return FabricRoute {
+                    path: with_query(p, query),
+                    account_alias: Some(alias.into()),
+                    route: "xai",
+                    upstream: UPSTREAM_XAI_API,
+                };
+            }
+            return FabricRoute {
+                path: with_query(&after, query),
+                account_alias: Some(alias.into()),
+                route: "grok",
+                upstream: UPSTREAM_GROK_CLI,
+            };
+        }
+    }
+
+    if let Some(rest) = path_only.strip_prefix("/xai") {
+        let p = if rest.is_empty() { "/" } else { rest };
+        return FabricRoute {
+            path: with_query(p, query),
+            account_alias: None,
+            route: "xai",
+            upstream: UPSTREAM_XAI_API,
+        };
+    }
+
+    FabricRoute {
+        path: raw.to_string(),
+        account_alias: None,
+        route: "grok",
+        upstream: UPSTREAM_GROK_CLI,
+    }
+}
+
+fn stamp_account_id(routed: &FabricRoute) -> Option<String> {
+    crate::drivers::grok::resolve_account_id(routed.account_alias.as_deref())
+}
+
+fn resolve_inject(cfg: &ListenerConfig, acct: Option<&str>) -> Option<String> {
+    if let Some(src) = &cfg.token_source {
+        if let Some(tok) = src(acct) {
+            return Some(tok);
+        }
+    }
+    cfg.inject_bearer.clone()
 }
 
 type HttpRequest = (String, String, HashMap<String, String>, Vec<u8>);
@@ -388,4 +515,38 @@ fn read_http_request(reader: &mut BufReader<TcpStream>) -> Result<HttpRequest, S
     }
 
     Ok((method, path, headers, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fabric_paths() {
+        let r = parse_fabric_path("/acct/heavy/v1/billing?format=credits");
+        assert_eq!(r.path, "/v1/billing?format=credits");
+        assert_eq!(r.account_alias.as_deref(), Some("heavy"));
+        assert_eq!(r.route, "grok");
+        assert_eq!(r.upstream, UPSTREAM_GROK_CLI);
+
+        let r = parse_fabric_path("/v1/billing");
+        assert_eq!(r.path, "/v1/billing");
+        assert_eq!(r.account_alias, None);
+        assert_eq!(r.route, "grok");
+
+        let r = parse_fabric_path("/xai/v1/chat/completions");
+        assert_eq!(r.path, "/v1/chat/completions");
+        assert_eq!(r.route, "xai");
+        assert_eq!(r.upstream, UPSTREAM_XAI_API);
+
+        let r = parse_fabric_path("/acct/work/xai/v1/responses");
+        assert_eq!(r.path, "/v1/responses");
+        assert_eq!(r.account_alias.as_deref(), Some("work"));
+        assert_eq!(r.route, "xai");
+
+        let r = parse_fabric_path("/acct/work");
+        assert_eq!(r.path, "/");
+        assert_eq!(r.account_alias.as_deref(), Some("work"));
+        assert_eq!(r.route, "grok");
+    }
 }

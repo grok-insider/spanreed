@@ -91,6 +91,26 @@ fn list_shows_all_providers() {
 }
 
 #[test]
+fn addon_list_shows_grok_bridge() {
+    let (stdout, status) = run(&["plugin", "list"]);
+    assert!(status.success(), "plugin list: {stdout}");
+    assert!(
+        stdout.contains("grok-bridge"),
+        "expected grok-bridge in\n{stdout}"
+    );
+}
+
+#[test]
+fn account_help_and_empty_list() {
+    let (stdout, status) = run(&["account", "help"]);
+    assert!(status.success(), "account help");
+    assert!(stdout.contains("account add grok"), "{stdout}");
+    let (stdout, status) = run(&["account", "ls"]);
+    assert!(status.success());
+    assert!(stdout.contains("no accounts"), "{stdout}");
+}
+
+#[test]
 fn json_is_valid_array_when_nothing_detected() {
     let (stdout, status) = run(&["json"]);
     assert!(status.success());

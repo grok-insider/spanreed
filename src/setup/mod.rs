@@ -35,7 +35,7 @@ pub fn capture_ports_up() -> bool {
 /// Target base URL for Grok Build (`GROK_CLI_CHAT_PROXY_BASE_URL`).
 pub const GROK_CAPTURE_BASE_URL: &str = "http://127.0.0.1:18736/v1";
 /// Target base URL for OpenCode `provider.xai.options.baseURL`.
-pub const OPENCODE_XAI_CAPTURE_BASE_URL: &str = "http://127.0.0.1:18737/v1";
+pub const OPENCODE_XAI_CAPTURE_BASE_URL: &str = "http://127.0.0.1:18736/xai/v1";
 
 #[derive(Debug, Default, Clone)]
 struct SetupFlags {
@@ -157,7 +157,7 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
                     Some(det.grok.hint()),
                 ),
                 prompt_yn(
-                    "Wire OpenCode xAI → capture :18737?",
+                    "Wire OpenCode xAI → capture :18736/xai?",
                     det.opencode.detected,
                     Some(det.opencode.hint()),
                 ),
@@ -680,6 +680,6 @@ mod tests {
     #[test]
     fn capture_urls_include_v1() {
         assert!(GROK_CAPTURE_BASE_URL.ends_with("/v1"));
-        assert!(OPENCODE_XAI_CAPTURE_BASE_URL.contains("18737"));
+        assert!(OPENCODE_XAI_CAPTURE_BASE_URL.contains("18736/xai"));
     }
 }

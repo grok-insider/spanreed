@@ -85,7 +85,7 @@ pub fn format_tooltip(
 ) -> String {
     let mut lines = Vec::new();
     let cap = if capture_up {
-        "Capture: UP · Grok :18736 · xAI :18737"
+        "Capture: UP · fabric :18736  /v1 /xai /acct"
     } else {
         "Capture: DOWN · run spanreed capture ensure"
     };

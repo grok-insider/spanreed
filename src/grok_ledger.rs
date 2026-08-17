@@ -27,7 +27,7 @@ const DAY_MS: i64 = 86_400_000;
 const TICKS_PER_USD: f64 = 1_000_000_000.0;
 
 /// One completed API call's official usage (from Responses `usage`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct UsageRecord {
     pub ts_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,6 +49,12 @@ pub struct UsageRecord {
     pub cost_usd_ticks: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Host identity that paid this hop (`grok/heavy`). Missing on old lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// Fabric route: `grok` (cli-chat-proxy) or `xai` (api.x.ai).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
 }
 
 impl UsageRecord {
@@ -188,8 +194,33 @@ pub fn cost_lines_with_forecast(
     weekly_pct: Option<f64>,
     week_end_ms: Option<i64>,
 ) -> Vec<MetricLine> {
+    cost_lines_filtered(None, weekly_start_ms, weekly_pct, week_end_ms)
+}
+
+/// Last-30-Days / forecast for one host account (`grok/heavy`).
+pub fn cost_lines_for_account(
+    account_id: &str,
+    weekly_start_ms: Option<i64>,
+    weekly_pct: Option<f64>,
+    week_end_ms: Option<i64>,
+) -> Vec<MetricLine> {
+    cost_lines_filtered(Some(account_id), weekly_start_ms, weekly_pct, week_end_ms)
+}
+
+fn cost_lines_filtered(
+    account_id: Option<&str>,
+    weekly_start_ms: Option<i64>,
+    weekly_pct: Option<f64>,
+    week_end_ms: Option<i64>,
+) -> Vec<MetricLine> {
     let now = util::now_ms();
-    let recs = read_window(now);
+    let recs: Vec<_> = read_window(now)
+        .into_iter()
+        .filter(|r| match account_id {
+            Some(id) => r.account_id.as_deref() == Some(id),
+            None => r.account_id.is_none(),
+        })
+        .collect();
     if recs.is_empty() {
         let hint = empty_capture_hint();
         return vec![MetricLine::text(MetricKind::Cost, "Last 30 Days", hint)];
@@ -210,12 +241,11 @@ fn empty_capture_hint() -> String {
 fn capture_ports_up() -> bool {
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
-    ["127.0.0.1:18736", "127.0.0.1:18737"].iter().all(|a| {
-        a.parse::<SocketAddr>()
-            .ok()
-            .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(150)).ok())
-            .is_some()
-    })
+    "127.0.0.1:18736"
+        .parse::<SocketAddr>()
+        .ok()
+        .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(150)).ok())
+        .is_some()
 }
 
 fn lines_from_records(
@@ -491,7 +521,13 @@ fn usage_from_json(v: &serde_json::Value) -> Option<UsagePartial> {
 }
 
 impl UsagePartial {
-    pub fn into_record(self, ts_ms: i64, session_id: Option<String>) -> UsageRecord {
+    pub fn into_record(
+        self,
+        ts_ms: i64,
+        session_id: Option<String>,
+        account_id: Option<String>,
+        route: Option<String>,
+    ) -> UsageRecord {
         UsageRecord {
             ts_ms,
             session_id,
@@ -503,6 +539,8 @@ impl UsagePartial {
             total_tokens: self.total_tokens,
             cost_usd_ticks: self.cost_usd_ticks,
             request_id: self.request_id,
+            account_id,
+            route,
         }
     }
 }
@@ -510,6 +548,24 @@ impl UsagePartial {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_jsonl_roundtrip_without_account() {
+        let rec: UsageRecord = serde_json::from_str(r#"{"ts_ms":1,"input_tokens":10}"#).unwrap();
+        assert!(rec.account_id.is_none());
+        assert!(rec.route.is_none());
+        let tagged = UsageRecord {
+            ts_ms: 2,
+            input_tokens: 5,
+            account_id: Some("grok/heavy".into()),
+            route: Some("grok".into()),
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&tagged).unwrap();
+        assert!(s.contains("grok/heavy"));
+        let back: UsageRecord = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.account_id.as_deref(), Some("grok/heavy"));
+    }
 
     #[test]
     fn parses_response_completed_usage() {
@@ -526,7 +582,7 @@ data: [DONE]
         assert_eq!(u.cost_usd_ticks, 500_000_000);
         assert_eq!(u.model.as_deref(), Some("grok-4.5"));
         assert_eq!(u.request_id.as_deref(), Some("resp_1"));
-        let rec = u.into_record(1_000, Some("sess".into()));
+        let rec = u.into_record(1_000, Some("sess".into()), None, Some("grok".into()));
         assert!((rec.ticks_usd().unwrap() - 0.5).abs() < 1e-9);
         // Public list: 60 unc * $2/M + 40 cache * $0.30/M + 20 out * $6/M
         let list = rec.list_cost_usd().unwrap();
@@ -550,6 +606,7 @@ data: [DONE]
             total_tokens: 201_000,
             cost_usd_ticks: 0,
             request_id: None,
+            ..Default::default()
         };
         // All tokens at long rates: unc 100k * $4/M + cache 100k * $0.60/M + out 1k * $12/M
         let expected = 100_000.0 * 4e-6 + 100_000.0 * 6e-7 + 1_000.0 * 1.2e-5;
@@ -593,6 +650,7 @@ data: [DONE]
                 total_tokens: 1100,
                 cost_usd_ticks: 1_000_000_000, // ticks ignored for $ display
                 request_id: Some("a".into()),
+                ..Default::default()
             },
             UsageRecord {
                 ts_ms: 1_700_086_400_000, // next day
@@ -605,6 +663,7 @@ data: [DONE]
                 total_tokens: 250,
                 cost_usd_ticks: 0,
                 request_id: Some("b".into()),
+                ..Default::default()
             },
         ];
         let lines = lines_from_records(&recs, None, None, None);
@@ -671,6 +730,7 @@ data: [DONE]
             total_tokens: 110,
             cost_usd_ticks: 500_000_000,
             request_id: Some("only".into()),
+            ..Default::default()
         }];
         let lines = lines_from_records(&recs, None, None, None);
         let last30 = lines.iter().find_map(|l| match l {
@@ -706,6 +766,7 @@ data: [DONE]
                 total_tokens: 1_000_000,
                 cost_usd_ticks: 0,
                 request_id: Some("priced".into()),
+                ..Default::default()
             },
             UsageRecord {
                 ts_ms: 6_000,
@@ -718,6 +779,7 @@ data: [DONE]
                 total_tokens: 50,
                 cost_usd_ticks: 0,
                 request_id: Some("bare".into()),
+                ..Default::default()
             },
         ];
         let lines = lines_from_records(&recs, Some(4_000), None, None);
@@ -751,6 +813,7 @@ data: [DONE]
                 total_tokens: 100,
                 cost_usd_ticks: 0,
                 request_id: Some("old".into()),
+                ..Default::default()
             },
             UsageRecord {
                 ts_ms: 5_000,
@@ -763,6 +826,7 @@ data: [DONE]
                 total_tokens: 25,
                 cost_usd_ticks: 0,
                 request_id: Some("new".into()),
+                ..Default::default()
             },
         ];
         let lines = lines_from_records(&recs, Some(4_000), None, None);

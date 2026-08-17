@@ -47,9 +47,8 @@ pub fn ports_up() -> bool {
 pub fn ensure(dry_run: bool) -> Result<String, String> {
     if ports_up() {
         return Ok(format!(
-            "already listening on {} and {}",
-            crate::grok_proxy::DEFAULT_GROK_CLI_BIND,
-            crate::grok_proxy::DEFAULT_XAI_API_BIND
+            "already listening on {}",
+            crate::grok_proxy::DEFAULT_GROK_CLI_BIND
         ));
     }
     if dry_run {
@@ -73,10 +72,7 @@ pub fn ensure(dry_run: bool) -> Result<String, String> {
 pub fn ports_listening_default() -> bool {
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
-    let addrs = [
-        crate::grok_proxy::DEFAULT_GROK_CLI_BIND,
-        crate::grok_proxy::DEFAULT_XAI_API_BIND,
-    ];
+    let addrs = [crate::grok_proxy::DEFAULT_GROK_CLI_BIND];
     addrs.iter().all(|a| {
         a.parse::<SocketAddr>()
             .ok()
