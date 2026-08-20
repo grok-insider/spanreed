@@ -2475,11 +2475,21 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spanreed-model",
  "tao",
  "tar",
  "time",
  "tray-icon",
  "zip",
+]
+
+[[package]]
+name = "spanreed-model"
+version = "0.1.0"
+source = "git+https://github.com/grok-insider/spanreed-model?tag=v0.1.0#0e7b22d6affed78be5fdd20d8ae9f059928a462c"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

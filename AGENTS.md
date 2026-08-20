@@ -9,7 +9,10 @@ tracker: one Rust binary (`spanreed`) that acts as a CLI, a background daemon,
 and a data source for status bars. It reads local AI-CLI credentials, queries
 each provider's usage API, and renders the result.
 
-- Single crate, no workspace. Binary target `spanreed` (`src/main.rs`).
+- Single binary crate. Shared DTOs live in
+  [`spanreed-model`](https://github.com/grok-insider/spanreed-model) (git dep,
+  tag-pinned; not crates.io). `src/model.rs` re-exports them.
+- No workspace. Binary target `spanreed` (`src/main.rs`).
 - No async runtime: probes are blocking I/O fanned out over threads.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.
@@ -31,7 +34,7 @@ declare it in `src/main.rs`.
 | `src/probe.rs`          | Probe orchestration: runs detected (or all/one) providers concurrently. |
 | `src/providers/mod.rs`  | The `Provider` trait, the `all()` registry, and `by_id()`. Register new providers here. |
 | `src/providers/*.rs`    | One provider each (`claude`, `codex`, `grok`, ...). |
-| `src/model.rs`          | Output contract: `MetricLine` (text/progress/badge), `ProgressFormat`, `ProviderOutput`. |
+| `src/model.rs`          | Re-export of `spanreed-model` (`MetricLine`, `ProviderOutput`, …). |
 | `src/creds.rs`          | Linux credential & local-state discovery helpers (paths, files, SQLite, secret-tool, `/proc`). |
 | `src/http.rs`           | Blocking HTTP client wrapper: `Request` builder, proxy support, optional insecure TLS. |
 | `src/util.rs`           | Time (`now_ms`, `to_iso`, `ms_to_iso`, `local_date_ymd`), `plan_label`, `cents_to_dollars`, `fmt_tokens`, `jwt_payload`/`jwt_exp_ms`, base64. |

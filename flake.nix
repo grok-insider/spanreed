@@ -53,6 +53,9 @@
 
           cargoLock = {
             lockFile = ./Cargo.lock;
+            outputHashes = {
+              "spanreed-model-0.1.0" = "sha256-0pK0Q4RRmCJRNJGX8mWlU+XZnG33tXKA/dPMlO3j7fw=";
+            };
           };
 
           # GNU Linux desktop build: SNI tray (GTK3 + Ayatana). musl GH
