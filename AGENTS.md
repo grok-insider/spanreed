@@ -9,7 +9,10 @@ tracker: one Rust binary (`spanreed`) that acts as a CLI, a background daemon,
 and a data source for status bars. It reads local AI-CLI credentials, queries
 each provider's usage API, and renders the result.
 
-- Single crate, no workspace. Binary target `spanreed` (`src/main.rs`).
+- Single binary crate. Shared DTOs/pricing/accounts live in git-tagged
+  `spanreed-*` crates (not crates.io). `src/model.rs` re-exports `spanreed-model`.
+- `spanreed capture serve` execs the `ai-relay` binary (`AI_RELAY_BIN` override).
+- No workspace. Binary target `spanreed` (`src/main.rs`).
 - No async runtime: probes are blocking I/O fanned out over threads.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.

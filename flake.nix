@@ -53,6 +53,13 @@
 
           cargoLock = {
             lockFile = ./Cargo.lock;
+            outputHashes = {
+              "spanreed-model-0.1.0" = "sha256-0pK0Q4RRmCJRNJGX8mWlU+XZnG33tXKA/dPMlO3j7fw=";
+              "spanreed-metrics-0.1.0" = "sha256-aj37QzjQSgeHXFXTeekkXdBT2P7ddlw1pU5fs1lvtgs=";
+              "spanreed-accounts-0.1.0" = "sha256-lMdHI1uW9pIYCW9pFKmPsBFzuzhAAl+RDU9JH+8cCms=";
+              "spanreed-oauth-grok-0.1.0" = "sha256-ygJgJKR0ArYk/9Y1R7CrvUCj9fOQ2BYbFle+FD/fuyQ=";
+              "spanreed-share-0.1.0" = "sha256-UAPE0Kw09iwtIkx0CHF3a7AeWSjzHwPiFekbYQCXTVg=";
+            };
           };
 
           # GNU Linux desktop build: SNI tray (GTK3 + Ayatana). musl GH
@@ -148,14 +155,16 @@
                 type = lib.types.bool;
                 default = false;
                 description = ''
-                  Run `spanreed capture serve` as a user service: dual reverse
-                  proxies that record official Grok/xAI API usage for Last 30 Days.
+                  Run `spanreed capture serve` as a user service: one fabric on
+                  grokCliBind (default 127.0.0.1:18736) that records official
+                  Grok/xAI API usage for Last 30 Days.
 
-                  Default binds:
-                    127.0.0.1:18736 → cli-chat-proxy.grok.com  (Grok CLI)
-                    127.0.0.1:18737 → api.x.ai                 (OpenCode xAI)
+                    /v1        → cli-chat-proxy.grok.com  (Grok Build, SuperGrok inject)
+                    /xai/v1    → api.x.ai                 (OpenCode, client token)
+                    /acct/ID/… → same, pinned account
 
-                  Point clients at those base URLs (wrappers / OpenCode baseURL).
+                  Point Grok Build at http://127.0.0.1:18736/v1 and OpenCode
+                  provider.xai.options.baseURL at http://127.0.0.1:18736/xai/v1.
                   Set egressProxy so upstream still uses your geo VPN (e.g. sing-box).
                 '';
               };
@@ -163,13 +172,17 @@
               grokCliBind = lib.mkOption {
                 type = lib.types.str;
                 default = "127.0.0.1:18736";
-                description = "Local bind for Grok CLI capture (upstream cli-chat-proxy.grok.com).";
+                description = "Local bind for the capture fabric (path selects upstream).";
               };
 
               xaiApiBind = lib.mkOption {
-                type = lib.types.str;
-                default = "127.0.0.1:18737";
-                description = "Local bind for OpenCode/api.x.ai capture.";
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                example = "127.0.0.1:18737";
+                description = ''
+                  Optional compat listener that treats bare /v1 as /xai/v1
+                  (old OpenCode configs on :18737). Null (default): fabric only.
+                '';
               };
 
               egressProxy = lib.mkOption {
@@ -230,15 +243,19 @@
               };
 
               Service = {
-                ExecStart = lib.concatStringsSep " " [
-                  "${cfg.package}/bin/spanreed"
-                  "capture"
-                  "serve"
-                  "--grok-cli-bind"
-                  cfg.capture.grokCliBind
-                  "--xai-api-bind"
-                  cfg.capture.xaiApiBind
-                ];
+                ExecStart = lib.concatStringsSep " " (
+                  [
+                    "${cfg.package}/bin/spanreed"
+                    "capture"
+                    "serve"
+                    "--grok-cli-bind"
+                    cfg.capture.grokCliBind
+                  ]
+                  ++ lib.optionals (cfg.capture.xaiApiBind != null) [
+                    "--xai-api-bind"
+                    cfg.capture.xaiApiBind
+                  ]
+                );
                 Restart = "on-failure";
                 RestartSec = 3;
                 Environment = lib.mkIf (cfg.capture.egressProxy != null) [

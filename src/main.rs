@@ -6,7 +6,7 @@
 //!   spanreed waybar               Emit Waybar custom-module JSON (one shot).
 //!   spanreed json                 Emit raw JSON of all detected providers.
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
-//!   spanreed capture serve        Dual capture proxy (Grok CLI + api.x.ai).
+//!   spanreed capture serve        Fabric :18736 (/v1 grok, /xai api.x.ai).
 //!   spanreed capture serve --watchdog  Restart capture if it exits.
 //!   spanreed capture ensure       Start capture (with watchdog) if ports down.
 //!   spanreed grok-proxy [...]     Single-listener capture (compat alias).
@@ -404,42 +404,10 @@ fn cmd_capture(args: &[String]) -> ExitCode {
                 .position(|a| a == "--xai-api-bind")
                 .and_then(|i| rest.get(i + 1))
                 .cloned();
-            let grok_tokens: grok_proxy::TokenSource =
-                std::sync::Arc::new(|alias: Option<&str>| drivers::grok::resolve_token(alias));
+            let _ = xai_bind;
             let fabric = grok_bind.unwrap_or_else(|| grok_proxy::DEFAULT_GROK_CLI_BIND.into());
-            let mut listeners = vec![grok_proxy::ListenerConfig {
-                bind: fabric.clone(),
-                upstream: grok_proxy::UPSTREAM_GROK_CLI.into(),
-                label: "fabric".into(),
-                inject_bearer: None,
-                token_source: Some(grok_tokens),
-                force_xai: false,
-            }];
-            // Compat: old OpenCode still on :18737 → same as /xai on the fabric.
-            if let Some(xai) = xai_bind.or_else(|| Some(grok_proxy::DEFAULT_XAI_API_BIND.into())) {
-                if xai != fabric {
-                    listeners.push(grok_proxy::ListenerConfig {
-                        bind: xai,
-                        upstream: grok_proxy::UPSTREAM_XAI_API.into(),
-                        label: "xai-compat".into(),
-                        inject_bearer: None,
-                        token_source: None,
-                        force_xai: true,
-                    });
-                }
-            }
-            capture_log::append(&format!("capture serve start fabric={}", listeners[0].bind));
-            match grok_proxy::run_capture(&listeners) {
-                Ok(()) => {
-                    capture_log::append("capture serve exit ok");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("capture error: {e}");
-                    capture_log::append(&format!("capture serve error: {e}"));
-                    ExitCode::FAILURE
-                }
-            }
+            capture_log::append(&format!("capture serve exec ai-relay bind={fabric}"));
+            exec_ai_relay(&fabric)
         }
         Some("ensure") => {
             let dry = args.iter().any(|a| a == "--dry-run");
@@ -477,8 +445,80 @@ fn cmd_capture(args: &[String]) -> ExitCode {
             eprintln!(
                 "usage: spanreed capture serve [--watchdog] [--grok-cli-bind A] [--xai-api-bind B]\n\
                  \t spanreed capture ensure [--dry-run]\n\
-                 \t spanreed capture status"
+                 \t spanreed capture status\n\
+                 \t default fabric: {}\n\
+                 \t --xai-api-bind: optional compat (e.g. {})",
+                grok_proxy::DEFAULT_GROK_CLI_BIND,
+                grok_proxy::DEFAULT_XAI_API_BIND
             );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn ai_relay_bin() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("AI_RELAY_BIN") {
+        return std::path::PathBuf::from(p);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let cand = dir.join("ai-relay");
+            if cand.exists() {
+                return cand;
+            }
+            let cand = dir.join("ai-relay.exe");
+            if cand.exists() {
+                return cand;
+            }
+        }
+    }
+    std::path::PathBuf::from("ai-relay")
+}
+
+fn ai_relay_exec_spec(bind: &str) -> (std::path::PathBuf, Vec<String>, Vec<(String, String)>) {
+    let bin = ai_relay_bin();
+    let ledger = crate::grok_ledger::ledger_path();
+    let accounts = crate::app::data_dir()
+        .join("accounts")
+        .join("index.json");
+    let args = vec![
+        "--bind".into(),
+        bind.into(),
+        "--ledger".into(),
+        ledger.to_string_lossy().into_owned(),
+        "--accounts".into(),
+        accounts.to_string_lossy().into_owned(),
+    ];
+    let env = vec![(
+        "AI_RELAY_ACCOUNTS".into(),
+        accounts.to_string_lossy().into_owned(),
+    )];
+    (bin, args, env)
+}
+
+fn exec_ai_relay(bind: &str) -> ExitCode {
+    let (bin, args, env) = ai_relay_exec_spec(bind);
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.args(&args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    match cmd.status()
+    {
+        Ok(st) if st.success() => {
+            capture_log::append("capture serve exit ok");
+            ExitCode::SUCCESS
+        }
+        Ok(st) => {
+            let e = format!("ai-relay exited {st}");
+            eprintln!("capture error: {e}");
+            capture_log::append(&format!("capture serve error: {e}"));
+            ExitCode::FAILURE
+        }
+        Err(e) => {
+            let e = format!("exec {}: {e}", bin.display());
+            eprintln!("capture error: {e}");
+            capture_log::append(&format!("capture serve error: {e}"));
             ExitCode::FAILURE
         }
     }
@@ -501,5 +541,39 @@ fn cmd_grok_proxy(args: &[String]) -> ExitCode {
             eprintln!("grok-proxy error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod capture_exec_tests {
+    use super::*;
+
+    #[test]
+    fn capture_serve_exec_spec_includes_ledger_and_accounts() {
+        let (_bin, args, env) = ai_relay_exec_spec("127.0.0.1:18736");
+        assert_eq!(args[0], "--bind");
+        assert_eq!(args[1], "127.0.0.1:18736");
+        let ledger = args
+            .windows(2)
+            .find(|w| w[0] == "--ledger")
+            .map(|w| w[1].as_str())
+            .unwrap();
+        assert!(
+            ledger.ends_with("grok-usage.jsonl"),
+            "ledger={ledger}"
+        );
+        assert!(ledger.contains("spanreed"), "ledger={ledger}");
+        let accounts = args
+            .windows(2)
+            .find(|w| w[0] == "--accounts")
+            .map(|w| w[1].as_str())
+            .unwrap();
+        assert!(
+            accounts.ends_with("index.json"),
+            "accounts={accounts}"
+        );
+        assert!(accounts.contains("accounts"), "accounts={accounts}");
+        assert_eq!(env[0].0, "AI_RELAY_ACCOUNTS");
+        assert_eq!(env[0].1, accounts);
     }
 }

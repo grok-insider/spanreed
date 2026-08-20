@@ -14,96 +14,18 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::model::{BarChartPoint, MetricKind, MetricLine};
-use crate::pricing;
 use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
+use spanreed_metrics::list_cost_usd;
 
 /// Rolling window: today plus the previous 30 days.
 const WINDOW_DAYS: i64 = 31;
 const DAY_MS: i64 = 86_400_000;
-const TICKS_PER_USD: f64 = 1_000_000_000.0;
 
-/// One completed API call's official usage (from Responses `usage`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct UsageRecord {
-    pub ts_ms: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub input_tokens: u64,
-    #[serde(default)]
-    pub output_tokens: u64,
-    #[serde(default)]
-    pub cached_input_tokens: u64,
-    #[serde(default)]
-    pub reasoning_tokens: u64,
-    #[serde(default)]
-    pub total_tokens: u64,
-    /// xAI `cost_in_usd_ticks` (1e9 ticks = $1). Zero when not provided.
-    #[serde(default)]
-    pub cost_usd_ticks: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    /// Host identity that paid this hop (`grok/heavy`). Missing on old lines.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account_id: Option<String>,
-    /// Fabric route: `grok` (cli-chat-proxy) or `xai` (api.x.ai).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub route: Option<String>,
-}
-
-impl UsageRecord {
-    pub fn tokens_for_total(&self) -> u64 {
-        if self.total_tokens > 0 {
-            self.total_tokens
-        } else {
-            self.input_tokens.saturating_add(self.output_tokens)
-        }
-    }
-
-    /// Subscription-internal ticks from the API (not public list price).
-    #[allow(dead_code)]
-    pub fn ticks_usd(&self) -> Option<f64> {
-        if self.cost_usd_ticks > 0 {
-            Some(self.cost_usd_ticks as f64 / TICKS_PER_USD)
-        } else {
-            None
-        }
-    }
-
-    /// Public API list-price USD for this record, or None if the model is unknown.
-    ///
-    /// xAI long-context rule ([docs](https://docs.x.ai/developers/pricing)):
-    /// when prompt tokens ≥ 200k, **all** token types in the request use the
-    /// higher rate (not progressive Anthropic-style tiers).
-    pub fn list_cost_usd(&self) -> Option<f64> {
-        let model = self
-            .model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())?;
-        let p = pricing::table().find(model)?;
-        let cached = self.cached_input_tokens.min(self.input_tokens);
-        let uncached = self.input_tokens.saturating_sub(cached);
-        const TIER: u64 = 200_000;
-        let long = self.input_tokens >= TIER;
-        let (rin, rcache, rout) = if long {
-            (
-                p.input_above_200k.unwrap_or(p.input),
-                p.cache_read_above_200k.unwrap_or(p.cache_read),
-                p.output_above_200k.unwrap_or(p.output),
-            )
-        } else {
-            (p.input, p.cache_read, p.output)
-        };
-        Some(uncached as f64 * rin + cached as f64 * rcache + self.output_tokens as f64 * rout)
-    }
-}
+pub use spanreed_model::UsageRecord;
 
 /// Path to the append-only ledger JSONL.
 pub fn ledger_path() -> PathBuf {
@@ -269,7 +191,7 @@ fn lines_from_records(
         let tok = r.tokens_for_total();
         total_tokens = total_tokens.saturating_add(tok);
         // Public API list price (not SuperGrok subscription ticks).
-        let cost = match r.list_cost_usd() {
+        let cost = match list_cost_usd(r) {
             Some(c) => {
                 has_cost = true;
                 tokens_with_cost = tokens_with_cost.saturating_add(tok);
@@ -344,7 +266,7 @@ fn lines_from_records(
             }
             let tok = r.tokens_for_total();
             win_tokens = win_tokens.saturating_add(tok);
-            if let Some(c) = r.list_cost_usd() {
+            if let Some(c) = list_cost_usd(r) {
                 win_has_cost = true;
                 win_cost += c;
                 win_tokens_with_cost = win_tokens_with_cost.saturating_add(tok);
@@ -541,6 +463,7 @@ impl UsagePartial {
             request_id: self.request_id,
             account_id,
             route,
+            provider: None,
         }
     }
 }
@@ -585,7 +508,7 @@ data: [DONE]
         let rec = u.into_record(1_000, Some("sess".into()), None, Some("grok".into()));
         assert!((rec.ticks_usd().unwrap() - 0.5).abs() < 1e-9);
         // Public list: 60 unc * $2/M + 40 cache * $0.30/M + 20 out * $6/M
-        let list = rec.list_cost_usd().unwrap();
+        let list = list_cost_usd(&rec).unwrap();
         let expected = 60.0 * 2e-6 + 40.0 * 3e-7 + 20.0 * 6e-6;
         assert!(
             (list - expected).abs() < 1e-12,
@@ -610,7 +533,7 @@ data: [DONE]
         };
         // All tokens at long rates: unc 100k * $4/M + cache 100k * $0.60/M + out 1k * $12/M
         let expected = 100_000.0 * 4e-6 + 100_000.0 * 6e-7 + 1_000.0 * 1.2e-5;
-        let got = rec.list_cost_usd().unwrap();
+        let got = list_cost_usd(&rec).unwrap();
         assert!(
             (got - expected).abs() < 1e-9,
             "got={got} expected={expected}"
