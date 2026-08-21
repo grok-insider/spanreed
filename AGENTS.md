@@ -10,7 +10,8 @@ and a data source for status bars. It reads local AI-CLI credentials, queries
 each provider's usage API, and renders the result.
 
 - Single binary crate. Shared DTOs/pricing/accounts live in git-tagged
-  `spanreed-*` crates (not crates.io). `src/model.rs` re-exports `spanreed-model`.
+  `fabrials-*` crates (crates.io versions; local patch in `~/dev/fabrials/.cargo`).
+  `src/model.rs` re-exports `fabrials-model`.
 - `spanreed capture serve` execs the `ai-relay` binary (`AI_RELAY_BIN` override).
 - No workspace. Binary target `spanreed` (`src/main.rs`).
 - No async runtime: probes are blocking I/O fanned out over threads.
@@ -237,9 +238,9 @@ SPANREED_OFFLINE=1 cargo test --all
 |---------|------|
 | **GitHub flake (stable)** | Linux gnu+tray: pin the **release tag** — `nix run` / `nix profile install github:grok-insider/spanreed/vX.Y.Z` and `homeManagerModules.default`. The tag is created **with** the GitHub Release. Floating `github:grok-insider/spanreed` follows `master` and is **not** stable. Org rule: [`../AGENTS.md`](../AGENTS.md). |
 | **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
-| **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
+| **fabrials.com** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
-| **api.grokinsider.net** | Opt-in **authenticated share** (`share login` + Bearer `POST /v1/usage/snapshots`) into a public plan metric pool for **grokinsider.net/spanreed**. Not install hosting. |
+| **fabrials.com/api/spanreed** | Opt-in **authenticated share** (`share login` + Bearer `POST /v1/usage/snapshots`) into the public Usage AI pool. Not install hosting. |
 
 Do not re-attach install scripts to GH Releases. Keep public one-liners pointing at
 the website.

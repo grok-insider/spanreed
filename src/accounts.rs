@@ -56,7 +56,7 @@ pub struct Account {
     pub billing_checked: bool,
 }
 
-impl spanreed_accounts::Steerable for Account {
+impl fabrials_accounts::Steerable for Account {
     fn used_pct(&self) -> Option<f64> {
         self.used_pct
     }

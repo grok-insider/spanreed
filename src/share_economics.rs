@@ -351,7 +351,7 @@ fn grok_models() -> Vec<ModelEconomics> {
     let mut map: std::collections::HashMap<String, (u64, f64)> = std::collections::HashMap::new();
     for r in recs {
         let tok = r.tokens_for_total();
-        let cost = spanreed_metrics::list_cost_usd(&r).unwrap_or(0.0);
+        let cost = fabrials_metrics::list_cost_usd(&r).unwrap_or(0.0);
         let name = r
             .model
             .clone()

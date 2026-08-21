@@ -1,5 +1,5 @@
-//! Probe/output DTOs. Owned by [`spanreed-model`]; re-exported so `crate::model::…` stays stable.
+//! Probe/output DTOs. Owned by [`fabrials-model`]; re-exported so `crate::model::…` stays stable.
 
-pub use spanreed_model::{
+pub use fabrials_model::{
     BarChartPoint, MetricKind, MetricLine, ProbeView, ProgressFormat, ProviderOutput,
 };

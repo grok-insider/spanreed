@@ -19,13 +19,13 @@ use serde::Deserialize;
 use crate::model::{BarChartPoint, MetricKind, MetricLine};
 use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
-use spanreed_metrics::list_cost_usd;
+use fabrials_metrics::list_cost_usd;
 
 /// Rolling window: today plus the previous 30 days.
 const WINDOW_DAYS: i64 = 31;
 const DAY_MS: i64 = 86_400_000;
 
-pub use spanreed_model::UsageRecord;
+pub use fabrials_model::UsageRecord;
 
 /// Path to the append-only ledger JSONL.
 pub fn ledger_path() -> PathBuf {

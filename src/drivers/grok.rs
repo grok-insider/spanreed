@@ -842,10 +842,10 @@ pub fn pick_autosteer(
     exhausted_pct: f64,
     now_ms: i64,
 ) -> Option<&accounts::Account> {
-    spanreed_accounts::pick_autosteer(accounts, exhausted_pct, now_ms, |a| {
+    fabrials_accounts::pick_autosteer(accounts, exhausted_pct, now_ms, |a| {
         a.plan_slug
             .as_deref()
-            .map(spanreed_accounts::grok_plan_rank)
+            .map(fabrials_accounts::grok_plan_rank)
             .or_else(|| a.plan_label.as_deref().map(|d| classify_plan(d).1))
             .unwrap_or(0)
     })
