@@ -10,8 +10,8 @@ and a data source for status bars. It reads local AI-CLI credentials, queries
 each provider's usage API, and renders the result.
 
 - Single binary crate. Shared DTOs/pricing/accounts live in git-tagged
-  `fabrials-*` crates (crates.io versions; local patch in `~/dev/fabrials/.cargo`).
-  `src/model.rs` re-exports `fabrials-model`.
+  `fabrials-*` crates (`Cargo.toml` git tags until crates.io publish; local
+  patch in `~/dev/fabrials/.cargo`). `src/model.rs` re-exports `fabrials-model`.
 - `spanreed capture serve` execs the `ai-relay` binary (`AI_RELAY_BIN` override).
 - No workspace. Binary target `spanreed` (`src/main.rs`).
 - No async runtime: probes are blocking I/O fanned out over threads.

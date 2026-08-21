@@ -54,11 +54,11 @@
           cargoLock = {
             lockFile = ./Cargo.lock;
             outputHashes = {
-              "spanreed-model-0.1.0" = "sha256-0pK0Q4RRmCJRNJGX8mWlU+XZnG33tXKA/dPMlO3j7fw=";
-              "spanreed-metrics-0.1.0" = "sha256-aj37QzjQSgeHXFXTeekkXdBT2P7ddlw1pU5fs1lvtgs=";
-              "spanreed-accounts-0.1.0" = "sha256-lMdHI1uW9pIYCW9pFKmPsBFzuzhAAl+RDU9JH+8cCms=";
-              "spanreed-oauth-grok-0.1.0" = "sha256-ygJgJKR0ArYk/9Y1R7CrvUCj9fOQ2BYbFle+FD/fuyQ=";
-              "spanreed-share-0.1.0" = "sha256-UAPE0Kw09iwtIkx0CHF3a7AeWSjzHwPiFekbYQCXTVg=";
+              "fabrials-model-0.1.0" = "sha256-/DktTuES73H417vWdZxEsLjR4+F3efpPn11f0xrLAek=";
+              "fabrials-metrics-0.1.0" = "sha256-SukABfgKzhLXzGm7vpjPwv4hYC0SxLZF3/bfmFANOnQ=";
+              "fabrials-accounts-0.1.1" = "sha256-ZhMLG1jwjD6qA6qDpz7vPNlPEJrxYOAueVaCGkN+GGU=";
+              "fabrials-oauth-grok-0.1.1" = "sha256-WkljuchW7wMGyceDwWBvoykaowNiHvyJ8kAAba09/ts=";
+              "fabrials-share-0.1.0" = "sha256-By/emKx7jT9fUl0fg1muvdbRLk9rXVKn0E/RJyf9pnM=";
             };
           };
 
