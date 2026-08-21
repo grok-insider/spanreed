@@ -56,6 +56,18 @@ pub struct Account {
     pub billing_checked: bool,
 }
 
+impl spanreed_accounts::Steerable for Account {
+    fn used_pct(&self) -> Option<f64> {
+        self.used_pct
+    }
+    fn plan_slug(&self) -> Option<&str> {
+        self.plan_slug.as_deref()
+    }
+    fn resets_at(&self) -> Option<&str> {
+        self.resets_at.as_deref()
+    }
+}
+
 impl Account {
     pub fn new(provider: &str, alias: &str) -> Result<Self, String> {
         if !valid_alias(alias) {

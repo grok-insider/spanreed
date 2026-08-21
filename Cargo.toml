@@ -23,7 +23,7 @@ tray = ["dep:tray-icon", "dep:tao", "dep:image"]
 [dependencies]
 spanreed-model = { git = "https://github.com/grok-insider/spanreed-model", tag = "v0.1.0" }
 spanreed-metrics = { git = "https://github.com/grok-insider/spanreed-metrics", tag = "v0.1.0" }
-spanreed-accounts = { git = "https://github.com/grok-insider/spanreed-accounts", tag = "v0.1.0" }
+spanreed-accounts = { git = "https://github.com/grok-insider/spanreed-accounts", tag = "v0.1.1" }
 spanreed-oauth-grok = { git = "https://github.com/grok-insider/spanreed-oauth-grok", tag = "v0.1.0" }
 spanreed-share = { git = "https://github.com/grok-insider/spanreed-share", tag = "v0.1.0" }
 reqwest = { version = "0.12", features = ["blocking", "json", "socks", "rustls-tls"], default-features = false }

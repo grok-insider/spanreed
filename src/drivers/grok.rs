@@ -729,7 +729,6 @@ fn credits_pct_reset(config: &serde_json::Value) -> (Option<f64>, Option<String>
 }
 
 const SNAP_TTL_MS: i64 = 60_000;
-const URGENT_RESET_HOURS: f64 = 12.0;
 
 pub fn refresh_snapshot(acc: &accounts::Account) {
     let stale = acc
@@ -824,6 +823,7 @@ fn maybe_autosteer() {
     let Some(pick) = pick_autosteer(&fresh, exhausted, util::now_ms()) else {
         return;
     };
+    let pick = pick.clone();
     if pick.id == active.id {
         return;
     }
@@ -841,52 +841,14 @@ pub fn pick_autosteer(
     accounts: &[accounts::Account],
     exhausted_pct: f64,
     now_ms: i64,
-) -> Option<accounts::Account> {
-    let mut best: Option<(f64, accounts::Account)> = None;
-    for a in accounts {
-        let used = a.used_pct.unwrap_or(0.0);
-        if used >= exhausted_pct {
-            continue;
-        }
-        let rank = a
-            .plan_slug
+) -> Option<&accounts::Account> {
+    spanreed_accounts::pick_autosteer(accounts, exhausted_pct, now_ms, |a| {
+        a.plan_slug
             .as_deref()
-            .map(|s| plan_rank(s))
+            .map(spanreed_accounts::grok_plan_rank)
             .or_else(|| a.plan_label.as_deref().map(|d| classify_plan(d).1))
-            .unwrap_or(0);
-        let hours = hours_to_reset(a.resets_at.as_deref(), now_ms);
-        let urgent = hours.map(|h| h < URGENT_RESET_HOURS).unwrap_or(false);
-        let reset_term = hours.map(|h| 1.0 / h.max(0.01)).unwrap_or(0.0);
-        let score = (if urgent { 1_000_000.0 } else { 0.0 })
-            + 10_000.0 * rank as f64
-            + 100.0 * used
-            + reset_term;
-        match &best {
-            Some((s, _)) if *s >= score => {}
-            _ => best = Some((score, a.clone())),
-        }
-    }
-    best.map(|(_, a)| a)
-}
-
-fn plan_rank(slug: &str) -> u8 {
-    match slug {
-        "heavy" => 5,
-        "plus" => 4,
-        "normal" => 3,
-        "lite" => 2,
-        "premium-plus" => 1,
-        "premium" => 0,
-        _ => 0,
-    }
-}
-
-fn hours_to_reset(iso: Option<&str>, now_ms: i64) -> Option<f64> {
-    let iso = iso?;
-    let t = util::parse_iso_dt(iso)?;
-    let end = (t.unix_timestamp_nanos() / 1_000_000) as i64;
-    let delta = end.saturating_sub(now_ms) as f64 / 3_600_000.0;
-    Some(delta.max(0.0))
+            .unwrap_or(0)
+    })
 }
 
 fn urlenc(s: &str) -> String {
