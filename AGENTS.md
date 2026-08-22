@@ -38,8 +38,8 @@ declare it in `src/main.rs`.
 | `src/output.rs`         | Renderers: `plain` (terminal + sparkline), `waybar` (custom-module JSON), severity classes. |
 | `src/api.rs`            | Local HTTP API on `127.0.0.1:6736` (`/usage`, `/health`) with background refresh. |
 | `src/cost.rs`           | Local-log cost engine (Claude/Codex): parallel + `memchr` + mtime pre-filter + dedup + TTL cache; produces `Last 30 Days` + `Usage Trend`. |
-| `src/grok_ledger.rs`    | Grok capture ledger (`grok-usage.jsonl`). Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
-| `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service, optional tray autostart, wire Grok Build + OpenCode xAI to the local capture proxy. |
+| `src/grok_ledger.rs`    | Grok capture ledger (`grok-usage.jsonl`), **read-only** in spanreed (the external `ai-relay` worker writes it). Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
+| `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service (`capture serve` launches the external `ai-relay` worker), optional tray autostart, wire Grok Build + OpenCode xAI to the ai-relay capture worker. |
 | `src/self_update.rs`    | `spanreed self-update`: GitHub Releases check + sha256-verified binary replace. |
 | `src/tray_format.rs`    | Pure tooltip / severity helpers for the tray (always compiled). |
 | `src/tray.rs`           | `spanreed tray` (feature `tray`): Spanreed SNI/tray icon + menu. Nix package builds this; musl GH zips do not. |

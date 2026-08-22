@@ -40,7 +40,7 @@ The installer downloads the binary from GitHub Releases, then runs
 
 - install CLI to user PATH  
 - create the Grok capture ledger  
-- start the capture proxy at login (optional; **windowless** on Windows)  
+- start the **ai-relay** capture worker at login (optional; **windowless** on Windows)  
 - wire **Grok Build** → `http://127.0.0.1:18736/v1`  
 - wire **OpenCode xAI** → `http://127.0.0.1:18737/v1`  
 
@@ -116,9 +116,9 @@ Useful setup commands:
 ```sh
 spanreed setup status
 spanreed setup uninstall          # unwire + stop capture service
-spanreed capture serve            # run capture in the foreground
+spanreed capture serve            # launch the ai-relay capture worker in the foreground
 spanreed capture serve --watchdog # auto-restart worker; log under spanreed/logs
-spanreed capture ensure           # start capture+watchdog if ports 18736/18737 are down
+spanreed capture ensure           # start capture+watchdog if port 18736 is down
 spanreed capture status           # exit 0 if listening, 1 if DOWN; shows log path
 spanreed probe grok --cost        # quotas + captured tokens / $ estimate
 spanreed self-update --check      # compare to latest GitHub Release
@@ -126,9 +126,13 @@ spanreed self-update              # download, verify .sha256, replace binary
 spanreed tray                     # system tray (build with --features tray)
 ```
 
-If Grok Build or OpenCode “stops working” while wired to the local proxy, check
-capture first (`setup status` / `capture status`). A dead proxy with live wiring
-looks like a CLI failure. Fix: `spanreed capture ensure`.
+If Grok Build or OpenCode “stops working” while wired to the ai-relay capture
+worker, check capture first (`setup status` / `capture status`). A dead worker
+with live wiring looks like a CLI failure. Fix: `spanreed capture ensure`.
+
+The `ai-relay` binary is resolved from `AI_RELAY_BIN`, then next to the
+`spanreed` binary, then `PATH`. Multi-account routing lives entirely in
+`ai-relay`; spanreed only reads the usage ledger it writes.
 
 ### Updates
 
@@ -232,7 +236,7 @@ wall-clock pace. Set `SPANREED_OFFLINE=1` to skip remote price-table refresh.
 | Id | Credential source (typical) |
 |----|-----------------------------|
 | `codex` | `~/.codex` / `$CODEX_HOME` |
-| `grok` | `~/.grok/auth.json` (+ optional local capture) |
+| `grok` | `~/.grok/auth.json` (+ optional ai-relay capture) |
 | `copilot` | opt-in via `spanreed auth copilot` |
 | `cursor` | Cursor state DB under `~/.config/Cursor/` |
 | `opencode-go` / `amp` / `zai` / `minimax` / … | see `spanreed list` and source |
