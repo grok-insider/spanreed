@@ -4,6 +4,11 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-22
+
+- feat: route capture through ai-relay and remove in-process proxy (#4)
+- docs: add Cursor Cloud setup notes for cloud agents (#3)
+
 ## [0.1.0] - 2026-08-14
 
 First public Spanreed release (product rename from the tester-only 0.0.x line).
