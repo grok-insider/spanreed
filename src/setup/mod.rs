@@ -19,9 +19,12 @@ mod wire_opencode;
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
-use crate::grok_proxy;
-
 pub use paths::install_bin_path;
+
+/// Loopback bind the ai-relay capture worker listens on for Grok CLI clients.
+pub const DEFAULT_GROK_CLI_BIND: &str = "127.0.0.1:18736";
+/// Loopback bind kept for OpenCode xAI compatibility wiring.
+pub const DEFAULT_XAI_API_BIND: &str = "127.0.0.1:18737";
 
 /// Re-export for `main` capture ensure/status without exposing the whole module tree.
 pub fn service_ensure(dry_run: bool) -> Result<String, String> {
@@ -123,9 +126,8 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             "Start capture proxy at login (user service)?",
             flags.service,
             Some(format!(
-                "listens {} + {}",
-                grok_proxy::DEFAULT_GROK_CLI_BIND,
-                grok_proxy::DEFAULT_XAI_API_BIND
+                "ai-relay listens {} + {}",
+                DEFAULT_GROK_CLI_BIND, DEFAULT_XAI_API_BIND
             )),
         );
         let do_tray = prompt_yn(
@@ -523,11 +525,8 @@ fn print_status() -> ExitCode {
         wire_opencode::status_line(&det, &state)
     );
     println!(
-        "\n  Capture targets:\n    Grok CLI  http://{} → {}\n    api.x.ai  http://{} → {}",
-        grok_proxy::DEFAULT_GROK_CLI_BIND,
-        grok_proxy::UPSTREAM_GROK_CLI,
-        grok_proxy::DEFAULT_XAI_API_BIND,
-        grok_proxy::UPSTREAM_XAI_API,
+        "\n  Capture worker:   ai-relay\n    Grok CLI  http://{}\n    xAI API   http://{}",
+        DEFAULT_GROK_CLI_BIND, DEFAULT_XAI_API_BIND,
     );
 
     if (grok_wired || oc_wired) && !ports_up {

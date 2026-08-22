@@ -121,7 +121,6 @@ fn help_lists_subcommands() {
         "history",
         "capture",
         "ensure",
-        "grok-proxy",
         "setup",
         "auth",
         "share",

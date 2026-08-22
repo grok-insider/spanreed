@@ -1,17 +1,17 @@
 //! Local ledger of official Grok/xAI API usage records.
 //!
-//! Records are written by [`crate::grok_proxy`] when it observes a completed
-//! Responses API call with a `usage` object. Probe reads this file for
-//! accurate Last-30-Days totals — never invents tokens from session context.
+//! Records are written by the external `ai-relay` capture worker when it
+//! observes a completed Responses API call with a `usage` object. Probe reads
+//! this file for accurate Last-30-Days totals — never invents tokens from
+//! session context.
 //!
 //! Dollar estimates use **public API list prices** from [`crate::pricing`]
 //! (Grok 4.5: $2 / $0.30 cached / $6 per MTok, with xAI's all-or-nothing
 //! ≥200k long-context tier). Subscription-internal `cost_in_usd_ticks` are
-//! still captured for reference but are not what we display — SuperGrok
+//! still recorded for reference but are not what we display — SuperGrok
 //! pool ticks are not public API rates.
 
-use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -102,51 +102,6 @@ impl UsageRecord {
 /// Path to the append-only ledger JSONL.
 pub fn ledger_path() -> PathBuf {
     crate::app::data_dir().join("grok-usage.jsonl")
-}
-
-/// Append one usage record. Best-effort; logs and returns Err on IO failure.
-pub fn append(record: &UsageRecord) -> Result<(), String> {
-    let path = ledger_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir ledger dir: {e}"))?;
-    }
-    // Dedup: skip if same request_id already present (last few KB scan).
-    if let Some(rid) = record.request_id.as_deref() {
-        if !rid.is_empty() && recent_has_request_id(rid) {
-            return Ok(());
-        }
-    }
-    let mut f = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("open ledger: {e}"))?;
-    let line = serde_json::to_string(record).map_err(|e| e.to_string())?;
-    writeln!(f, "{line}").map_err(|e| format!("write ledger: {e}"))?;
-    Ok(())
-}
-
-fn recent_has_request_id(rid: &str) -> bool {
-    let path = ledger_path();
-    let Ok(f) = std::fs::File::open(path) else {
-        return false;
-    };
-    let needle = format!("\"request_id\":\"{rid}\"");
-    // Only scan last ~256 KiB for recent dups.
-    let meta = f.metadata().ok();
-    let reader = BufReader::new(f);
-    if let Some(m) = meta {
-        if m.len() > 256 * 1024 {
-            // Fall through: full scan is fine for typical ledger sizes; for huge
-            // files we still scan all lines (simple + correct).
-        }
-    }
-    for line in reader.lines().map_while(Result::ok) {
-        if line.contains(&needle) {
-            return true;
-        }
-    }
-    false
 }
 
 /// Read all ledger records with `ts_ms` in `[cutoff, now]`.
@@ -390,145 +345,26 @@ fn ms_to_ymd(ms: i64) -> Option<String> {
     ))
 }
 
-/// Parse official usage from a Responses API JSON object or SSE body.
-pub fn usage_from_response_body(body: &str) -> Option<UsagePartial> {
-    // Try whole body as JSON first.
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) {
-        if let Some(u) = usage_from_json(&v) {
-            return Some(u);
-        }
-    }
-    // SSE: find last `response.completed` (or any object with usage).
-    let mut best: Option<UsagePartial> = None;
-    for line in body.lines() {
-        let line = line.trim();
-        let payload = line.strip_prefix("data: ").unwrap_or(line);
-        if payload.is_empty() || payload == "[DONE]" {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
-            continue;
-        };
-        if let Some(u) = usage_from_json(&v) {
-            best = Some(u);
-        }
-    }
-    best
-}
-
-#[derive(Debug, Clone)]
-pub struct UsagePartial {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cached_input_tokens: u64,
-    pub reasoning_tokens: u64,
-    pub total_tokens: u64,
-    pub cost_usd_ticks: u64,
-    pub model: Option<String>,
-    pub request_id: Option<String>,
-}
-
-fn usage_from_json(v: &serde_json::Value) -> Option<UsagePartial> {
-    // response.completed shape: { type, response: { usage, model, id } }
-    let response = v.get("response").filter(|r| r.is_object()).unwrap_or(v);
-    let usage = response.get("usage").or_else(|| v.get("usage"))?;
-    if !usage.is_object() {
-        return None;
-    }
-    let num = |k: &str| -> u64 {
-        usage
-            .get(k)
-            .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-            .unwrap_or(0)
-    };
-    let input = num("input_tokens").max(num("prompt_tokens"));
-    let output = num("output_tokens").max(num("completion_tokens"));
-    let total = num("total_tokens");
-    let cached = usage
-        .get("input_tokens_details")
-        .and_then(|d| d.get("cached_tokens"))
-        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-        .unwrap_or(0);
-    let reasoning = usage
-        .get("output_tokens_details")
-        .and_then(|d| d.get("reasoning_tokens"))
-        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-        .unwrap_or(0);
-    let cost_ticks = usage
-        .get("cost_in_usd_ticks")
-        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-        .unwrap_or(0);
-
-    if input == 0 && output == 0 && total == 0 && cost_ticks == 0 {
-        return None;
-    }
-
-    let model = response
-        .get("model")
-        .or_else(|| v.get("model"))
-        .and_then(|m| m.as_str())
-        .map(|s| s.to_string());
-    let request_id = response
-        .get("id")
-        .or_else(|| v.get("id"))
-        .and_then(|m| m.as_str())
-        .map(|s| s.to_string());
-
-    Some(UsagePartial {
-        input_tokens: input,
-        output_tokens: output,
-        cached_input_tokens: cached,
-        reasoning_tokens: reasoning,
-        total_tokens: if total > 0 {
-            total
-        } else {
-            input.saturating_add(output)
-        },
-        cost_usd_ticks: cost_ticks,
-        model,
-        request_id,
-    })
-}
-
-impl UsagePartial {
-    pub fn into_record(self, ts_ms: i64, session_id: Option<String>) -> UsageRecord {
-        UsageRecord {
-            ts_ms,
-            session_id,
-            model: self.model,
-            input_tokens: self.input_tokens,
-            output_tokens: self.output_tokens,
-            cached_input_tokens: self.cached_input_tokens,
-            reasoning_tokens: self.reasoning_tokens,
-            total_tokens: self.total_tokens,
-            cost_usd_ticks: self.cost_usd_ticks,
-            request_id: self.request_id,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parses_response_completed_usage() {
-        let body = r#"data: {"type":"response.created"}
-data: {"type":"response.completed","response":{"id":"resp_1","model":"grok-4.5","usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120,"input_tokens_details":{"cached_tokens":40},"output_tokens_details":{"reasoning_tokens":5},"cost_in_usd_ticks":500000000}}}
-data: [DONE]
-"#;
-        let u = usage_from_response_body(body).unwrap();
-        assert_eq!(u.input_tokens, 100);
-        assert_eq!(u.output_tokens, 20);
-        assert_eq!(u.cached_input_tokens, 40);
-        assert_eq!(u.reasoning_tokens, 5);
-        assert_eq!(u.total_tokens, 120);
-        assert_eq!(u.cost_usd_ticks, 500_000_000);
-        assert_eq!(u.model.as_deref(), Some("grok-4.5"));
-        assert_eq!(u.request_id.as_deref(), Some("resp_1"));
-        let rec = u.into_record(1_000, Some("sess".into()));
+    fn list_cost_matches_public_rates() {
+        // 60 unc * $2/M + 40 cache * $0.30/M + 20 out * $6/M
+        let rec = UsageRecord {
+            ts_ms: 1_000,
+            session_id: Some("sess".into()),
+            model: Some("grok-4.5".into()),
+            input_tokens: 100,
+            output_tokens: 20,
+            cached_input_tokens: 40,
+            reasoning_tokens: 5,
+            total_tokens: 120,
+            cost_usd_ticks: 500_000_000,
+            request_id: Some("resp_1".into()),
+        };
         assert!((rec.ticks_usd().unwrap() - 0.5).abs() < 1e-9);
-        // Public list: 60 unc * $2/M + 40 cache * $0.30/M + 20 out * $6/M
         let list = rec.list_cost_usd().unwrap();
         let expected = 60.0 * 2e-6 + 40.0 * 3e-7 + 20.0 * 6e-6;
         assert!(
@@ -558,12 +394,6 @@ data: [DONE]
             (got - expected).abs() < 1e-9,
             "got={got} expected={expected}"
         );
-    }
-
-    #[test]
-    fn ignores_body_without_usage() {
-        assert!(usage_from_response_body("data: {\"type\":\"ping\"}\n").is_none());
-        assert!(usage_from_response_body("").is_none());
     }
 
     #[test]

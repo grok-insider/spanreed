@@ -6,10 +6,9 @@
 //!   spanreed waybar               Emit Waybar custom-module JSON (one shot).
 //!   spanreed json                 Emit raw JSON of all detected providers.
 //!   spanreed serve [--interval S] Run the local HTTP API on 127.0.0.1:6736.
-//!   spanreed capture serve        Dual capture proxy (Grok CLI + api.x.ai).
+//!   spanreed capture serve        Launch the ai-relay capture worker.
 //!   spanreed capture serve --watchdog  Restart capture if it exits.
 //!   spanreed capture ensure       Start capture (with watchdog) if ports down.
-//!   spanreed grok-proxy [...]     Single-listener capture (compat alias).
 //!   spanreed setup [...]          Install CLI, optional capture service, wire Grok/OpenCode.
 //!   spanreed auth copilot [...]   Opt-in link a GitHub token for Copilot.
 //!   spanreed auth logout copilot  Forget the stored Copilot credential.
@@ -28,7 +27,6 @@ mod creds;
 mod epoch;
 mod forecast;
 mod grok_ledger;
-mod grok_proxy;
 mod history;
 mod http;
 mod model;
@@ -91,7 +89,6 @@ fn main() -> ExitCode {
         "serve" => cmd_serve(rest),
         "history" => cmd_history(rest),
         "capture" => cmd_capture(rest),
-        "grok-proxy" => cmd_grok_proxy(rest),
         "setup" => setup::cmd(rest),
         "share" => share::cmd(rest),
         "auth" => cmd_auth(rest),
@@ -123,15 +120,13 @@ fn print_help() {
          \tspanreed json                 Raw JSON of detected provider outputs\n\
          \tspanreed serve [--interval S] Local HTTP API on 127.0.0.1:6736\n\
          \tspanreed history [id]         Show recorded rate-limit history (JSONL)\n\
-         \tspanreed capture serve        Dual capture: Grok CLI :18736 + api.x.ai :18737\n\
-         \t                               (honors HTTP(S)_PROXY for upstream egress)\n\
+         \tspanreed capture serve        Launch the ai-relay capture worker (:18736)\n\
+         \t                               (set AI_RELAY_BIN or put `ai-relay` on PATH)\n\
          \t  --watchdog                   Keep capture alive (restart on exit; logs to\n\
          \t                               %%LOCALAPPDATA%%/spanreed/logs/capture.log;\n\
          \t                               Windows: windowless / FreeConsole)\n\
          \tspanreed capture ensure      Start capture+watchdog if ports are down\n\
          \tspanreed capture status      Exit 0 if listening, 1 if DOWN; print log path\n\
-         \tspanreed grok-proxy [--bind HOST:PORT]\n\
-         \t                               Single-listener capture (compat)\n\
          \tspanreed setup               Install CLI, ledger, optional capture service,\n\
          \t                               and wire Grok Build + OpenCode xAI to the proxy\n\
          \t  --yes / -y                   Non-interactive defaults (service off unless --service)\n\
@@ -380,38 +375,14 @@ fn cmd_capture(args: &[String]) -> ExitCode {
                 .position(|a| a == "--grok-cli-bind")
                 .and_then(|i| rest.get(i + 1))
                 .cloned();
-            let xai_bind = rest
+            // `--xai-api-bind` accepted for backward-compat; ai-relay owns upstream routing.
+            let _ = rest
                 .iter()
                 .position(|a| a == "--xai-api-bind")
-                .and_then(|i| rest.get(i + 1))
-                .cloned();
-            let listeners = vec![
-                grok_proxy::ListenerConfig {
-                    bind: grok_bind.unwrap_or_else(|| grok_proxy::DEFAULT_GROK_CLI_BIND.into()),
-                    upstream: grok_proxy::UPSTREAM_GROK_CLI.into(),
-                    label: "grok-cli".into(),
-                },
-                grok_proxy::ListenerConfig {
-                    bind: xai_bind.unwrap_or_else(|| grok_proxy::DEFAULT_XAI_API_BIND.into()),
-                    upstream: grok_proxy::UPSTREAM_XAI_API.into(),
-                    label: "xai-api".into(),
-                },
-            ];
-            capture_log::append(&format!(
-                "capture serve start binds={}/{}",
-                listeners[0].bind, listeners[1].bind
-            ));
-            match grok_proxy::run_capture(&listeners) {
-                Ok(()) => {
-                    capture_log::append("capture serve exit ok");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("capture error: {e}");
-                    capture_log::append(&format!("capture serve error: {e}"));
-                    ExitCode::FAILURE
-                }
-            }
+                .and_then(|i| rest.get(i + 1));
+            let bind = grok_bind.unwrap_or_else(|| setup::DEFAULT_GROK_CLI_BIND.into());
+            capture_log::append(&format!("capture serve exec ai-relay bind={bind}"));
+            exec_ai_relay(&bind)
         }
         Some("ensure") => {
             let dry = args.iter().any(|a| a == "--dry-run");
@@ -432,7 +403,7 @@ fn cmd_capture(args: &[String]) -> ExitCode {
             println!(
                 "capture: {}",
                 if up {
-                    "listening (18736 + 18737)"
+                    "listening (127.0.0.1:18736)"
                 } else {
                     "DOWN — run `spanreed capture ensure`"
                 }
@@ -456,22 +427,80 @@ fn cmd_capture(args: &[String]) -> ExitCode {
     }
 }
 
-fn cmd_grok_proxy(args: &[String]) -> ExitCode {
-    let bind = args
-        .iter()
-        .position(|a| a == "--bind")
-        .and_then(|i| args.get(i + 1))
-        .map(String::as_str);
-    let upstream = args
-        .iter()
-        .position(|a| a == "--upstream")
-        .and_then(|i| args.get(i + 1))
-        .map(String::as_str);
-    match grok_proxy::run(bind, upstream) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("grok-proxy error: {e}");
+/// Resolve the `ai-relay` binary: `AI_RELAY_BIN`, then next to our exe, then PATH.
+fn ai_relay_bin() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("AI_RELAY_BIN") {
+        return std::path::PathBuf::from(p);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in ["ai-relay", "ai-relay.exe"] {
+                let cand = dir.join(name);
+                if cand.exists() {
+                    return cand;
+                }
+            }
+        }
+    }
+    std::path::PathBuf::from("ai-relay")
+}
+
+/// Build the ai-relay capture command: local bind + ledger path spanreed reads.
+/// Accounts are ai-relay's own concern, so spanreed passes no account store.
+fn ai_relay_exec_spec(bind: &str) -> (std::path::PathBuf, Vec<String>) {
+    let bin = ai_relay_bin();
+    let ledger = grok_ledger::ledger_path();
+    let args = vec![
+        "--bind".into(),
+        bind.into(),
+        "--ledger".into(),
+        ledger.to_string_lossy().into_owned(),
+    ];
+    (bin, args)
+}
+
+/// Exec the external `ai-relay` capture worker until it exits.
+fn exec_ai_relay(bind: &str) -> ExitCode {
+    let (bin, args) = ai_relay_exec_spec(bind);
+    match std::process::Command::new(&bin).args(&args).status() {
+        Ok(st) if st.success() => {
+            capture_log::append("capture serve exit ok");
+            ExitCode::SUCCESS
+        }
+        Ok(st) => {
+            let e = format!("ai-relay exited {st}");
+            eprintln!("capture error: {e}");
+            capture_log::append(&format!("capture serve error: {e}"));
             ExitCode::FAILURE
         }
+        Err(e) => {
+            let e = format!(
+                "exec {}: {e} (set AI_RELAY_BIN or install `ai-relay`)",
+                bin.display()
+            );
+            eprintln!("capture error: {e}");
+            capture_log::append(&format!("capture serve error: {e}"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ai_relay_exec_spec_passes_bind_and_ledger() {
+        let (_bin, args) = ai_relay_exec_spec("127.0.0.1:18736");
+        let bind_i = args.iter().position(|a| a == "--bind").expect("--bind");
+        assert_eq!(args[bind_i + 1], "127.0.0.1:18736");
+        let led_i = args.iter().position(|a| a == "--ledger").expect("--ledger");
+        assert!(
+            args[led_i + 1].ends_with("grok-usage.jsonl"),
+            "ledger path: {}",
+            args[led_i + 1]
+        );
+        // Accounts are ai-relay's concern; spanreed must not pass an accounts store.
+        assert!(!args.iter().any(|a| a == "--accounts"));
     }
 }
