@@ -1,6 +1,14 @@
-# spanreed
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <img src="assets/logo-light.png" alt="Spanreed" width="192">
+  </picture>
+</p>
 
-Track AI coding subscription usage from the terminal.
+<h1 align="center">Spanreed</h1>
+
+<p align="center">Track AI coding subscription usage from the terminal.</p>
+
 
 One Rust binary (`spanreed`) reads credentials that your local AI CLIs already
 store, probes each provider’s usage API, and prints:
@@ -48,8 +56,8 @@ GitHub Release musl zips stay headless; use this flake on a desktop.
 
 ```sh
 # stable = last GitHub Release tag (created with the release, not with master)
-nix run github:grok-insider/spanreed/v0.0.5 -- probe
-nix profile install github:grok-insider/spanreed/v0.0.5
+nix run github:grok-insider/spanreed/v0.1.0 -- probe
+nix profile install github:grok-insider/spanreed/v0.1.0
 
 # unreleased integration line
 nix run github:grok-insider/spanreed/dev -- probe
@@ -66,7 +74,7 @@ Flake input + Home Manager:
 
 ```nix
 {
-  inputs.spanreed.url = "github:grok-insider/spanreed/v0.0.5";
+  inputs.spanreed.url = "github:grok-insider/spanreed/v0.1.0";
   # optional: inputs.spanreed.inputs.nixpkgs.follows = "nixpkgs";
 
   # home-manager:
