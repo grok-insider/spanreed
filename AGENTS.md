@@ -248,3 +248,31 @@ the website.
   (`src/share.rs`). Vote = server `user_id`; install id is device-only.
 - Site `/spanreed` is **metrics only** (public summary). Link page for CLI.
 - Workspace notes: `grok-insider/docs/spanreed.md`.
+
+## Cursor Cloud specific instructions
+
+Durable notes for cloud agents. Standard commands live in **Key commands** /
+**Local quality gates** above and in `CONTRIBUTING.md`; this section only records
+non-obvious gotchas.
+
+- **Toolchain must be `stable`, not the VM default.** A transitive dependency
+  (`time 0.3.47`) needs `edition2024`, which requires stable Rust ≥ 1.85. The
+  base VM ships an older pinned default; the startup update script installs and
+  defaults `stable` (with `rustfmt` + `clippy`) and runs `cargo fetch --locked`,
+  so `cargo build/clippy/test` work out of the box. If `cargo` reports
+  `feature 'edition2024' is required`, run `rustup default stable`.
+- **Tests: keep `SPANREED_OFFLINE=1`.** Without it the pricing layer tries to
+  fetch LiteLLM prices over the network (`tests/cli.rs` already sets it, but the
+  in-module tests rely on the env var when run ad hoc).
+- **No real provider credentials in the cloud VM.** `spanreed probe` prints
+  "No providers detected". To exercise the detect → probe → render pipeline, set
+  an env-key provider such as `ZAI_API_KEY=<anything>` (see `src/providers/zai.rs`);
+  detection turns on and a live probe runs (returns a red error badge with a fake
+  key, which is the expected happy path for verifying the pipeline).
+- **Local HTTP API:** `spanreed serve [--interval S]` listens on
+  `127.0.0.1:6736` with `/health` and `/usage`. The first request blocks until
+  the initial background probe completes, so allow a few seconds before curling.
+- **`tray` feature needs system libs** (`libgtk-3-dev`, `libxdo-dev`,
+  `libayatana-appindicator3-dev`, `pkg-config`) that are **not** installed here.
+  The default CLI build/test/lint does not need them; only add them if you build
+  or `cargo check --features tray`.
