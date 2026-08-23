@@ -610,7 +610,7 @@ dependencies = [
 [[package]]
 name = "fabrials-accounts"
 version = "0.1.1"
-source = "git+https://github.com/grok-insider/fabrials-accounts?tag=v0.1.1#a485613a8e777842679e0db15a6e7ae910a44663"
+source = "git+https://github.com/grok-insider/fabrials-accounts?tag=v0.1.1#02f26bea7ad5f11ab47632798c68b396660915ac"
 dependencies = [
  "serde",
  "serde_json",
@@ -619,7 +619,7 @@ dependencies = [
 [[package]]
 name = "fabrials-metrics"
 version = "0.1.0"
-source = "git+https://github.com/grok-insider/fabrials-metrics?tag=v0.1.0#4d76a0e7c159a71e19f36a04444fafd87c4aded8"
+source = "git+https://github.com/grok-insider/fabrials-metrics?tag=v0.1.0#df7631223d96b2b9a1fa456faf4b700a3b921739"
 dependencies = [
  "fabrials-model",
  "serde",
@@ -629,7 +629,7 @@ dependencies = [
 [[package]]
 name = "fabrials-model"
 version = "0.1.0"
-source = "git+https://github.com/grok-insider/fabrials-model?tag=v0.1.0#58e3f35fc2430d5939f3a1000b1d0dc8c51dfbbc"
+source = "git+https://github.com/grok-insider/fabrials-model?tag=v0.1.0#c913f64b2aec645da4bc7346f016441d2017cbae"
 dependencies = [
  "serde",
  "serde_json",
@@ -638,7 +638,7 @@ dependencies = [
 [[package]]
 name = "fabrials-oauth-grok"
 version = "0.1.1"
-source = "git+https://github.com/grok-insider/fabrials-oauth-grok?tag=v0.1.1#6812b0e61f81b8600225cefdd7a62df7e4a8f820"
+source = "git+https://github.com/grok-insider/fabrials-oauth-grok?tag=v0.1.1#fce1e7455f0c40ffca0da4db029f912820bf26d1"
 dependencies = [
  "base64",
  "serde_json",
@@ -647,7 +647,7 @@ dependencies = [
 [[package]]
 name = "fabrials-share"
 version = "0.1.0"
-source = "git+https://github.com/grok-insider/fabrials-share?tag=v0.1.0#632f58a7972947fd80b0c7abb9eb16c3f948cb38"
+source = "git+https://github.com/grok-insider/fabrials-share?tag=v0.1.0#6cf1c67d6a4717075cac4bbd0c5d92f0e319cb20"
 dependencies = [
  "fabrials-model",
  "serde_json",
