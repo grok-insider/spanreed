@@ -53,13 +53,6 @@
 
           cargoLock = {
             lockFile = ./Cargo.lock;
-            outputHashes = {
-              "fabrials-model-0.1.0" = "sha256-/DktTuES73H417vWdZxEsLjR4+F3efpPn11f0xrLAek=";
-              "fabrials-metrics-0.1.0" = "sha256-SukABfgKzhLXzGm7vpjPwv4hYC0SxLZF3/bfmFANOnQ=";
-              "fabrials-accounts-0.1.1" = "sha256-ZhMLG1jwjD6qA6qDpz7vPNlPEJrxYOAueVaCGkN+GGU=";
-              "fabrials-oauth-grok-0.1.1" = "sha256-WkljuchW7wMGyceDwWBvoykaowNiHvyJ8kAAba09/ts=";
-              "fabrials-share-0.1.0" = "sha256-By/emKx7jT9fUl0fg1muvdbRLk9rXVKn0E/RJyf9pnM=";
-            };
           };
 
           # GNU Linux desktop build: SNI tray (GTK3 + Ayatana). musl GH

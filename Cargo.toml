@@ -21,11 +21,11 @@ default = []
 tray = ["dep:tray-icon", "dep:tao", "dep:image"]
 
 [dependencies]
-fabrials-model = { git = "https://github.com/grok-insider/fabrials-model", tag = "v0.1.0" }
-fabrials-metrics = { git = "https://github.com/grok-insider/fabrials-metrics", tag = "v0.1.0" }
-fabrials-accounts = { git = "https://github.com/grok-insider/fabrials-accounts", tag = "v0.1.1" }
-fabrials-oauth-grok = { git = "https://github.com/grok-insider/fabrials-oauth-grok", tag = "v0.1.1" }
-fabrials-share = { git = "https://github.com/grok-insider/fabrials-share", tag = "v0.1.0" }
+fabrials-model = "0.1.0"
+fabrials-metrics = "0.1.0"
+fabrials-accounts = "0.1.1"
+fabrials-oauth-grok = "0.1.1"
+fabrials-share = "0.1.0"
 reqwest = { version = "0.12", features = ["blocking", "json", "socks", "rustls-tls"], default-features = false }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -55,7 +55,4 @@ libc = "0.2"
 opt-level = 2
 strip = true
 
-# Nested crate deps (`fabrials-metrics` → `fabrials-model`) declare crates.io.
-# Until those names are published, patch them to the same git tags this binary uses.
-[patch.crates-io]
-fabrials-model = { git = "https://github.com/grok-insider/fabrials-model", tag = "v0.1.0" }
+
