@@ -109,7 +109,7 @@ mod platform {
         let login = login_service_path();
         let service_body = format!(
             "[Unit]\n\
-             Description=spanreed daily share to grokinsider.net\n\
+             Description=spanreed daily share to fabrials.com\n\
              \n\
              [Service]\n\
              Type=oneshot\n\
@@ -369,7 +369,7 @@ mod platform {
             r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>spanreed daily share to grokinsider.net (evening + login catch-up)</Description>
+    <Description>spanreed daily share to fabrials.com (evening + login catch-up)</Description>
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>

@@ -1,5 +1,5 @@
 //! Opt-in **authenticated** share of aggregated usage snapshots to
-//! api.grokinsider.net (Grok Insider account via Sign in with X).
+//! fabrials.com (Fabrials account via Sign in with X).
 //!
 //! Contributions are tied to a stable `user_id` on the server (not the raw
 //! install UUID). They feed a public pool used to compare how much value
@@ -20,7 +20,7 @@ use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::probe;
 use crate::util;
 
-const DEFAULT_API_BASE: &str = "https://api.grokinsider.net";
+const DEFAULT_API_BASE: &str = "https://fabrials.com/api/spanreed";
 const ENV_API_BASE: &str = "SPANREED_API_BASE";
 const ENV_OFFLINE: &str = "SPANREED_OFFLINE";
 const LAST_SHARE_DAY_FILE: &str = "last_share_day";
@@ -266,7 +266,7 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
              Requires a Grok Insider account (Sign in with X) linked once via:\n\
                spanreed share login\n\n\
              Sends aggregated provider+plan lines to the public community pool\n\
-             on grokinsider.net. Server identity is your account (not install id).\n\n\
+             on fabrials.com. Server identity is your account (not install id).\n\n\
              At most one local send per day (product TZ {tz}) unless --force.\n\
              Same-day re-send upserts on the server.\n\n\
              Subcommands: login | logout | status\n\

@@ -21,18 +21,18 @@ Linux-first (Hyprland/Wayland); the same code also builds for macOS and Windows.
 
 ## Install
 
-### From grokinsider.net (one command)
+### From fabrials.com (one command)
 
-Canonical install is on **[grokinsider.net](https://grokinsider.net)** — not the
+Canonical install is on **[fabrials.com](https://fabrials.com)** — not the
 GitHub Release page. Releases only publish platform binaries + checksums; the
 website serves the bootstrap scripts.
 
 ```sh
 # Linux / macOS
-curl -fsSL https://grokinsider.net/install/spanreed.sh | sh
+curl -fsSL https://fabrials.com/install/spanreed.sh | sh
 
 # Windows (PowerShell)
-irm https://grokinsider.net/install/spanreed.ps1 | iex
+irm https://fabrials.com/install/spanreed.ps1 | iex
 ```
 
 The installer downloads the binary from GitHub Releases, then runs

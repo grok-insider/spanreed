@@ -123,9 +123,8 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             "Start capture proxy at login (user service)?",
             flags.service,
             Some(format!(
-                "listens {} + {}",
-                grok_proxy::DEFAULT_GROK_CLI_BIND,
-                grok_proxy::DEFAULT_XAI_API_BIND
+                "fabric {}  /v1 grok  /xai api.x.ai  /acct/ID",
+                grok_proxy::DEFAULT_GROK_CLI_BIND
             )),
         );
         let do_tray = prompt_yn(
@@ -138,7 +137,7 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             ),
         );
         let do_share_schedule = prompt_yn(
-            "Enable daily plan share to grokinsider.net (once per day, catch-up when PC is on)?",
+            "Enable daily plan share to fabrials.com (once per day, catch-up when PC is on)?",
             true,
             Some(
                 "requires `spanreed share login` once (Sign in with X); \
@@ -523,10 +522,12 @@ fn print_status() -> ExitCode {
         wire_opencode::status_line(&det, &state)
     );
     println!(
-        "\n  Capture targets:\n    Grok CLI  http://{} → {}\n    api.x.ai  http://{} → {}",
+        "\n  Capture fabric:   http://{}\n\
+         \t/v1        → {}  (SuperGrok inject)\n\
+         \t/xai/v1    → {}  (client token)\n\
+         \t/acct/ID/… → same, pinned account",
         grok_proxy::DEFAULT_GROK_CLI_BIND,
         grok_proxy::UPSTREAM_GROK_CLI,
-        grok_proxy::DEFAULT_XAI_API_BIND,
         grok_proxy::UPSTREAM_XAI_API,
     );
 

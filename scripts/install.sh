@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 # Bootstrap spanreed on Linux/macOS, then run interactive setup.
 #
-# Public one-liner (canonical — served by grokinsider.net, not GitHub Releases):
-#   curl -fsSL https://grokinsider.net/install/spanreed.sh | sh
+# Public one-liner (canonical — served by fabrials.com, not GitHub Releases):
+#   curl -fsSL https://fabrials.com/install/spanreed.sh | sh
 #
 # Local / from a checkout:
 #   ./scripts/install.sh --from-path ./target/release/spanreed

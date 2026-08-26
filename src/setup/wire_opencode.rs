@@ -20,11 +20,7 @@ pub fn is_wired_to_capture(det: &Detection, state: &SetupState) -> bool {
         return state.wired.opencode_xai.is_some();
     };
     match read_xai_base_url(&path) {
-        Some(url) => {
-            url == OPENCODE_XAI_CAPTURE_BASE_URL
-                || url.contains("127.0.0.1:18736/xai")
-                || url.contains("127.0.0.1:18737")
-        }
+        Some(url) => is_canonical_xai_capture_url(&url),
         None => false,
     }
 }
@@ -41,8 +37,11 @@ pub fn status_line(det: &Detection, state: &SetupState) -> String {
         return "no config".into();
     };
     match read_xai_base_url(&path) {
-        Some(url) if url == OPENCODE_XAI_CAPTURE_BASE_URL => {
+        Some(url) if is_canonical_xai_capture_url(&url) => {
             format!("wired → {url}")
+        }
+        Some(url) if url.contains("127.0.0.1:18737") => {
+            format!("legacy :18737 ({url}) — rewire to {OPENCODE_XAI_CAPTURE_BASE_URL}")
         }
         Some(url) => format!("baseURL={url} ({})", path.display()),
         None if path.exists() => format!("no xai baseURL ({})", path.display()),
@@ -191,6 +190,10 @@ pub fn unwire(dry_run: bool, state: &mut SetupState) -> Result<String, String> {
     })
 }
 
+fn is_canonical_xai_capture_url(url: &str) -> bool {
+    url == OPENCODE_XAI_CAPTURE_BASE_URL || url.contains("127.0.0.1:18736/xai")
+}
+
 pub fn read_xai_base_url(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let v: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
@@ -265,5 +268,15 @@ mod tests {
         );
         assert!(v.pointer("/provider/xai/models/grok-4").is_some());
         assert_eq!(v["plugin"][0], "foo");
+    }
+
+    #[test]
+    fn canonical_url_is_fabric_xai_not_legacy_port() {
+        assert!(is_canonical_xai_capture_url(OPENCODE_XAI_CAPTURE_BASE_URL));
+        assert!(is_canonical_xai_capture_url(
+            "http://127.0.0.1:18736/xai/v1/"
+        ));
+        assert!(!is_canonical_xai_capture_url("http://127.0.0.1:18737/v1"));
+        assert!(!is_canonical_xai_capture_url("https://api.x.ai/v1"));
     }
 }

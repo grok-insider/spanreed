@@ -157,7 +157,7 @@ fn print_help() {
          \t                               (writes to stdout, or to [out]; used to\n\
          \t                               refresh the embedded src/pricing-data.json)\n\
          \tspanreed share               Upload plan/quota metrics (requires X login)\n\
-         \tspanreed share login         Link CLI via device code on grokinsider.net\n\
+         \tspanreed share login         Link CLI via device code on fabrials.com\n\
          \tspanreed share logout|status Session management\n\
          \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\
@@ -478,9 +478,7 @@ fn ai_relay_bin() -> std::path::PathBuf {
 fn ai_relay_exec_spec(bind: &str) -> (std::path::PathBuf, Vec<String>, Vec<(String, String)>) {
     let bin = ai_relay_bin();
     let ledger = crate::grok_ledger::ledger_path();
-    let accounts = crate::app::data_dir()
-        .join("accounts")
-        .join("index.json");
+    let accounts = crate::app::data_dir().join("accounts").join("index.json");
     let args = vec![
         "--bind".into(),
         bind.into(),
@@ -503,8 +501,7 @@ fn exec_ai_relay(bind: &str) -> ExitCode {
     for (k, v) in env {
         cmd.env(k, v);
     }
-    match cmd.status()
-    {
+    match cmd.status() {
         Ok(st) if st.success() => {
             capture_log::append("capture serve exit ok");
             ExitCode::SUCCESS
@@ -558,20 +555,14 @@ mod capture_exec_tests {
             .find(|w| w[0] == "--ledger")
             .map(|w| w[1].as_str())
             .unwrap();
-        assert!(
-            ledger.ends_with("grok-usage.jsonl"),
-            "ledger={ledger}"
-        );
+        assert!(ledger.ends_with("grok-usage.jsonl"), "ledger={ledger}");
         assert!(ledger.contains("spanreed"), "ledger={ledger}");
         let accounts = args
             .windows(2)
             .find(|w| w[0] == "--accounts")
             .map(|w| w[1].as_str())
             .unwrap();
-        assert!(
-            accounts.ends_with("index.json"),
-            "accounts={accounts}"
-        );
+        assert!(accounts.ends_with("index.json"), "accounts={accounts}");
         assert!(accounts.contains("accounts"), "accounts={accounts}");
         assert_eq!(env[0].0, "AI_RELAY_ACCOUNTS");
         assert_eq!(env[0].1, accounts);

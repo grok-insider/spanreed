@@ -1,7 +1,7 @@
 # Bootstrap spanreed on Windows, then run interactive setup.
 #
-# Public one-liner (canonical — served by grokinsider.net, not GitHub Releases):
-#   irm https://grokinsider.net/install/spanreed.ps1 | iex
+# Public one-liner (canonical — served by fabrials.com, not GitHub Releases):
+#   irm https://fabrials.com/install/spanreed.ps1 | iex
 #
 # Local / from a checkout:
 #   .\scripts\install.ps1 -FromPath .\target\release\spanreed.exe

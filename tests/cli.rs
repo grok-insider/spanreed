@@ -170,6 +170,10 @@ fn share_help_documents_auth_subcommands() {
         stdout.contains("SPANREED_API_BASE") || stdout.contains("authenticated"),
         "share help should mention auth/API base\n{stdout}"
     );
+    assert!(
+        stdout.contains("fabrials.com"),
+        "share help should target fabrials.com\n{stdout}"
+    );
 }
 
 #[test]
@@ -223,6 +227,10 @@ fn setup_status_exits_zero_in_isolated_home() {
     assert!(
         stdout.contains("Tray autostart:"),
         "missing tray autostart line\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Capture fabric:") && stdout.contains("/xai/v1"),
+        "missing fabric routes\n{stdout}"
     );
     // Prefer exit 0 in a fully isolated profile. On Windows the `dirs` crate
     // uses known folders (not APPDATA env), so host Grok/OpenCode wire can
