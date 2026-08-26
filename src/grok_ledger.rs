@@ -14,8 +14,6 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use serde::Deserialize;
-
 use crate::model::{BarChartPoint, MetricKind, MetricLine};
 use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;

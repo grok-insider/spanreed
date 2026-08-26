@@ -205,7 +205,7 @@ fn fmt_renews(iso: Option<&str>, interval: Option<&str>, cancel: Option<bool>) -
     };
     let day = crate::util::parse_iso_dt(iso)
         .and_then(|t| {
-            let fmt = time::format_description::parse(pat).ok()?;
+            let fmt = time::format_description::parse_borrowed::<2>(pat).ok()?;
             t.format(&fmt).ok()
         })
         .unwrap_or_else(|| iso.chars().take(10).collect());

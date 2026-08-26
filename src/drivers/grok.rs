@@ -135,18 +135,6 @@ pub fn resolve_account_id(alias: Option<&str>) -> Option<String> {
     }
 }
 
-/// Bearer for fabric inject. `alias` None → active grok account (autosteer).
-pub fn resolve_token(alias: Option<&str>) -> Option<String> {
-    if alias.is_none() {
-        maybe_autosteer();
-    }
-    let acc = match alias {
-        Some(a) => accounts::resolve(a),
-        None => accounts::active("grok"),
-    }?;
-    ensure_token(&acc.alias)
-}
-
 pub fn probe_accounts() -> Vec<ProviderOutput> {
     let list = accounts::list_provider("grok");
     if list.is_empty() {
