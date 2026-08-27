@@ -352,6 +352,10 @@ fn save_doc(alias: &str, doc: &serde_json::Value) {
     }
 }
 
+pub fn token_for_alias(alias: &str) -> Option<String> {
+    ensure_token(alias)
+}
+
 fn ensure_token(alias: &str) -> Option<String> {
     let mut doc = load_doc(alias)?;
     if !doc.is_object() {

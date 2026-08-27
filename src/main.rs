@@ -48,6 +48,7 @@ mod share;
 mod share_economics;
 mod share_schedule;
 mod share_session;
+mod sync;
 mod tray_format;
 mod usage_stats;
 mod util;
@@ -100,6 +101,7 @@ fn main() -> ExitCode {
         "grok-proxy" => cmd_grok_proxy(rest),
         "setup" => setup::cmd(rest),
         "share" => share::cmd(rest),
+        "sync" => crate::sync::cmd(rest),
         "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),
         "self-update" => self_update::cmd(rest),
@@ -159,6 +161,7 @@ fn print_help() {
          \tspanreed share               Upload plan/quota metrics (requires X login)\n\
          \tspanreed share login         Link CLI via device code on fabrials.com\n\
          \tspanreed share logout|status Session management\n\
+         \tspanreed sync                Push/pull SuperGrok hops to ai.fabrials.com\n\
          \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\
          \t                               evening timer + login/missed-run catch-up\n\
