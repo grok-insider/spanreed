@@ -835,11 +835,13 @@ pub fn pick_autosteer(
     now_ms: i64,
 ) -> Option<&accounts::Account> {
     fabrials_accounts::pick_autosteer(accounts, exhausted_pct, now_ms, |a| {
-        a.plan_slug
-            .as_deref()
-            .map(fabrials_accounts::grok_plan_rank)
-            .or_else(|| a.plan_label.as_deref().map(|d| classify_plan(d).1))
-            .unwrap_or(0)
+        let slug = a.plan_slug.as_deref().or_else(|| {
+            a.plan_label
+                .as_deref()
+                .map(|d| classify_plan(d).0)
+                .filter(|s| !s.is_empty())
+        });
+        slug.map(fabrials_accounts::grok_burn_rank).unwrap_or(0)
     })
 }
 
@@ -916,6 +918,18 @@ mod tests {
         ];
         let pick = pick_autosteer(&list, 100.0, now).unwrap();
         assert_eq!(pick.alias, "plus");
+    }
+
+    #[test]
+    fn autosteer_burns_premium_plus_before_live_heavy() {
+        let now = 1_700_000_000_000;
+        let list = vec![
+            acc("heavy-2", "heavy", 3.0, Some(80.0), now),
+            acc("premium-plus-1", "premium-plus", 0.0, Some(80.0), now),
+            acc("heavy-1", "heavy", 100.0, Some(80.0), now),
+        ];
+        let pick = pick_autosteer(&list, 100.0, now).unwrap();
+        assert_eq!(pick.alias, "premium-plus-1");
     }
 
     #[test]
