@@ -801,15 +801,8 @@ fn maybe_autosteer() {
     let Some(active) = list.iter().find(|a| a.active).cloned() else {
         return;
     };
-    refresh_snapshot(&active);
-    let active = accounts::get(&active.id).unwrap_or(active);
-    if active.used_pct.unwrap_or(0.0) < exhausted {
-        return;
-    }
     for a in &list {
-        if a.id != active.id {
-            refresh_snapshot(a);
-        }
+        refresh_snapshot(a);
     }
     let fresh = accounts::list_provider("grok");
     let Some(pick) = pick_autosteer(&fresh, exhausted, util::now_ms()) else {
@@ -834,7 +827,7 @@ pub fn pick_autosteer(
     exhausted_pct: f64,
     now_ms: i64,
 ) -> Option<&accounts::Account> {
-    fabrials_accounts::pick_autosteer(accounts, exhausted_pct, now_ms, |a| {
+    fabrials_accounts::pick_deadline_autosteer(accounts, exhausted_pct, now_ms, |a| {
         let slug = a.plan_slug.as_deref().or_else(|| {
             a.plan_label
                 .as_deref()
@@ -930,6 +923,17 @@ mod tests {
         ];
         let pick = pick_autosteer(&list, 100.0, now).unwrap();
         assert_eq!(pick.alias, "premium-plus-1");
+    }
+
+    #[test]
+    fn autosteer_picks_sooner_reset_over_smaller_plan() {
+        let now = 1_700_000_000_000;
+        let list = vec![
+            acc("premium-plus-1", "premium-plus", 0.0, Some(120.0), now),
+            acc("heavy-2", "heavy", 3.0, Some(48.0), now),
+        ];
+        let pick = pick_autosteer(&list, 100.0, now).unwrap();
+        assert_eq!(pick.alias, "heavy-2");
     }
 
     #[test]
