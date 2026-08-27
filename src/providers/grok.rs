@@ -239,6 +239,11 @@ fn load_auth() -> Result<AuthState, String> {
     }
 }
 
+/// Access token for the first usable SuperGrok CLI entry.
+pub fn current_access_token() -> Option<String> {
+    load_auth().ok().map(|s| s.token)
+}
+
 fn units(obj: Option<&serde_json::Value>) -> Option<f64> {
     obj?.get("val")?.as_f64()
 }

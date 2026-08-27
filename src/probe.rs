@@ -21,6 +21,7 @@ pub fn probe_one(id: &str) -> Option<ProviderOutput> {
     if let Some(o) = &out {
         crate::pool_baseline::note_from_output(o);
         crate::epoch::note_jumps_from_outputs(std::slice::from_ref(o));
+        crate::sync::after_probe();
     }
     out
 }
@@ -45,5 +46,6 @@ where
         crate::pool_baseline::note_from_output(o);
     }
     crate::epoch::note_jumps_from_outputs(&outs);
+    crate::sync::after_probe();
     outs
 }

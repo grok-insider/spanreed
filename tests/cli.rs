@@ -124,6 +124,7 @@ fn help_lists_subcommands() {
         "setup",
         "auth",
         "share",
+        "sync",
         "self-update",
         "tray",
     ] {

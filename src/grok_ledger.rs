@@ -104,6 +104,34 @@ pub fn ledger_path() -> PathBuf {
     crate::app::data_dir().join("grok-usage.jsonl")
 }
 
+/// Append one usage record. Skips duplicate `request_id`.
+pub fn append(record: &UsageRecord) -> Result<(), String> {
+    let path = ledger_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir ledger dir: {e}"))?;
+    }
+    if let Some(rid) = record.request_id.as_deref() {
+        if !rid.is_empty() {
+            let existing = read_window(util::now_ms());
+            if existing
+                .iter()
+                .any(|r| r.request_id.as_deref() == Some(rid))
+            {
+                return Ok(());
+            }
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("open ledger: {e}"))?;
+    use std::io::Write;
+    let line = serde_json::to_string(record).map_err(|e| e.to_string())?;
+    writeln!(f, "{line}").map_err(|e| format!("write ledger: {e}"))?;
+    Ok(())
+}
+
 /// Read all ledger records with `ts_ms` in `[cutoff, now]`.
 pub fn read_window(now_ms: i64) -> Vec<UsageRecord> {
     let cutoff = now_ms - WINDOW_DAYS * DAY_MS;
