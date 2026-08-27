@@ -801,15 +801,8 @@ fn maybe_autosteer() {
     let Some(active) = list.iter().find(|a| a.active).cloned() else {
         return;
     };
-    refresh_snapshot(&active);
-    let active = accounts::get(&active.id).unwrap_or(active);
-    if active.used_pct.unwrap_or(0.0) < exhausted {
-        return;
-    }
     for a in &list {
-        if a.id != active.id {
-            refresh_snapshot(a);
-        }
+        refresh_snapshot(a);
     }
     let fresh = accounts::list_provider("grok");
     let Some(pick) = pick_autosteer(&fresh, exhausted, util::now_ms()) else {
@@ -834,13 +827,38 @@ pub fn pick_autosteer(
     exhausted_pct: f64,
     now_ms: i64,
 ) -> Option<&accounts::Account> {
-    fabrials_accounts::pick_autosteer(accounts, exhausted_pct, now_ms, |a| {
-        a.plan_slug
-            .as_deref()
-            .map(fabrials_accounts::grok_plan_rank)
-            .or_else(|| a.plan_label.as_deref().map(|d| classify_plan(d).1))
-            .unwrap_or(0)
-    })
+    // crates.io `fabrials-accounts` 0.1.1 has plan-first `pick_autosteer` only.
+    // Deadline-first lives here until that crate is published with the helpers.
+    let mut best: Option<(f64, &accounts::Account)> = None;
+    for a in accounts {
+        let used = a.used_pct.unwrap_or(0.0);
+        if used >= exhausted_pct {
+            continue;
+        }
+        let slug = a.plan_slug.as_deref().or_else(|| {
+            a.plan_label
+                .as_deref()
+                .map(|d| classify_plan(d).0)
+                .filter(|s| !s.is_empty())
+        });
+        let rank = slug.map(grok_burn_rank).unwrap_or(0);
+        let hours = fabrials_accounts::hours_to_reset(a.resets_at.as_deref(), now_ms);
+        let score = deadline_first_score(used, hours, rank);
+        match &best {
+            Some((s, _)) if *s >= score => {}
+            _ => best = Some((score, a)),
+        }
+    }
+    best.map(|(_, a)| a)
+}
+
+fn grok_burn_rank(slug: &str) -> u8 {
+    5u8.saturating_sub(fabrials_accounts::grok_plan_rank(slug))
+}
+
+fn deadline_first_score(used: f64, hours: Option<f64>, rank: u8) -> f64 {
+    let h = hours.unwrap_or(0.0);
+    1e12 / h.max(0.01) + 10_000.0 * f64::from(rank) + 100.0 * used
 }
 
 fn urlenc(s: &str) -> String {
@@ -916,6 +934,29 @@ mod tests {
         ];
         let pick = pick_autosteer(&list, 100.0, now).unwrap();
         assert_eq!(pick.alias, "plus");
+    }
+
+    #[test]
+    fn autosteer_burns_premium_plus_before_live_heavy() {
+        let now = 1_700_000_000_000;
+        let list = vec![
+            acc("heavy-2", "heavy", 3.0, Some(80.0), now),
+            acc("premium-plus-1", "premium-plus", 0.0, Some(80.0), now),
+            acc("heavy-1", "heavy", 100.0, Some(80.0), now),
+        ];
+        let pick = pick_autosteer(&list, 100.0, now).unwrap();
+        assert_eq!(pick.alias, "premium-plus-1");
+    }
+
+    #[test]
+    fn autosteer_picks_sooner_reset_over_smaller_plan() {
+        let now = 1_700_000_000_000;
+        let list = vec![
+            acc("premium-plus-1", "premium-plus", 0.0, Some(120.0), now),
+            acc("heavy-2", "heavy", 3.0, Some(48.0), now),
+        ];
+        let pick = pick_autosteer(&list, 100.0, now).unwrap();
+        assert_eq!(pick.alias, "heavy-2");
     }
 
     #[test]
