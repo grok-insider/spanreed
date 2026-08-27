@@ -827,15 +827,38 @@ pub fn pick_autosteer(
     exhausted_pct: f64,
     now_ms: i64,
 ) -> Option<&accounts::Account> {
-    fabrials_accounts::pick_deadline_autosteer(accounts, exhausted_pct, now_ms, |a| {
+    // crates.io `fabrials-accounts` 0.1.1 has plan-first `pick_autosteer` only.
+    // Deadline-first lives here until that crate is published with the helpers.
+    let mut best: Option<(f64, &accounts::Account)> = None;
+    for a in accounts {
+        let used = a.used_pct.unwrap_or(0.0);
+        if used >= exhausted_pct {
+            continue;
+        }
         let slug = a.plan_slug.as_deref().or_else(|| {
             a.plan_label
                 .as_deref()
                 .map(|d| classify_plan(d).0)
                 .filter(|s| !s.is_empty())
         });
-        slug.map(fabrials_accounts::grok_burn_rank).unwrap_or(0)
-    })
+        let rank = slug.map(grok_burn_rank).unwrap_or(0);
+        let hours = fabrials_accounts::hours_to_reset(a.resets_at.as_deref(), now_ms);
+        let score = deadline_first_score(used, hours, rank);
+        match &best {
+            Some((s, _)) if *s >= score => {}
+            _ => best = Some((score, a)),
+        }
+    }
+    best.map(|(_, a)| a)
+}
+
+fn grok_burn_rank(slug: &str) -> u8 {
+    5u8.saturating_sub(fabrials_accounts::grok_plan_rank(slug))
+}
+
+fn deadline_first_score(used: f64, hours: Option<f64>, rank: u8) -> f64 {
+    let h = hours.unwrap_or(0.0);
+    1e12 / h.max(0.01) + 10_000.0 * f64::from(rank) + 100.0 * used
 }
 
 fn urlenc(s: &str) -> String {
