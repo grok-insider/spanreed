@@ -235,7 +235,7 @@ wall-clock pace. Set `SPANREED_OFFLINE=1` to skip remote price-table refresh.
 
 | Id | Credential source (typical) |
 |----|-----------------------------|
-| `codex` | `~/.codex` / `$CODEX_HOME` |
+| `codex` | `~/.codex` / `$CODEX_HOME` (ChatGPT plan: 5h + Weekly + Reviews) |
 | `grok` | `~/.grok/auth.json` (+ optional ai-relay capture) |
 | `copilot` | opt-in via `spanreed auth copilot` |
 | `cursor` | Cursor state DB under `~/.config/Cursor/` |

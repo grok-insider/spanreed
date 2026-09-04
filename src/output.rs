@@ -113,7 +113,7 @@ fn provider_bar_pct(out: &ProviderOutput) -> Option<f64> {
             _ => None,
         })
     };
-    let session = labeled("Session");
+    let session = labeled("5h").or_else(|| labeled("Session"));
     let weekly = labeled("Weekly");
     match (session, weekly) {
         (Some(s), Some(w)) if w >= WEEKLY_ESCALATE_PCT && w > s => Some(w),
