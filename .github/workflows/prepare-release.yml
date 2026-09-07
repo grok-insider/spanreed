@@ -1,0 +1,63 @@
+name: Prepare release
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      bump:
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      force:
+        type: boolean
+        default: false
+      dry_run:
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      bump:
+        type: string
+        default: patch
+      force:
+        type: boolean
+        default: false
+      dry_run:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure bot identity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Prepare release PR and dispatch its checks
+        env:
+          BUMP: ${{ inputs.bump || 'patch' }}
+          FORCE: ${{ inputs.force }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(prepare --bump "$BUMP")
+          if [ "$FORCE" = true ]; then args+=(--force); fi
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          python3 scripts/release.py "${args[@]}"

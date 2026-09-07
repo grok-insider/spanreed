@@ -9,10 +9,20 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: Bot PR to validate (optional for human dispatch)
+        type: string
+      expected_sha:
+        description: Exact bot PR commit
+        type: string
       qualify_macos:
         description: Opt in to deferred macOS qualification with a hardware contributor
         type: boolean
         default: false
+
+permissions:
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.pull_request.number || github.sha }}
@@ -24,10 +34,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate dispatched PR revision
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        shell: bash
+        run: |
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          python scripts/release.py validate-pr --pr "$PR_NUMBER" --sha "$EXPECTED_SHA"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - run: python3 -m unittest discover -s scripts/tests -v
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       # SPANREED_OFFLINE keeps the pricing layer from fetching during tests.
@@ -55,6 +79,19 @@ jobs:
         os: ${{ fromJSON(inputs.qualify_macos && '["windows-latest","macos-latest"]' || '["windows-latest"]') }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate dispatched PR revision
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        shell: bash
+        run: |
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          python scripts/release.py validate-pr --pr "$PR_NUMBER" --sha "$EXPECTED_SHA"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets

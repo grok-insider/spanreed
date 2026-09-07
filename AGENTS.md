@@ -233,12 +233,14 @@ SPANREED_OFFLINE=1 cargo test --all
 
 - **One merge to `master` = one release.** Do not land bare `dev` on `master`.
 - **Patch (Z):** push to `dev` (or workflow_dispatch) opens `release-plz-vX.Y.Z`
-  **from `dev`** (bump + AI changelog). Merge that PR → tag `vX.Y.Z` + GH Release
+  **from `dev`** (bump + deterministic changelog). Merge that PR → tag `vX.Y.Z` + GH Release
   + binaries.
 - **Minor / major (Y / X):** Actions → **Manual Version Bump** from `dev`
-  (`release-plz-manual-v…` → `master`).
+  (`release-plz-manual-v…` → `master`). Both flows use `scripts/release.py`.
 - Do **not** hand-edit `CHANGELOG.md` outside a Release PR.
-- No crates.io (`publish = false` only in `release-plz.toml`).
+- No crates.io publication. Release orchestration uses `gh` with `GITHUB_TOKEN`; no personal token fallback.
+- Publish from the exact release merge SHA on `master`, after all four builds pass. Keep the release draft until all eight assets and checksums verify.
+- Operations and recovery: `docs/release-automation.md`.
 
 ### Distribution (install vs binaries vs share)
 

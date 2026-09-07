@@ -10,6 +10,17 @@ on:
     branches: [master]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Bot PR to validate (optional for human dispatch)
+        type: string
+      expected_sha:
+        description: Exact bot PR commit
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: nix-${{ github.workflow }}-${{ github.ref }}
@@ -21,6 +32,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate dispatched PR revision
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        shell: bash
+        run: |
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          python scripts/release.py validate-pr --pr "$PR_NUMBER" --sha "$EXPECTED_SHA"
       - uses: cachix/install-nix-action@v31
         with:
           extra_nix_config: |
