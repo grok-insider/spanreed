@@ -1,35 +1,29 @@
-# CLI Model A: only a release branch may land on `master` (one merge = one
-# tag). Integration stays on `dev`. Add job `only release into master` to
-# master's required checks.
-#
-# Allowed heads:
-#   - release-plz-* / release-plz-manual-*
-#   - release-please--* / release-please-manual-*
-
 name: guard master
-
 on:
   pull_request:
     branches: [master]
-
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      expected_sha:
+        required: true
+        type: string
+permissions:
+  contents: read
+  pull-requests: read
 jobs:
   only-release-into-master:
     name: only release into master
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - name: Verify PR head is a release branch
+      - uses: actions/checkout@v4
+      - name: Validate release PR and exact head
         env:
-          HEAD_REF: ${{ github.head_ref }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha || github.event.pull_request.head.sha }}
         run: |
-          case "$HEAD_REF" in
-            release-plz-*|release-plz-manual-*|release-please--*|release-please-manual-*)
-              echo "OK: PR into master comes from '$HEAD_REF'."
-              ;;
-            *)
-              echo "::error::PRs into 'master' must be a Release PR (got '$HEAD_REF')."
-              echo "Land work on 'dev'. The bot opens release-plz-v* from dev;"
-              echo "merge that to publish tag + GitHub Release."
-              echo "Do not merge a bare 'dev' -> 'master' PR."
-              exit 1
-              ;;
-          esac
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then test "$GITHUB_SHA" = "$EXPECTED_SHA"; fi
+          python3 scripts/release.py validate-pr --pr "$PR_NUMBER" --sha "$EXPECTED_SHA" --release-only

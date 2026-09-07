@@ -1,347 +1,100 @@
 name: Release
-
-# Automated patch-line versioning + GitHub Releases.
-#
-# One merge to master = one release. Do not merge bare dev → master.
-#
-#   * release-pr          — on push to `dev` or workflow_dispatch: branch from
-#                           `dev`, bump PATCH, changelog, open release-plz-v*.
-#   * release-plz-release — when that PR is merged into master, tag `vX.Y.Z`
-#                           + GitHub Release from CHANGELOG.md.
-#   * resolve / artifacts — build `spanreed` for Linux x86_64 musl and Windows.
-#                           macOS/ARM distribution is deferred.
-#   * release-notes       — set GH Release body from CHANGELOG section.
-#
-# Nothing is published to crates.io (`git_only` + `publish = false`).
-# Deliberate major/minor: Manual Version Bump workflow.
-
 on:
   push:
-    branches: [dev]
-  pull_request:
-    types: [closed]
     branches: [master]
   workflow_dispatch:
     inputs:
-      force:
-        description: Open the release PR even without feat/fix commits
-        required: false
-        type: boolean
-        default: false
-
+      release_sha:
+        description: Full release merge SHA; dispatch on a ref at this SHA
+        type: string
+      artifacts_run_id:
+        description: Successful Release build run at the same SHA (optional recovery)
+        type: string
 permissions:
   contents: read
-
-env:
-  CARGO_TERM_COLOR: always
-
+  pull-requests: read
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
 jobs:
-  release-pr:
-    name: release PR (patch line)
-    if: >
-      github.repository_owner == 'grok-insider'
-      && (github.event_name == 'workflow_dispatch'
-          || github.event_name == 'push'
-          || (github.event_name == 'pull_request'
-              && github.event.pull_request.merged == true
-              && github.event.pull_request.head.ref == 'dev'))
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    concurrency:
-      group: release-pr
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-      CARGO_NET_RETRY: "10"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && 'dev' || github.sha }}
-          persist-credentials: true
-          token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Decide the next version
-        id: decide
-        env:
-          FORCE: ${{ inputs.force == true && 'true' || 'false' }}
-        run: |
-          set -euo pipefail
-          current="$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)"
-          if [[ ! "$current" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "::error::Cargo.toml version '$current' is not x.y.z."
-            exit 1
-          fi
-          major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
-          if ! git rev-parse -q --verify "refs/tags/v${current}" >/dev/null; then
-            echo "::notice::v${current} is not tagged yet — this push is releasing it; no new release PR."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$FORCE" != "true" ] \
-            && ! git log "v${current}..HEAD" --no-merges --format=%s \
-               | grep -E '^(feat|fix)(\(.*\))?!?:' > /dev/null; then
-            echo "::notice::no feat/fix commits since v${current}; nothing to release."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          breaking=false
-          if git log "v${current}..HEAD" --no-merges --format='%s%n%b' \
-            | grep -E '^[a-z]+(\(.*\))?!:|^BREAKING CHANGE' > /dev/null; then
-            breaking=true
-          fi
-          next="${major}.${minor}.$(( patch + 1 ))"
-          {
-            echo "skip=false"
-            echo "current=$current"
-            echo "next=$next"
-            echo "breaking=$breaking"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Bump the package version
-        if: ${{ steps.decide.outputs.skip == 'false' }}
-        env:
-          NEXT: ${{ steps.decide.outputs.next }}
-        run: |
-          set -euo pipefail
-          sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${NEXT}\"/" Cargo.toml
-          cargo update --workspace
-          python3 scripts/sync-desktop-version.py
-          if git diff --quiet -- Cargo.toml Cargo.lock; then
-            echo "::error::Version bump produced no Cargo.toml or Cargo.lock changes."
-            exit 1
-          fi
-
-      - name: Generate the AI changelog section
-        if: ${{ steps.decide.outputs.skip == 'false' }}
-        uses: grok-insider/release-changelog-action@v1
-        with:
-          version: ${{ steps.decide.outputs.next }}
-          range: v${{ steps.decide.outputs.current }}..HEAD
-          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
-          project-description: "Cross-platform AI coding subscription usage tracker (CLI + daemon + Waybar/JSON + local capture proxy)"
-
-      - name: Open or update the release PR
-        if: ${{ steps.decide.outputs.skip == 'false' }}
-        env:
-          CURRENT: ${{ steps.decide.outputs.current }}
-          NEXT: ${{ steps.decide.outputs.next }}
-          BREAKING: ${{ steps.decide.outputs.breaking }}
-        run: |
-          set -euo pipefail
-          branch="release-plz-v${NEXT}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
-          git add Cargo.toml Cargo.lock CHANGELOG.md desktop/package.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/src-tauri/tauri.conf.json
-          git commit -m "chore: release v${NEXT}"
-          git push --force --set-upstream origin "$branch"
-
-          gh label create release --color 0e8a16 \
-            --description "release PRs (auto patch line + manual bumps)" \
-            2>/dev/null || true
-
-          body="$(mktemp)"
-          {
-            echo "Automated patch-line release PR: **v${CURRENT} -> v${NEXT}**."
-            echo
-            echo "Bumps the package version + \`Cargo.lock\`, and adds the"
-            echo "AI-generated \`CHANGELOG.md\` section for the commits since v${CURRENT}."
-            echo "Built from \`dev\`. Regenerated on every push to \`dev\` until merged."
-            echo
-            if [ "$BREAKING" = "true" ]; then
-              echo "**WARNING: breaking commits (\`!\`/\`BREAKING CHANGE\`) landed since"
-              echo "v${CURRENT}.** The automatic stream still bumps the patch component;"
-              echo "if this deserves a minor milestone instead, close this PR and run the"
-              echo "Manual Version Bump workflow."
-              echo
-            fi
-            echo "Merging tags \`v${NEXT}\` + creates the GitHub Release (release-plz"
-            echo "\`release_always\`) and attaches prebuilt \`spanreed\` binaries."
-          } > "$body"
-
-          existing="$(gh pr list --state open --head "$branch" --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            gh pr edit "$existing" --title "chore: release v${NEXT}" --body-file "$body"
-          else
-            gh pr create \
-              --base master \
-              --head "$branch" \
-              --title "chore: release v${NEXT}" \
-              --body-file "$body" \
-              --label release
-          fi
-
-          for stale in $(gh pr list --state open --label release --json number,headRefName \
-            --jq ".[] | select(.headRefName != \"$branch\" and (.headRefName | startswith(\"release-plz-v\"))) | .number"); do
-            gh pr close "$stale" --comment "Superseded by the release PR for v${NEXT}." --delete-branch
-          done
-
-  release-plz-release:
-    name: release-plz release
-    if: >
-      github.repository_owner == 'grok-insider'
-      && github.event_name == 'pull_request'
-      && github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    concurrency:
-      group: release-plz-release
-      cancel-in-progress: false
+  validate:
+    runs-on: ubuntu-24.04
     outputs:
-      releases_created: ${{ steps.release-plz.outputs.releases_created }}
-      releases: ${{ steps.release-plz.outputs.releases }}
+      complete: ${{ steps.source.outputs.complete }}
+      sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.source.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Run release-plz (release)
-        id: release-plz
-        uses: release-plz/action@v0.5
+      - uses: actions/setup-python@v5
         with:
-          command: release
+          python-version: '3.12'
+      - name: Validate release source
+        id: source
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-
-  resolve:
-    name: resolve release tag
-    needs: release-plz-release
-    if: needs.release-plz-release.outputs.releases_created == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.r.outputs.tag }}
-      version: ${{ steps.r.outputs.version }}
-    steps:
-      - id: r
-        env:
-          RELEASES: ${{ needs.release-plz-release.outputs.releases }}
-        run: |
-          set -euo pipefail
-          echo "tag=$(echo "$RELEASES" | jq -r '.[0].tag')" >> "$GITHUB_OUTPUT"
-          echo "version=$(echo "$RELEASES" | jq -r '.[0].version')" >> "$GITHUB_OUTPUT"
-
-  artifacts:
-    name: ${{ matrix.target }}
-    needs: [release-plz-release, resolve]
-    if: needs.release-plz-release.outputs.releases_created == 'true'
+          RELEASE_SHA: ${{ inputs.release_sha || github.sha }}
+        run: python3 scripts/release.py validate-source --sha "$RELEASE_SHA"
+  cli:
+    needs: validate
+    if: ${{ needs.validate.outputs.complete != 'true' && !inputs.artifacts_run_id }}
+    uses: ./.github/workflows/build-cli.yml
+    with:
+      source_sha: ${{ needs.validate.outputs.sha }}
+  desktop:
+    needs: validate
+    if: ${{ needs.validate.outputs.complete != 'true' && !inputs.artifacts_run_id }}
+    uses: ./.github/workflows/desktop.yml
+    with:
+      source_sha: ${{ needs.validate.outputs.sha }}
+  publish:
+    needs: [validate, cli, desktop]
+    if: ${{ !cancelled() && needs.validate.outputs.complete != 'true' && needs.validate.result == 'success' && (inputs.artifacts_run_id || (needs.cli.result == 'success' && needs.desktop.result == 'success')) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, cross: zig }
-          # macOS/ARM release qualification is deferred pending a hardware contributor.
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, cross: "" }
-    runs-on: ${{ matrix.os }}
+      actions: read
+      pull-requests: read
     env:
-      TARGET: ${{ matrix.target }}
-      VERSION: ${{ needs.resolve.outputs.version }}
-      TAG: ${{ needs.resolve.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout the released tag
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve.outputs.tag }}
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
-          targets: ${{ matrix.target }}
-      - name: Install zig
-        if: matrix.cross == 'zig'
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.13.0
-      - name: Install cargo-zigbuild
-        if: matrix.cross == 'zig'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-${{ matrix.target }}
-      # Linux musl stays without `tray` so the static binary check still holds.
-      # Windows + macOS release assets include the Spanreed system tray.
-      - name: Build (zigbuild static)
-        if: matrix.cross == 'zig'
-        run: cargo zigbuild --release --target "$TARGET"
-      - name: Build (native + tray)
-        if: matrix.cross != 'zig'
-        run: cargo build --release --target ${{ matrix.target }} --features tray
-      - name: Verify Linux binary is static
-        if: matrix.cross == 'zig'
-        run: |
-          set -euo pipefail
-          f="target/$TARGET/release/spanreed"
-          file "$f"
-          if ldd "$f" 2>&1 | grep -qiE 'libc\.so|GLIBC'; then
-            echo "::error::spanreed is dynamically linked against glibc"; exit 1
-          fi
-      - name: Package + upload (unix)
-        if: runner.os != 'Windows'
+          python-version: '3.12'
+      - name: Publish only the verified complete asset set
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          archive="spanreed-$VERSION-$TARGET.tar.gz"
-          tar -czf "$archive" -C "target/$TARGET/release" spanreed
-          shasum -a 256 "$archive" > "$archive.sha256" 2>/dev/null || sha256sum "$archive" > "$archive.sha256"
-          gh release upload "$TAG" "$archive" "$archive.sha256" --clobber
-      - name: Package + upload (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $archive = "spanreed-$env:VERSION-$env:TARGET.zip"
-          Compress-Archive -Path "target/$env:TARGET/release/spanreed.exe" -DestinationPath $archive -Force
-          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
-          "$hash  $archive" | Out-File -FilePath "$archive.sha256" -Encoding ascii
-          gh release upload "$env:TAG" "$archive" "$archive.sha256" --clobber
-
-  release-notes:
-    name: publish release notes
-    needs: [release-plz-release, resolve, artifacts]
-    if: needs.release-plz-release.outputs.releases_created == 'true'
-    runs-on: ubuntu-latest
+          RELEASE_SHA: ${{ needs.validate.outputs.sha }}
+          ARTIFACT_RUN: ${{ inputs.artifacts_run_id || github.run_id }}
+        run: python3 scripts/release.py publish --sha "$RELEASE_SHA" --run-id "$ARTIFACT_RUN"
+  sync-dev:
+    needs: [validate, publish]
+    if: ${{ !cancelled() && needs.validate.result == 'success' && (needs.publish.result == 'success' || needs.validate.outputs.complete == 'true') }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
+      pull-requests: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout the released tag
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve.outputs.tag }}
-      - name: Publish CHANGELOG section to GitHub Release
-        uses: grok-insider/release-changelog-action@v1
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
         with:
-          version: ${{ needs.resolve.outputs.version }}
-          skip-generate: true
-          publish-github-release: true
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ needs.resolve.outputs.tag }}
-          notes-footer: |
-            ---
-
-            ### Install
-
-            Canonical install is via **[grokinsider.net](https://grokinsider.net)**
-            (not this Release). GitHub Releases ship binaries + checksums only.
-
-            ```sh
-            # Linux / macOS
-            curl -fsSL https://grokinsider.net/install/spanreed.sh | sh
-            ```
-
-            ```powershell
-            # Windows
-            irm https://grokinsider.net/install/spanreed.ps1 | iex
-            ```
+          python-version: '3.12'
+      - name: Open master to dev synchronization PR
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 scripts/release.py sync-dev
