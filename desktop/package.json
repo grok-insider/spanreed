@@ -1,9 +1,25 @@
 {
   "name": "spanreed-desktop",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite --host 127.0.0.1", "build": "tsc --noEmit && vite build", "tauri": "tauri" },
-  "dependencies": { "@fabrials/ui": "file:vendor/fabrials-ui", "@tauri-apps/api": "^2", "react": "19.2.8", "react-dom": "19.2.8" },
-  "devDependencies": { "@tauri-apps/cli": "^2", "@types/react": "^19", "@types/react-dom": "^19", "@vitejs/plugin-react": "^4", "typescript": "^5", "vite": "^6" }
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@fabrials/ui": "file:vendor/fabrials-ui",
+    "@tauri-apps/api": "^2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "typescript": "^5",
+    "vite": "^6"
+  }
 }

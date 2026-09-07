@@ -1,6 +1,6 @@
 [package]
 name = "spanreed"
-version = "0.2.1"
+version = "0.2.2"
 description = "Linux-native AI coding subscription usage tracker (daemon + CLI + Waybar)"
 edition = "2021"
 license = "MIT"
