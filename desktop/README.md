@@ -127,4 +127,8 @@ the preparatory macOS job with `build_macos=true` on the Desktop builds manual
 workflow; `sign_macos=true` also enables it. Neither option changes the deferred
 support status without the native evidence below.
 
+The CLI CI similarly requires manual `qualify_macos=true` for its macOS job.
+Automatic release binaries currently cover Linux x86_64 and Windows x64;
+macOS and ARM artifacts remain deferred for this implementation.
+
 As of 2026-09-07, macOS/ARM qualification is deferred by product decision until a contributor with macOS hardware can help. The existing build/signing configuration is preparatory, not a verified support claim. Contributors should record their OS and architecture, source revision, build output and checksums, and native onboarding, account authorization, proxy, preferences, notifications and migration results. Universal Intel/Apple Silicon packaging, Developer ID signing, notarization and Gatekeeper verification also require real evidence before distribution is qualified. Keep credentials and signing material in their secret stores.
