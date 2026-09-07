@@ -85,14 +85,14 @@ jobs:
           fi
           if [ "$FORCE" != "true" ] \
             && ! git log "v${current}..HEAD" --no-merges --format=%s \
-               | grep -qE '^(feat|fix)(\(.*\))?!?:'; then
+               | grep -E '^(feat|fix)(\(.*\))?!?:' > /dev/null; then
             echo "::notice::no feat/fix commits since v${current}; nothing to release."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           breaking=false
           if git log "v${current}..HEAD" --no-merges --format='%s%n%b' \
-            | grep -qE '^[a-z]+(\(.*\))?!:|^BREAKING CHANGE'; then
+            | grep -E '^[a-z]+(\(.*\))?!:|^BREAKING CHANGE' > /dev/null; then
             breaking=true
           fi
           next="${major}.${minor}.$(( patch + 1 ))"
