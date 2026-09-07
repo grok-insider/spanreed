@@ -1,5 +1,5 @@
 //! Opt-in **authenticated** share of aggregated usage snapshots to
-//! api.grokinsider.net (Grok Insider account via Sign in with X).
+//! fabrials.com (Fabrials account via Sign in with X).
 //!
 //! Contributions are tied to a stable `user_id` on the server (not the raw
 //! install UUID). They feed a public pool used to compare how much value
@@ -20,7 +20,7 @@ use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::probe;
 use crate::util;
 
-const DEFAULT_API_BASE: &str = "https://api.grokinsider.net";
+const DEFAULT_API_BASE: &str = "https://fabrials.com/api/spanreed";
 const ENV_API_BASE: &str = "SPANREED_API_BASE";
 const ENV_OFFLINE: &str = "SPANREED_OFFLINE";
 const LAST_SHARE_DAY_FILE: &str = "last_share_day";
@@ -266,7 +266,7 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
              Requires a Grok Insider account (Sign in with X) linked once via:\n\
                spanreed share login\n\n\
              Sends aggregated provider+plan lines to the public community pool\n\
-             on grokinsider.net. Server identity is your account (not install id).\n\n\
+             on fabrials.com. Server identity is your account (not install id).\n\n\
              At most one local send per day (product TZ {tz}) unless --force.\n\
              Same-day re-send upserts on the server.\n\n\
              Subcommands: login | logout | status\n\
@@ -310,6 +310,11 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
 
 /// Probe + POST. `force` bypasses the local same-day skip.
 pub fn share_once(force: bool) -> Result<String, String> {
+    if !crate::privacy::load().share_metrics {
+        return Err(
+            "Metrics sharing is off. Enable explicitly: spanreed privacy metrics on".into(),
+        );
+    }
     if is_offline() {
         return Err("share: SPANREED_OFFLINE=1 — not sending".into());
     }
@@ -379,6 +384,7 @@ mod tests {
     #[test]
     fn maps_quota_progress_and_skips_cost_charts() {
         let out = ProviderOutput {
+            reset_inventory: None,
             provider_id: "grok".into(),
             display_name: "Grok".into(),
             plan: Some("SuperGrok".into()),
@@ -432,6 +438,7 @@ mod tests {
     fn maps_count_progress_as_count_not_percent() {
         // Absolute used/limit (e.g. request pools) must not become "50%".
         let out = ProviderOutput {
+            reset_inventory: None,
             provider_id: "cursor".into(),
             display_name: "Cursor".into(),
             plan: None,
@@ -457,6 +464,7 @@ mod tests {
     #[test]
     fn snapshot_json_has_no_secret_field_names() {
         let out = ProviderOutput {
+            reset_inventory: None,
             provider_id: "codex".into(),
             display_name: "Codex".into(),
             plan: None,

@@ -8,8 +8,8 @@ name: Release
 #                           `dev`, bump PATCH, changelog, open release-plz-v*.
 #   * release-plz-release — when that PR is merged into master, tag `vX.Y.Z`
 #                           + GitHub Release from CHANGELOG.md.
-#   * resolve / artifacts — build `spanreed` for Linux (x86_64/aarch64 musl
-#                           static), macOS (x86_64/arm64), and Windows, and attach.
+#   * resolve / artifacts — build `spanreed` for Linux x86_64 musl and Windows.
+#                           macOS/ARM distribution is deferred.
 #   * release-notes       — set GH Release body from CHANGELOG section.
 #
 # Nothing is published to crates.io (`git_only` + `publish = false`).
@@ -238,9 +238,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, cross: zig }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, cross: zig }
-          - { os: macos-15-intel, target: x86_64-apple-darwin, cross: "" }
-          - { os: macos-14, target: aarch64-apple-darwin, cross: "" }
+          # macOS/ARM release qualification is deferred pending a hardware contributor.
           - { os: windows-latest, target: x86_64-pc-windows-msvc, cross: "" }
     runs-on: ${{ matrix.os }}
     env:

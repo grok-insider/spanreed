@@ -17,10 +17,18 @@ pub fn probe_all() -> Vec<ProviderOutput> {
 
 /// Probe a single provider by id (forced).
 pub fn probe_one(id: &str) -> Option<ProviderOutput> {
-    let out = providers::by_id(id).map(|p| p.probe());
+    let out = providers::by_id(id)
+        .map(|p| p.probe())
+        .or_else(|| {
+            crate::drivers::grok::probe_accounts()
+                .into_iter()
+                .find(|o| o.provider_id == id)
+        })
+        .or_else(|| crate::addons::host::probe_extra_one(id));
     if let Some(o) = &out {
         crate::pool_baseline::note_from_output(o);
         crate::epoch::note_jumps_from_outputs(std::slice::from_ref(o));
+        crate::sync::after_probe();
     }
     out
 }
@@ -40,10 +48,13 @@ where
         .map(|p| thread::spawn(move || p.probe()))
         .collect();
 
-    let outs: Vec<_> = handles.into_iter().filter_map(|h| h.join().ok()).collect();
+    let mut outs: Vec<_> = handles.into_iter().filter_map(|h| h.join().ok()).collect();
+    outs.extend(crate::drivers::grok::probe_accounts());
+    outs.extend(crate::addons::extra_detected_outputs());
     for o in &outs {
         crate::pool_baseline::note_from_output(o);
     }
     crate::epoch::note_jumps_from_outputs(&outs);
+    crate::sync::after_probe();
     outs
 }

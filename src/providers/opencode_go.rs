@@ -22,11 +22,15 @@ const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 pub struct OpenCodeGo;
 
 fn db_path() -> std::path::PathBuf {
-    creds::data_home().join("opencode").join("opencode.db")
+    creds::opencode::data_home()
+        .join("opencode")
+        .join("opencode.db")
 }
 
 fn auth_path() -> std::path::PathBuf {
-    creds::data_home().join("opencode").join("auth.json")
+    creds::opencode::data_home()
+        .join("opencode")
+        .join("auth.json")
 }
 
 /// True if auth.json has an `opencode-go` entry with a non-empty key.

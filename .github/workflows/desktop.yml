@@ -1,0 +1,148 @@
+name: Desktop builds
+
+on:
+  pull_request:
+    paths: ['desktop/**', 'src/**', 'vendor/**', 'Cargo.*', '.gitattributes', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+    inputs:
+      build_macos:
+        description: Opt in to deferred macOS qualification with a hardware contributor
+        type: boolean
+        default: false
+      sign_macos:
+        description: Build a signed and notarized macOS review artifact
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      # macOS/ARM is deferred; retain an explicit contributor qualification path.
+      matrix:
+        include: ${{ fromJSON((inputs.build_macos || inputs.sign_macos) && '[{"os":"ubuntu-24.04","bundles":"deb"},{"os":"windows-latest","bundles":"nsis"},{"os":"macos-latest","bundles":"dmg"}]' || '[{"os":"ubuntu-24.04","bundles":"deb"},{"os":"windows-latest","bundles":"nsis"}]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - name: Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev
+      - run: bun install --frozen-lockfile
+        working-directory: desktop
+      - run: bun test vendor/fabrials-ui/tests
+        working-directory: desktop
+      - run: bun run build
+        working-directory: desktop
+      - run: cargo test --locked --features contracts
+        env:
+          SPANREED_OFFLINE: '1'
+      - name: Verify Windows Credential Manager roundtrip
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib secret::platform::tests::credential_roundtrip -- --ignored --exact
+        env:
+          SPANREED_OFFLINE: '1'
+      - name: Build native application and installer
+        run: bun run tauri build --bundles ${{ matrix.bundles }}
+        working-directory: desktop
+      - name: Collect installer checksums
+        shell: python
+        run: |
+          import hashlib
+          import pathlib
+          import shutil
+          root = pathlib.Path("desktop/src-tauri/target/release/bundle")
+          output = pathlib.Path("desktop/installers")
+          output.mkdir()
+          installers = sorted(path for path in root.rglob("*")
+                              if path.is_file() and path.suffix in {".deb", ".dmg", ".exe"})
+          if not installers:
+              raise SystemExit("Native build produced no installer")
+          for source in installers:
+              target = output / source.name
+              if target.exists():
+                  raise SystemExit("Installer filename collision")
+              shutil.copyfile(source, target)
+              digest = hashlib.sha256(target.read_bytes()).hexdigest()
+              target.with_name(target.name + ".sha256").write_text(
+                  f"{digest}  {target.name}\n", encoding="utf-8")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spanreed-desktop-unsigned-${{ runner.os }}
+          path: |
+            desktop/src-tauri/target/release/spanreed-desktop
+            desktop/src-tauri/target/release/spanreed-desktop.exe
+            desktop/installers/
+          if-no-files-found: error
+
+  signed-macos:
+    if: github.event_name == 'workflow_dispatch' && inputs.sign_macos
+    needs: desktop
+    runs-on: macos-latest
+    environment: desktop-signing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - run: bun install --frozen-lockfile
+        working-directory: desktop
+      - name: Build signed universal application and notarize
+        working-directory: desktop
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          python3 - <<'PY'
+          import os
+          required = ("APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD",
+                      "APPLE_SIGNING_IDENTITY", "APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID")
+          missing = [name for name in required if not os.environ.get(name, "").strip()]
+          if missing:
+              raise SystemExit("Missing signing configuration: " + ", ".join(missing))
+          if not os.environ["APPLE_SIGNING_IDENTITY"].startswith("Developer ID Application:"):
+              raise SystemExit("Distribution requires a Developer ID Application identity")
+          PY
+          bun run tauri build --ci --target universal-apple-darwin --bundles dmg
+      - name: Verify distribution signature and notarization ticket
+        run: |
+          app='desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos/Spanreed.app'
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/$executable"
+          mkdir -p desktop/signed-installers
+          for installer in desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg; do
+            test -f "$installer"
+            cp "$installer" desktop/signed-installers/
+          done
+          cd desktop/signed-installers
+          for installer in *.dmg; do shasum -a 256 "$installer" > "$installer.sha256"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spanreed-desktop-signed-macOS-universal
+          path: desktop/signed-installers/
+          if-no-files-found: error

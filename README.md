@@ -21,18 +21,18 @@ Linux-first (Hyprland/Wayland); the same code also builds for macOS and Windows.
 
 ## Install
 
-### From grokinsider.net (one command)
+### From fabrials.com (one command)
 
-Canonical install is on **[grokinsider.net](https://grokinsider.net)** — not the
+Canonical install is on **[fabrials.com](https://fabrials.com)** — not the
 GitHub Release page. Releases only publish platform binaries + checksums; the
 website serves the bootstrap scripts.
 
 ```sh
 # Linux / macOS
-curl -fsSL https://grokinsider.net/install/spanreed.sh | sh
+curl -fsSL https://fabrials.com/install/spanreed.sh | sh
 
 # Windows (PowerShell)
-irm https://grokinsider.net/install/spanreed.ps1 | iex
+irm https://fabrials.com/install/spanreed.ps1 | iex
 ```
 
 The installer downloads the binary from GitHub Releases, then runs
@@ -40,9 +40,9 @@ The installer downloads the binary from GitHub Releases, then runs
 
 - install CLI to user PATH  
 - create the Grok capture ledger  
-- start the **ai-relay** capture worker at login (optional; **windowless** on Windows)  
+- start the capture proxy at login (optional; **windowless** on Windows)  
 - wire **Grok Build** → `http://127.0.0.1:18736/v1`  
-- wire **OpenCode xAI** → `http://127.0.0.1:18737/v1`  
+- wire **OpenCode xAI** → `http://127.0.0.1:18736/xai/v1`  
 
 On Windows, capture autostart uses a user **Scheduled Task** (Hidden) when
 allowed, plus an **HKCU Run** fallback. The watchdog detaches from the console
@@ -116,9 +116,9 @@ Useful setup commands:
 ```sh
 spanreed setup status
 spanreed setup uninstall          # unwire + stop capture service
-spanreed capture serve            # launch the ai-relay capture worker in the foreground
+spanreed capture serve            # integrated local proxy; no ai-relay binary needed
 spanreed capture serve --watchdog # auto-restart worker; log under spanreed/logs
-spanreed capture ensure           # start capture+watchdog if port 18736 is down
+spanreed capture ensure           # start capture+watchdog if :18736 is down
 spanreed capture status           # exit 0 if listening, 1 if DOWN; shows log path
 spanreed probe grok --cost        # quotas + captured tokens / $ estimate
 spanreed self-update --check      # compare to latest GitHub Release
@@ -126,13 +126,9 @@ spanreed self-update              # download, verify .sha256, replace binary
 spanreed tray                     # system tray (build with --features tray)
 ```
 
-If Grok Build or OpenCode “stops working” while wired to the ai-relay capture
-worker, check capture first (`setup status` / `capture status`). A dead worker
-with live wiring looks like a CLI failure. Fix: `spanreed capture ensure`.
-
-The `ai-relay` binary is resolved from `AI_RELAY_BIN`, then next to the
-`spanreed` binary, then `PATH`. Multi-account routing lives entirely in
-`ai-relay`; spanreed only reads the usage ledger it writes.
+If Grok Build or OpenCode “stops working” while wired to the local proxy, check
+capture first (`setup status` / `capture status`). A dead proxy with live wiring
+looks like a CLI failure. Fix: `spanreed capture ensure`.
 
 ### Updates
 
@@ -190,8 +186,16 @@ spanreed json                  # raw JSON (full detail, includes kind)
 spanreed serve [--interval S]  # HTTP API on 127.0.0.1:6736
 spanreed setup                 # install + optional capture service + wire clients
 spanreed auth copilot          # opt-in GitHub token for Copilot
+spanreed account add grok --name mine   # SuperGrok login (device-code, no grok binary)
+spanreed account ls | use grok/mine
+spanreed plugin list
 spanreed help
 ```
+
+Grok Build stays on `http://127.0.0.1:18736/v1` (active account).
+A second account in parallel: `GROK_CLI_CHAT_PROXY_BASE_URL=http://127.0.0.1:18736/acct/mine/v1`.
+OpenCode: `http://127.0.0.1:18736/xai/v1`.
+See `docs/addons.md`.
 
 With no arguments, `spanreed` runs `probe`. Default probe shows **rate-limit
 quotas only**; add flags for extra blocks. `json` / `waybar` / `serve` always
@@ -235,8 +239,8 @@ wall-clock pace. Set `SPANREED_OFFLINE=1` to skip remote price-table refresh.
 
 | Id | Credential source (typical) |
 |----|-----------------------------|
-| `codex` | `~/.codex` / `$CODEX_HOME` |
-| `grok` | `~/.grok/auth.json` (+ optional ai-relay capture) |
+| `codex` | `~/.codex` / `$CODEX_HOME` (ChatGPT plan: 5h + Weekly + Reviews) |
+| `grok` | `~/.grok/auth.json` (+ optional local capture) |
 | `copilot` | opt-in via `spanreed auth copilot` |
 | `cursor` | Cursor state DB under `~/.config/Cursor/` |
 | `opencode-go` / `amp` / `zai` / `minimax` / … | see `spanreed list` and source |
@@ -249,3 +253,12 @@ Pricing overrides: `~/.config/spanreed/pricing.json`.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+#### Private certificate authorities
+
+The shared HTTP client trusts public certificate roots and the operating system's
+trusted certificate authorities. For a self-hosted ai-relay using a private CA,
+install that CA in the system trust store. On Linux, a PEM bundle can also be
+supplied to the Spanreed process with `SSL_CERT_FILE=/absolute/path/ca.pem`.
+Certificate chain and hostname verification remain required; redirects are not
+followed during migration. This does not configure trust in your web browser.

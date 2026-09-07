@@ -9,7 +9,10 @@
 //! ```
 
 mod detect;
+mod grok_environment;
+mod jsonc;
 mod paths;
+pub mod review;
 mod service;
 mod state;
 mod tray_autostart;
@@ -19,12 +22,9 @@ mod wire_opencode;
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
-pub use paths::install_bin_path;
+use crate::grok_proxy;
 
-/// Loopback bind the ai-relay capture worker listens on for Grok CLI clients.
-pub const DEFAULT_GROK_CLI_BIND: &str = "127.0.0.1:18736";
-/// Loopback bind kept for OpenCode xAI compatibility wiring.
-pub const DEFAULT_XAI_API_BIND: &str = "127.0.0.1:18737";
+pub use paths::install_bin_path;
 
 /// Re-export for `main` capture ensure/status without exposing the whole module tree.
 pub fn service_ensure(dry_run: bool) -> Result<String, String> {
@@ -38,7 +38,7 @@ pub fn capture_ports_up() -> bool {
 /// Target base URL for Grok Build (`GROK_CLI_CHAT_PROXY_BASE_URL`).
 pub const GROK_CAPTURE_BASE_URL: &str = "http://127.0.0.1:18736/v1";
 /// Target base URL for OpenCode `provider.xai.options.baseURL`.
-pub const OPENCODE_XAI_CAPTURE_BASE_URL: &str = "http://127.0.0.1:18737/v1";
+pub const OPENCODE_XAI_CAPTURE_BASE_URL: &str = "http://127.0.0.1:18736/xai/v1";
 
 #[derive(Debug, Default, Clone)]
 struct SetupFlags {
@@ -126,8 +126,8 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             "Start capture proxy at login (user service)?",
             flags.service,
             Some(format!(
-                "ai-relay listens {} + {}",
-                DEFAULT_GROK_CLI_BIND, DEFAULT_XAI_API_BIND
+                "fabric {}  /v1 grok  /xai api.x.ai  /acct/ID",
+                grok_proxy::DEFAULT_GROK_CLI_BIND
             )),
         );
         let do_tray = prompt_yn(
@@ -140,8 +140,8 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             ),
         );
         let do_share_schedule = prompt_yn(
-            "Enable daily plan share to grokinsider.net (once per day, catch-up when PC is on)?",
-            true,
+            "Enable daily plan share to fabrials.com (once per day, catch-up when PC is on)?",
+            false,
             Some(
                 "requires `spanreed share login` once (Sign in with X); \
                      uploads provider+plan metrics to the public pool; \
@@ -155,12 +155,12 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             (
                 prompt_yn(
                     "Wire Grok Build → capture :18736?",
-                    det.grok.detected,
+                    false,
                     Some(det.grok.hint()),
                 ),
                 prompt_yn(
-                    "Wire OpenCode xAI → capture :18737?",
-                    det.opencode.detected,
+                    "Wire OpenCode xAI → capture :18736/xai?",
+                    false,
                     Some(det.opencode.hint()),
                 ),
             )
@@ -181,14 +181,14 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
         )
     } else {
         // --yes: service only if --service; tray follows service default on Win/mac;
-        // share schedule ON by default; wire only if detected and not --no-wire
+        // Network sharing and client rewiring require separate explicit selection.
         let do_install = true;
         let do_ledger = true;
         let do_service = flags.service;
         let do_tray = tray_autostart::default_enabled(do_service);
-        let do_share_schedule = true;
-        let do_wire_grok = !flags.no_wire && det.grok.detected;
-        let do_wire_opencode = !flags.no_wire && det.opencode.detected;
+        let do_share_schedule = false;
+        let do_wire_grok = false;
+        let do_wire_opencode = false;
         println!(
             "Non-interactive: install={do_install} ledger={do_ledger} service={do_service} \
                  tray={do_tray} share_schedule={do_share_schedule} wire_grok={do_wire_grok} \
@@ -296,6 +296,14 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
     }
 
     if do_share_schedule {
+        if !flags.dry_run {
+            let mut consent = crate::privacy::load();
+            consent.share_metrics = true;
+            if let Err(error) = crate::privacy::save(&consent) {
+                eprintln!("Could not save sharing consent: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
         match crate::share_schedule::enable(flags.dry_run) {
             Ok(msg) => {
                 println!("  Share:    {msg}");
@@ -427,16 +435,22 @@ fn run_uninstall(flags: SetupFlags) -> ExitCode {
     }
 
     if flags.purge_all {
-        let ledger = crate::grok_ledger::ledger_path();
-        if flags.dry_run {
-            println!("  Ledger:   would remove {}", ledger.display());
-        } else if ledger.exists() {
-            match std::fs::remove_file(&ledger) {
-                Ok(()) => println!("  Ledger:   removed {}", ledger.display()),
-                Err(e) => {
-                    let m = format!("remove ledger: {e}");
-                    eprintln!("  Ledger:   {m}");
-                    errors.push(m);
+        // Remove import sources too, so a later install cannot restore purged usage.
+        for name in [
+            "runtime.sqlite3",
+            "runtime.sqlite3-wal",
+            "runtime.sqlite3-shm",
+            "grok-usage.jsonl",
+            "usage-history.jsonl",
+        ] {
+            let ledger = crate::app::data_dir().join(name);
+            if flags.dry_run {
+                println!("  Usage:    would remove {}", ledger.display());
+            } else if ledger.exists() {
+                if let Err(error) = std::fs::remove_file(&ledger) {
+                    let message = format!("remove usage data: {error}");
+                    eprintln!("  Usage:    {message}");
+                    errors.push(message);
                 }
             }
         }
@@ -525,8 +539,13 @@ fn print_status() -> ExitCode {
         wire_opencode::status_line(&det, &state)
     );
     println!(
-        "\n  Capture worker:   ai-relay\n    Grok CLI  http://{}\n    xAI API   http://{}",
-        DEFAULT_GROK_CLI_BIND, DEFAULT_XAI_API_BIND,
+        "\n  Capture fabric:   http://{}\n\
+         \t/v1        → {}  (SuperGrok inject)\n\
+         \t/xai/v1    → {}  (client token)\n\
+         \t/acct/ID/… → same, pinned account",
+        grok_proxy::DEFAULT_GROK_CLI_BIND,
+        grok_proxy::UPSTREAM_GROK_CLI,
+        grok_proxy::UPSTREAM_XAI_API,
     );
 
     if (grok_wired || oc_wired) && !ports_up {
@@ -625,13 +644,8 @@ fn ensure_ledger(dry_run: bool) -> Result<std::path::PathBuf, String> {
         }
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir ledger dir: {e}"))?;
     }
-    if !dry_run && !path.exists() {
-        // Touch empty ledger so path is visible.
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| format!("create ledger: {e}"))?;
+    if !dry_run {
+        crate::grok_ledger::ensure_store()?;
     }
     Ok(path)
 }
@@ -679,6 +693,6 @@ mod tests {
     #[test]
     fn capture_urls_include_v1() {
         assert!(GROK_CAPTURE_BASE_URL.ends_with("/v1"));
-        assert!(OPENCODE_XAI_CAPTURE_BASE_URL.contains("18737"));
+        assert!(OPENCODE_XAI_CAPTURE_BASE_URL.contains("18736/xai"));
     }
 }

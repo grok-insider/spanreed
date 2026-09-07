@@ -1,6 +1,6 @@
 [package]
 name = "spanreed"
-version = "0.1.0"
+version = "0.2.1"
 description = "Linux-native AI coding subscription usage tracker (daemon + CLI + Waybar)"
 edition = "2021"
 license = "MIT"
@@ -14,6 +14,7 @@ name = "spanreed"
 path = "src/main.rs"
 
 [features]
+contracts = ["fabrials-model/contracts", "fabrials-providers/contracts", "dep:ts-rs"]
 default = []
 # System tray companion (Windows/macOS primary; Linux needs a SNI host).
 # Release desktop builds pass `--features tray`. Linux musl stays without tray
@@ -21,10 +22,21 @@ default = []
 tray = ["dep:tray-icon", "dep:tao", "dep:image"]
 
 [dependencies]
+ts-rs = { version = "12.0.1", optional = true }
+fabrials-runtime = "0.1.0"
+fabrials-providers = "0.1.0"
+fabrials-core = "0.1.0"
+fabrials-model = "0.1.0"
+fabrials-metrics = "0.1.0"
+fabrials-accounts = "0.1.1"
+fabrials-oauth-grok = "0.1.1"
+fabrials-share = "0.2.0"
 reqwest = { version = "0.12", features = ["blocking", "json", "socks", "rustls-tls"], default-features = false }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
+toml_edit = "0.20"
 regex-lite = "0.1"
 time = { version = "0.3", features = ["formatting", "parsing", "macros", "local-offset"] }
 dirs = "5"
@@ -40,6 +52,11 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 tray-icon = { version = "0.19", optional = true }
 tao = { version = "0.30", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+jsonc-parser = { version = "0.33.1", features = ["cst", "serde"] }
+
+[[example]]
+name = "desktop-contracts"
+required-features = ["contracts"]
 
 # SIGPIPE handling is Unix-only; Windows has no such signal.
 [target.'cfg(unix)'.dependencies]
@@ -48,3 +65,15 @@ libc = "0.2"
 [profile.release]
 opt-level = 2
 strip = true
+
+
+
+[patch.crates-io]
+fabrials-core = { path = "vendor/fabrials-core" }
+fabrials-providers = { path = "vendor/fabrials-providers" }
+fabrials-runtime = { path = "vendor/fabrials-runtime" }
+fabrials-model = { path = "vendor/fabrials-model" }
+fabrials-metrics = { path = "vendor/fabrials-metrics" }
+fabrials-accounts = { path = "vendor/fabrials-accounts" }
+fabrials-oauth-grok = { path = "vendor/fabrials-oauth-grok" }
+fabrials-share = { path = "vendor/fabrials-share" }

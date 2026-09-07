@@ -16,8 +16,8 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use crate::capture::Options;
 use crate::capture_log;
-use crate::setup;
 
 const BACKOFF_SECS: u64 = 2;
 const HEALTHY_POLL_SECS: u64 = 15;
@@ -48,6 +48,7 @@ pub fn run(serve_args: &[String]) -> Result<(), String> {
     #[cfg(windows)]
     detach_console();
 
+    let options = Options::parse(serve_args)?;
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
     capture_log::append(&format!(
         "watchdog start exe={} log={}",
@@ -64,7 +65,7 @@ pub fn run(serve_args: &[String]) -> Result<(), String> {
     );
 
     loop {
-        if setup::capture_ports_up() {
+        if options.listeners_up() {
             thread::sleep(Duration::from_secs(HEALTHY_POLL_SECS));
             continue;
         }
@@ -104,7 +105,7 @@ pub fn run(serve_args: &[String]) -> Result<(), String> {
 
         // Give the worker a moment to bind before we consider it failed.
         thread::sleep(Duration::from_millis(500));
-        if !setup::capture_ports_up() {
+        if !options.listeners_up() {
             // Still down — wait for process exit to see the error in the log.
             capture_log::append("worker started but ports not up yet; waiting");
         }

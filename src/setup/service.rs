@@ -38,7 +38,7 @@ pub fn disable(dry_run: bool) -> Result<String, String> {
     platform::disable(dry_run)
 }
 
-/// True when the ai-relay capture listener accepts TCP connections.
+/// True when both default capture listeners accept TCP connections.
 pub fn ports_up() -> bool {
     ports_listening_default()
 }
@@ -48,7 +48,7 @@ pub fn ensure(dry_run: bool) -> Result<String, String> {
     if ports_up() {
         return Ok(format!(
             "already listening on {}",
-            super::DEFAULT_GROK_CLI_BIND
+            crate::grok_proxy::DEFAULT_GROK_CLI_BIND
         ));
     }
     if dry_run {
@@ -72,7 +72,7 @@ pub fn ensure(dry_run: bool) -> Result<String, String> {
 pub fn ports_listening_default() -> bool {
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
-    let addrs = [super::DEFAULT_GROK_CLI_BIND];
+    let addrs = [crate::grok_proxy::DEFAULT_GROK_CLI_BIND];
     addrs.iter().all(|a| {
         a.parse::<SocketAddr>()
             .ok()

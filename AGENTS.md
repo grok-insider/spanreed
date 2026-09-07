@@ -9,24 +9,42 @@ tracker: one Rust binary (`spanreed`) that acts as a CLI, a background daemon,
 and a data source for status bars. It reads local AI-CLI credentials, queries
 each provider's usage API, and renders the result.
 
-- Single crate, no workspace. Binary target `spanreed` (`src/main.rs`).
-- No async runtime: probes are blocking I/O fanned out over threads.
+- CLI/library crate with an optional Tauri host under `desktop/`. Shared DTOs/pricing/accounts live in crates.io
+  `fabrials-*` crates (local path patch in `~/dev/fabrials/.cargo`).
+  `src/model.rs` re-exports `fabrials-model`.
+- `spanreed capture serve` runs the shared `fabrials-runtime` directly; no ai-relay executable is required. The optional xAI compatibility listener shares the runtime.
+- No workspace. Binary target `spanreed` (`src/main.rs`) delegates to `src/lib.rs`.
+- Probes are blocking I/O fanned out over threads. The shared runtime contains Tokio transport; Tauri runs blocking probes off the renderer thread.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.
+- **Accounts** are host-owned (`src/accounts.rs`, `spanreed account`). Drivers
+  (`src/drivers/`) implement login/refresh/billing. Grok uses native device-code.
+- **Addons** are a session-shaped protocol (today still one-shot JSON + inproc
+  trait) for extra CLI prefixes. See `docs/addons.md`.
 - Credentials are read from where each CLI stores them: XDG paths, plaintext
   files, SQLite state DBs (`rusqlite`, read-only), the GitHub CLI, `/proc`, and
   the OS secret store — Secret Service via `secret-tool` on Linux, Keychain on
   macOS, Credential Manager on Windows. Linux/Wayland is the primary target; the
-  same code compiles, tests, and ships binaries for macOS and Windows.
+  Windows builds and native smoke checks are verified. macOS/ARM qualification
+  is deferred pending a contributor with Mac hardware; configuration alone is
+  not evidence of support (see `desktop/README.md`).
 
 ## Module layout
 
 One file per concern. To add a top-level concern, add a `src/<name>.rs` and
-declare it in `src/main.rs`.
+declare it in `src/lib.rs`.
 
 | File | Owns |
 |------|------|
-| `src/main.rs`           | CLI entry + subcommand dispatch (`list`, `probe`, `waybar`, `json`, `serve`, `help`). |
+| `src/main.rs` / `src/lib.rs` | Thin binary entry / CLI dispatch and reusable host library. |
+| `desktop/` | Tauri + React local console; shared styles/components from `@fabrials/ui`. |
+| `src/privacy.rs` | Independent, default-off metrics publication and history synchronization consent. |
+| `src/history.rs` | Quota observations in `runtime.sqlite3` through shared `fabrials-runtime::history`; one-time import preserves `usage-history.jsonl`. CLI and desktop read the same store. |
+| `src/local_tokens.rs` | Grok refresh through shared durable rotation journal and scoped advisory locks; journal is separate from usage data. Nous uses the same journal from its driver. |
+| `src/profiles.rs` | Built-in Waybar, Eww and SketchyBar fragments; explicit new-file installation. |
+| `src/addons/`           | Addon protocol, host (PATH/toml/inproc), grok-bridge shim. |
+| `src/accounts.rs`       | Host identity registry + secrets; shared recoverable file transactions coordinate mutations with refreshes. Account generations prevent stale authorization writes. |
+| `src/drivers/`          | First-party identity drivers (`grok` login/probe/fabric token). |
 | `src/app.rs`            | Product identity (`spanreed`): dirs, bin name, GitHub repo. |
 | `src/probe.rs`          | Probe orchestration: runs detected (or all/one) providers concurrently. |
 | `src/providers/mod.rs`  | The `Provider` trait, the `all()` registry, and `by_id()`. Register new providers here. |
@@ -38,8 +56,8 @@ declare it in `src/main.rs`.
 | `src/output.rs`         | Renderers: `plain` (terminal + sparkline), `waybar` (custom-module JSON), severity classes. |
 | `src/api.rs`            | Local HTTP API on `127.0.0.1:6736` (`/usage`, `/health`) with background refresh. |
 | `src/cost.rs`           | Local-log cost engine (Claude/Codex): parallel + `memchr` + mtime pre-filter + dedup + TTL cache; produces `Last 30 Days` + `Usage Trend`. |
-| `src/grok_ledger.rs`    | Grok capture ledger (`grok-usage.jsonl`), **read-only** in spanreed (the external `ai-relay` worker writes it). Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
-| `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service (`capture serve` launches the external `ai-relay` worker), optional tray autostart, wire Grok Build + OpenCode xAI to the ai-relay capture worker. |
+| `src/grok_ledger.rs`    | Capture ledger in shared `runtime.sqlite3`; legacy `grok-usage.jsonl` is imported once and preserved. Grok metrics filter by provider. Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
+| `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service, optional tray autostart, wire Grok Build + OpenCode xAI to the local capture proxy. |
 | `src/self_update.rs`    | `spanreed self-update`: GitHub Releases check + sha256-verified binary replace. |
 | `src/tray_format.rs`    | Pure tooltip / severity helpers for the tray (always compiled). |
 | `src/tray.rs`           | `spanreed tray` (feature `tray`): Spanreed SNI/tray icon + menu. Nix package builds this; musl GH zips do not. |
@@ -188,8 +206,9 @@ numbers and no PR ids.
 
 ## Validation status
 
-Only `claude`, `codex`, `grok`, and `copilot` have been validated against live
-APIs. The other providers are implemented to the documented API shapes but are
+Only `claude`, `codex`, `grok`, `copilot`, and `nous` have been validated against live
+APIs. Nous validation covers OAuth, quota and model discovery, without paid inference.
+The other providers are implemented to the documented API shapes but are
 not yet confirmed against real accounts — treat field parsing as unverified
 until someone runs `spanreed probe <id>` against a live account.
 
@@ -227,9 +246,9 @@ SPANREED_OFFLINE=1 cargo test --all
 |---------|------|
 | **GitHub flake (stable)** | Linux gnu+tray: pin the **release tag** — `nix run` / `nix profile install github:grok-insider/spanreed/vX.Y.Z` and `homeManagerModules.default`. The tag is created **with** the GitHub Release. Floating `github:grok-insider/spanreed` follows `master` and is **not** stable. Org rule: [`../AGENTS.md`](../AGENTS.md). |
 | **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
-| **grokinsider.net** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
+| **fabrials.com** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
-| **api.grokinsider.net** | Opt-in **authenticated share** (`share login` + Bearer `POST /v1/usage/snapshots`) into a public plan metric pool for **grokinsider.net/spanreed**. Not install hosting. |
+| **fabrials.com/api/spanreed** | Opt-in **authenticated share** (`share login` + Bearer `POST /v1/usage/snapshots`) into the public Usage AI pool. Not install hosting. |
 
 Do not re-attach install scripts to GH Releases. Keep public one-liners pointing at
 the website.
@@ -238,7 +257,7 @@ the website.
 
 - **Requires Grok Insider account** (Sign in with X once via device flow).
 - **Login:** `spanreed share login` → browser `/spanreed/link` → approve.
-- **Automatic:** `spanreed setup` enables **once-per-day** auto-share
+- **Opt-in:** `spanreed setup` can enable **once-per-day** auto-share only after an affirmative choice; `--yes` keeps sharing and client wiring disabled. `spanreed privacy metrics on` explicitly enables publication consent. The schedule uses
   (`src/share_schedule.rs`): preferred evening timer (**23:00 Europe/Madrid** /
   local) **plus** login / missed-run catch-up (systemd `Persistent` + login
   oneshot; macOS `RunAtLoad`; Windows `StartWhenAvailable` + logon).
@@ -248,31 +267,3 @@ the website.
   (`src/share.rs`). Vote = server `user_id`; install id is device-only.
 - Site `/spanreed` is **metrics only** (public summary). Link page for CLI.
 - Workspace notes: `grok-insider/docs/spanreed.md`.
-
-## Cursor Cloud specific instructions
-
-Durable notes for cloud agents. Standard commands live in **Key commands** /
-**Local quality gates** above and in `CONTRIBUTING.md`; this section only records
-non-obvious gotchas.
-
-- **Toolchain must be `stable`, not the VM default.** A transitive dependency
-  (`time 0.3.47`) needs `edition2024`, which requires stable Rust ≥ 1.85. The
-  base VM ships an older pinned default; the startup update script installs and
-  defaults `stable` (with `rustfmt` + `clippy`) and runs `cargo fetch --locked`,
-  so `cargo build/clippy/test` work out of the box. If `cargo` reports
-  `feature 'edition2024' is required`, run `rustup default stable`.
-- **Tests: keep `SPANREED_OFFLINE=1`.** Without it the pricing layer tries to
-  fetch LiteLLM prices over the network (`tests/cli.rs` already sets it, but the
-  in-module tests rely on the env var when run ad hoc).
-- **No real provider credentials in the cloud VM.** `spanreed probe` prints
-  "No providers detected". To exercise the detect → probe → render pipeline, set
-  an env-key provider such as `ZAI_API_KEY=<anything>` (see `src/providers/zai.rs`);
-  detection turns on and a live probe runs (returns a red error badge with a fake
-  key, which is the expected happy path for verifying the pipeline).
-- **Local HTTP API:** `spanreed serve [--interval S]` listens on
-  `127.0.0.1:6736` with `/health` and `/usage`. The first request blocks until
-  the initial background probe completes, so allow a few seconds before curling.
-- **`tray` feature needs system libs** (`libgtk-3-dev`, `libxdo-dev`,
-  `libayatana-appindicator3-dev`, `pkg-config`) that are **not** installed here.
-  The default CLI build/test/lint does not need them; only add them if you build
-  or `cargo check --features tray`.

@@ -72,7 +72,11 @@ fn discover_key() -> Option<String> {
         }
     }
     // 4) OpenCode auth.json: { synthetic: { key } }
-    if let Some(v) = creds::read_json(&creds::data_home().join("opencode").join("auth.json")) {
+    if let Some(v) = creds::read_json(
+        &creds::opencode::data_home()
+            .join("opencode")
+            .join("auth.json"),
+    ) {
         if let Some(k) = key_from_provider_map(&v, "key") {
             return Some(k);
         }

@@ -453,7 +453,8 @@ impl Provider for Grok {
     }
 
     fn detect(&self) -> bool {
-        auth_path().exists()
+        // Host accounts are probed separately as grok/<alias>.
+        crate::accounts::list_provider("grok").is_empty() && auth_path().exists()
     }
 
     fn probe(&self) -> ProviderOutput {
@@ -513,7 +514,11 @@ impl Provider for Grok {
         ));
 
         let plan = fetch_plan(&auth.token);
-        ProviderOutput::new(ID, NAME, lines).with_plan(plan)
+        let reset_inventory = crate::resets::grok(&auth.token);
+        crate::resets::append_lines(&mut lines, &reset_inventory);
+        let mut output = ProviderOutput::new(ID, NAME, lines).with_plan(plan);
+        output.reset_inventory = Some(reset_inventory);
+        output
     }
 }
 

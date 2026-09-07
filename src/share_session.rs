@@ -141,7 +141,7 @@ pub fn parse_device_code_json(body: &str) -> Result<PendingLogin, String> {
         .get("verification_uri_complete")
         .and_then(|x| x.as_str())
         .or_else(|| v.get("verification_uri").and_then(|x| x.as_str()))
-        .unwrap_or("https://grokinsider.net/open-usage/link")
+        .unwrap_or("https://fabrials.com/apps/spanreed/link")
         .to_string();
     let interval_secs = v
         .get("interval")

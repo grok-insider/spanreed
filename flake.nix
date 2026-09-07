@@ -25,6 +25,88 @@
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = lib.genAttrs systems;
 
+      desktopFor = system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          version = (lib.importTOML ./desktop/src-tauri/Cargo.toml).package.version;
+          # Keep source builds independent from local node_modules, target and dist.
+          source = lib.cleanSourceWith {
+            src = ./.;
+            filter = path: type:
+              !(builtins.elem (builtins.baseNameOf path) [ "target" "node_modules" "dist" ".git" ]);
+          };
+          nodeModules = pkgs.stdenvNoCC.mkDerivation {
+            pname = "spanreed-desktop-node-modules";
+            inherit version;
+            src = source;
+            nativeBuildInputs = [ pkgs.bun pkgs.cacert ];
+            dontConfigure = true;
+            dontFixup = true;
+            buildPhase = ''
+              export HOME="$TMPDIR/home"
+              mkdir -p "$HOME"
+              export BUN_INSTALL_CACHE_DIR="$TMPDIR/bun-cache"
+              cd desktop
+              bun install --frozen-lockfile --ignore-scripts --no-progress --cpu '*' --os linux
+            '';
+            installPhase = ''
+              cp -R node_modules "$out"
+            '';
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-8jVjt6lU36rzS0xZkrbfifZdCoP2IgwaRnIj4GobhcM=";
+          };
+        in pkgs.rustPlatform.buildRustPackage {
+          pname = "spanreed-desktop";
+          inherit version;
+          src = source;
+          cargoRoot = "desktop/src-tauri";
+          buildAndTestSubdir = "desktop/src-tauri";
+          cargoLock.lockFile = ./desktop/src-tauri/Cargo.lock;
+          buildFeatures = [ "tauri/custom-protocol" ];
+          nativeBuildInputs = [ pkgs.bun pkgs.nodejs pkgs.pkg-config pkgs.wrapGAppsHook3 pkgs.makeWrapper ];
+          buildInputs = [ pkgs.gtk3 pkgs.webkitgtk_4_1 pkgs.libayatana-appindicator pkgs.openssl pkgs.librsvg pkgs.glib-networking ];
+          preBuild = ''
+            cp -R ${nodeModules} desktop/node_modules
+            chmod -R u+w desktop/node_modules
+            # Local UI source must not come from the fixed-output dependency cache.
+            rm -rf desktop/node_modules/@fabrials/ui
+            ln -s ../../vendor/fabrials-ui desktop/node_modules/@fabrials/ui
+            patchShebangs desktop/node_modules
+            (cd desktop && bun run build)
+          '';
+          postInstall = ''
+            install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/com.fabrials.spanreed.png"
+            mkdir -p "$out/share/applications"
+            cat > "$out/share/applications/com.fabrials.spanreed.desktop" <<EOF
+            [Desktop Entry]
+            Type=Application
+            Name=Spanreed
+            Comment=Your AI accounts and usage, on your machine
+            Exec=spanreed-desktop
+            Icon=com.fabrials.spanreed
+            Categories=Development;Utility;
+            Terminal=false
+            StartupWMClass=spanreed-desktop
+            EOF
+          '';
+          dontWrapGApps = true;
+          postFixup = ''
+            wrapProgram "$out/bin/spanreed-desktop" \
+              --prefix PATH : "${lib.makeBinPath [ pkgs.libsecret pkgs.xdg-utils pkgs.libnotify ]}" \
+              --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath [ pkgs.libayatana-appindicator pkgs.gtk3 ]}" \
+              "''${gappsWrapperArgs[@]}"
+          '';
+          passthru = { inherit nodeModules; };
+          meta = {
+            description = "Local AI accounts, usage and routing console";
+            homepage = "https://fabrials.com";
+            mainProgram = "spanreed-desktop";
+            license = lib.licenses.mit;
+            platforms = systems;
+          };
+        };
+
       packageFor = system:
         let
           pkgs = import nixpkgs { inherit system; };
@@ -96,15 +178,21 @@
       packages = forAllSystems (system: rec {
         default = packageFor system;
         spanreed = default;
+        spanreed-desktop = desktopFor system;
       });
 
       overlays.default = final: prev: {
         spanreed = self.packages.${prev.stdenv.hostPlatform.system}.default;
+        spanreed-desktop = self.packages.${prev.stdenv.hostPlatform.system}.spanreed-desktop;
       };
 
       formatter = forAllSystems (system: (import nixpkgs { inherit system; }).nixfmt-rfc-style);
 
       apps = forAllSystems (system: {
+        desktop = {
+          type = "app";
+          program = "${self.packages.${system}.spanreed-desktop}/bin/spanreed-desktop";
+        };
         default = {
           type = "app";
           program = "${self.packages.${system}.default}/bin/spanreed";
@@ -124,6 +212,16 @@
               default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
               defaultText = lib.literalExpression "spanreed.packages.\${pkgs.stdenv.hostPlatform.system}.default";
               description = "spanreed package to install.";
+            };
+
+            desktop = {
+              enable = lib.mkEnableOption "Spanreed Desktop local console";
+              package = lib.mkOption {
+                type = lib.types.package;
+                default = self.packages.${pkgs.stdenv.hostPlatform.system}.spanreed-desktop;
+                defaultText = lib.literalExpression "spanreed.packages.\${pkgs.stdenv.hostPlatform.system}.spanreed-desktop";
+                description = "Spanreed Desktop package to install alongside the CLI.";
+              };
             };
 
             serve = {
@@ -148,14 +246,16 @@
                 type = lib.types.bool;
                 default = false;
                 description = ''
-                  Run `spanreed capture serve` as a user service: dual reverse
-                  proxies that record official Grok/xAI API usage for Last 30 Days.
+                  Run `spanreed capture serve` as a user service: one fabric on
+                  grokCliBind (default 127.0.0.1:18736) that records official
+                  Grok/xAI API usage for Last 30 Days.
 
-                  Default binds:
-                    127.0.0.1:18736 → cli-chat-proxy.grok.com  (Grok CLI)
-                    127.0.0.1:18737 → api.x.ai                 (OpenCode xAI)
+                    /v1        → cli-chat-proxy.grok.com  (Grok Build, SuperGrok inject)
+                    /xai/v1    → api.x.ai                 (OpenCode, client token)
+                    /acct/ID/… → same, pinned account
 
-                  Point clients at those base URLs (wrappers / OpenCode baseURL).
+                  Point Grok Build at http://127.0.0.1:18736/v1 and OpenCode
+                  provider.xai.options.baseURL at http://127.0.0.1:18736/xai/v1.
                   Set egressProxy so upstream still uses your geo VPN (e.g. sing-box).
                 '';
               };
@@ -163,13 +263,17 @@
               grokCliBind = lib.mkOption {
                 type = lib.types.str;
                 default = "127.0.0.1:18736";
-                description = "Local bind for Grok CLI capture (upstream cli-chat-proxy.grok.com).";
+                description = "Local bind for the capture fabric (path selects upstream).";
               };
 
               xaiApiBind = lib.mkOption {
-                type = lib.types.str;
-                default = "127.0.0.1:18737";
-                description = "Local bind for OpenCode/api.x.ai capture.";
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                example = "127.0.0.1:18737";
+                description = ''
+                  Optional compat listener that treats bare /v1 as /xai/v1
+                  (old OpenCode configs on :18737). Null (default): fabric only.
+                '';
               };
 
               egressProxy = lib.mkOption {
@@ -204,7 +308,7 @@
           };
 
           config = lib.mkIf cfg.enable {
-            home.packages = [ cfg.package ];
+            home.packages = [ cfg.package ] ++ lib.optionals cfg.desktop.enable [ cfg.desktop.package ];
 
             systemd.user.services.spanreed = lib.mkIf cfg.serve.enable {
               Unit = {
@@ -230,15 +334,19 @@
               };
 
               Service = {
-                ExecStart = lib.concatStringsSep " " [
-                  "${cfg.package}/bin/spanreed"
-                  "capture"
-                  "serve"
-                  "--grok-cli-bind"
-                  cfg.capture.grokCliBind
-                  "--xai-api-bind"
-                  cfg.capture.xaiApiBind
-                ];
+                ExecStart = lib.concatStringsSep " " (
+                  [
+                    "${cfg.package}/bin/spanreed"
+                    "capture"
+                    "serve"
+                    "--grok-cli-bind"
+                    cfg.capture.grokCliBind
+                  ]
+                  ++ lib.optionals (cfg.capture.xaiApiBind != null) [
+                    "--xai-api-bind"
+                    cfg.capture.xaiApiBind
+                  ]
+                );
                 Restart = "on-failure";
                 RestartSec = 3;
                 Environment = lib.mkIf (cfg.capture.egressProxy != null) [
@@ -271,6 +379,7 @@
 
       checks = forAllSystems (system: {
         default = self.packages.${system}.default;
+        desktop = self.packages.${system}.spanreed-desktop;
       });
 
       devShells = forAllSystems (system:
@@ -279,7 +388,11 @@
         in
         {
           default = pkgs.mkShell {
+            shellHook = ''
+              export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.libayatana-appindicator pkgs.gtk3 ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            '';
             packages = [
+              pkgs.bun
               pkgs.cargo
               pkgs.rustc
               pkgs.rustfmt
@@ -288,6 +401,10 @@
               pkgs.libsecret
               pkgs.pkg-config
               pkgs.gtk3
+              pkgs.webkitgtk_4_1
+              pkgs.dbus
+              pkgs.openssl
+              pkgs.librsvg
               pkgs.libayatana-appindicator
               pkgs.xdotool
               pkgs.libnotify

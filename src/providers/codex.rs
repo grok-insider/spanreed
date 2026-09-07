@@ -175,25 +175,39 @@ fn refresh_if_needed(
     Ok(())
 }
 
+/// Display label from `limit_window_seconds` when it matches a known Codex pool.
+/// Review / extra windows keep their fallback so they don't collide with Weekly.
+fn window_label(limit_secs: Option<i64>, fallback: &'static str) -> &'static str {
+    if fallback == "Reviews" || fallback == "Extra" {
+        return fallback;
+    }
+    match limit_secs {
+        Some(18_000) => "5h",
+        Some(604_800) => "Weekly",
+        _ => fallback,
+    }
+}
+
 fn parse_codex_window(
     win: &serde_json::Value,
-    label: &'static str,
+    fallback: &'static str,
     now_sec: i64,
 ) -> Option<crate::usage_stats::RateWindow> {
     let used = win.get("used_percent")?.as_f64()?;
     let api_reset = win.get("reset_at").and_then(|r| r.as_i64());
     let limit = win.get("limit_window_seconds").and_then(|v| v.as_i64());
+    let label = window_label(limit, fallback);
     crate::usage_stats::RateWindow::from_codex_fields(label, used, api_reset, limit, now_sec)
 }
 
 fn window_progress(
     win: &serde_json::Value,
-    label: &'static str,
+    fallback: &'static str,
     now_sec: i64,
 ) -> Option<MetricLine> {
-    let w = parse_codex_window(win, label, now_sec)?;
+    let w = parse_codex_window(win, fallback, now_sec)?;
     let resets = util::ms_to_iso(w.resets_at_ms);
-    Some(MetricLine::percent(label, w.used_percent, resets))
+    Some(MetricLine::percent(w.label, w.used_percent, resets))
 }
 
 /// Weekly epoch start from `secondary_window` (`reset_at − limit_window_seconds`).
@@ -217,6 +231,19 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
                 lines.push(l);
             }
         }
+        if let Some(obj) = rl.as_object() {
+            for (key, w) in obj {
+                if key == "primary_window" || key == "secondary_window" {
+                    continue;
+                }
+                if !w.is_object() {
+                    continue;
+                }
+                if let Some(l) = window_progress(w, "Extra", now_sec) {
+                    lines.push(l);
+                }
+            }
+        }
     }
 
     if let Some(review) = data
@@ -229,11 +256,23 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
     }
 
     if let Some(credits) = data.get("credits") {
-        if credits
+        let unlimited = credits
+            .get("unlimited")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let has = credits
             .get("has_credits")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        if unlimited {
+            lines.push(MetricLine::Text {
+                kind: MetricKind::Plan,
+                label: "Credits".into(),
+                value: "unlimited".into(),
+                color: None,
+                subtitle: None,
+            });
+        } else if has {
             if let Some(balance) = credits.get("balance").and_then(|v| v.as_f64()) {
                 lines.push(MetricLine::Text {
                     kind: MetricKind::Plan,
@@ -251,7 +290,8 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
 
 fn build_plan(data: &serde_json::Value) -> Option<String> {
     let plan = data.get("plan_type").and_then(|v| v.as_str())?;
-    let label = util::plan_label(plan);
+    let normalized = plan.replace(['_', '-'], " ");
+    let label = util::plan_label(&normalized);
     if label.is_empty() {
         None
     } else {
@@ -281,7 +321,12 @@ impl Provider for Codex {
     }
 
     fn detect(&self) -> bool {
-        auth_paths().iter().any(|p| p.exists()) || secret::exists(KEYCHAIN_SERVICE)
+        if auth_paths().iter().any(|p| p.exists()) || secret::exists(KEYCHAIN_SERVICE) {
+            return true;
+        }
+        // Sessions dir without auth still surfaces a login error instead of hiding Codex.
+        creds::expand("~/.codex").join("sessions").is_dir()
+            || creds::config_home().join("codex").join("sessions").is_dir()
     }
 
     fn probe(&self) -> ProviderOutput {
@@ -341,6 +386,8 @@ impl Provider for Codex {
         };
         let plan = build_plan(&data);
         let mut lines = parse_usage(&data);
+        let reset_inventory = crate::resets::codex(&access_token, account_id.as_deref(), &data);
+        crate::resets::append_lines(&mut lines, &reset_inventory);
         if lines.is_empty() {
             return ProviderOutput::error(ID, NAME, "no usage windows returned");
         }
@@ -386,7 +433,11 @@ impl Provider for Codex {
             ));
         }
         lines.extend(cost);
-        ProviderOutput::new(ID, NAME, lines).with_plan(plan)
+        {
+            let mut output = ProviderOutput::new(ID, NAME, lines).with_plan(plan);
+            output.reset_inventory = Some(reset_inventory);
+            output
+        }
     }
 }
 
@@ -417,7 +468,7 @@ mod tests {
             "credits": { "has_credits": true, "unlimited": false, "balance": 5.39 }
         });
         let lines = parse_usage(&data);
-        assert_eq!(used(&lines, "Session"), Some(6.0));
+        assert_eq!(used(&lines, "5h"), Some(6.0));
         assert_eq!(used(&lines, "Weekly"), Some(24.0));
         assert_eq!(used(&lines, "Reviews"), Some(2.0));
         // credits surface as a text line
@@ -468,5 +519,30 @@ mod tests {
         assert!(!lines
             .iter()
             .any(|l| matches!(l, MetricLine::Text { label, .. } if label == "Credits")));
+    }
+
+    #[test]
+    fn plan_type_hyphens_and_team() {
+        let team = serde_json::json!({ "plan_type": "team" });
+        assert_eq!(build_plan(&team).as_deref(), Some("Team"));
+        let ent = serde_json::json!({ "plan_type": "enterprise" });
+        assert_eq!(build_plan(&ent).as_deref(), Some("Enterprise"));
+        let plus = serde_json::json!({ "plan_type": "plus_team" });
+        assert_eq!(build_plan(&plus).as_deref(), Some("Plus Team"));
+    }
+
+    #[test]
+    fn unlimited_credits_and_extra_window() {
+        let data = serde_json::json!({
+            "rate_limit": {
+                "primary_window": { "used_percent": 1, "reset_at": 1, "limit_window_seconds": 18000 },
+                "tertiary_window": { "used_percent": 9, "reset_at": 2, "limit_window_seconds": 86400 }
+            },
+            "credits": { "has_credits": true, "unlimited": true, "balance": 0 }
+        });
+        let lines = parse_usage(&data);
+        assert_eq!(used(&lines, "5h"), Some(1.0));
+        assert_eq!(used(&lines, "Extra"), Some(9.0));
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Text { label, value, .. } if label == "Credits" && value == "unlimited")));
     }
 }

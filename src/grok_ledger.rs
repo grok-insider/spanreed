@@ -1,130 +1,71 @@
-//! Local ledger of official Grok/xAI API usage records.
+//! Local SQLite ledger of captured API usage, with Grok-specific metric projections.
 //!
-//! Records are written by the external `ai-relay` capture worker when it
-//! observes a completed Responses API call with a `usage` object. Probe reads
-//! this file for accurate Last-30-Days totals — never invents tokens from
-//! session context.
+//! Records are written by capture and [`crate::grok_proxy`] after completed calls.
+//! Probe reads the shared database for
+//! accurate Last-30-Days totals — never invents tokens from session context.
 //!
 //! Dollar estimates use **public API list prices** from [`crate::pricing`]
 //! (Grok 4.5: $2 / $0.30 cached / $6 per MTok, with xAI's all-or-nothing
 //! ≥200k long-context tier). Subscription-internal `cost_in_usd_ticks` are
-//! still recorded for reference but are not what we display — SuperGrok
+//! still captured for reference but are not what we display — SuperGrok
 //! pool ticks are not public API rates.
 
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
-
 use crate::model::{BarChartPoint, MetricKind, MetricLine};
-use crate::pricing;
 use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
+use fabrials_metrics::list_cost_usd;
 
 /// Rolling window: today plus the previous 30 days.
 const WINDOW_DAYS: i64 = 31;
 const DAY_MS: i64 = 86_400_000;
-const TICKS_PER_USD: f64 = 1_000_000_000.0;
 
-/// One completed API call's official usage (from Responses `usage`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct UsageRecord {
-    pub ts_ms: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub input_tokens: u64,
-    #[serde(default)]
-    pub output_tokens: u64,
-    #[serde(default)]
-    pub cached_input_tokens: u64,
-    #[serde(default)]
-    pub reasoning_tokens: u64,
-    #[serde(default)]
-    pub total_tokens: u64,
-    /// xAI `cost_in_usd_ticks` (1e9 ticks = $1). Zero when not provided.
-    #[serde(default)]
-    pub cost_usd_ticks: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-}
+pub use fabrials_model::UsageRecord;
 
-impl UsageRecord {
-    pub fn tokens_for_total(&self) -> u64 {
-        if self.total_tokens > 0 {
-            self.total_tokens
-        } else {
-            self.input_tokens.saturating_add(self.output_tokens)
-        }
-    }
-
-    /// Subscription-internal ticks from the API (not public list price).
-    #[allow(dead_code)]
-    pub fn ticks_usd(&self) -> Option<f64> {
-        if self.cost_usd_ticks > 0 {
-            Some(self.cost_usd_ticks as f64 / TICKS_PER_USD)
-        } else {
-            None
-        }
-    }
-
-    /// Public API list-price USD for this record, or None if the model is unknown.
-    ///
-    /// xAI long-context rule ([docs](https://docs.x.ai/developers/pricing)):
-    /// when prompt tokens ≥ 200k, **all** token types in the request use the
-    /// higher rate (not progressive Anthropic-style tiers).
-    pub fn list_cost_usd(&self) -> Option<f64> {
-        let model = self
-            .model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())?;
-        let p = pricing::table().find(model)?;
-        let cached = self.cached_input_tokens.min(self.input_tokens);
-        let uncached = self.input_tokens.saturating_sub(cached);
-        const TIER: u64 = 200_000;
-        let long = self.input_tokens >= TIER;
-        let (rin, rcache, rout) = if long {
-            (
-                p.input_above_200k.unwrap_or(p.input),
-                p.cache_read_above_200k.unwrap_or(p.cache_read),
-                p.output_above_200k.unwrap_or(p.output),
-            )
-        } else {
-            (p.input, p.cache_read, p.output)
-        };
-        Some(uncached as f64 * rin + cached as f64 * rcache + self.output_tokens as f64 * rout)
-    }
-}
-
-/// Path to the append-only ledger JSONL.
+/// Shared local usage database. The legacy JSONL remains available for recovery.
 pub fn ledger_path() -> PathBuf {
-    crate::app::data_dir().join("grok-usage.jsonl")
+    crate::app::data_dir().join("runtime.sqlite3")
 }
 
-/// Read all ledger records with `ts_ms` in `[cutoff, now]`.
+fn store() -> Result<fabrials_runtime::hops::HopStore, String> {
+    let mut store = fabrials_runtime::hops::HopStore::open(&ledger_path())?;
+    store.import_jsonl_once(
+        "local",
+        "grok-usage.jsonl.v1",
+        &crate::app::data_dir().join("grok-usage.jsonl"),
+    )?;
+    Ok(store)
+}
+
+pub fn ensure_store() -> Result<(), String> {
+    store().map(|_| ())
+}
+
+pub fn append(record: &UsageRecord) -> Result<(), String> {
+    store()?.append("local", record).map(|_| ())
+}
+
+/// Only Grok records contribute to Grok metrics; other providers share storage.
 pub fn read_window(now_ms: i64) -> Vec<UsageRecord> {
-    let cutoff = now_ms - WINDOW_DAYS * DAY_MS;
-    let path = ledger_path();
-    let Ok(f) = std::fs::File::open(path) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for line in BufReader::new(f).lines().map_while(Result::ok) {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(rec) = serde_json::from_str::<UsageRecord>(line) else {
-            continue;
-        };
-        if rec.ts_ms >= cutoff && rec.ts_ms <= now_ms + DAY_MS {
-            out.push(rec);
+    match store().and_then(|store| {
+        store.read_window(
+            "local",
+            Some("grok"),
+            now_ms - WINDOW_DAYS * DAY_MS,
+            now_ms + DAY_MS,
+        )
+    }) {
+        Ok(records) => records,
+        Err(error) => {
+            log::warn!("Grok usage ledger unavailable: {error}");
+            Vec::new()
         }
     }
-    out
+}
+
+pub fn recent_hops() -> Result<Vec<UsageRecord>, String> {
+    store()?.recent("local", 200)
 }
 
 /// Aggregate ledger into Last-30-Days lines. Returns empty when no capture data.
@@ -143,8 +84,33 @@ pub fn cost_lines_with_forecast(
     weekly_pct: Option<f64>,
     week_end_ms: Option<i64>,
 ) -> Vec<MetricLine> {
+    cost_lines_filtered(None, weekly_start_ms, weekly_pct, week_end_ms)
+}
+
+/// Last-30-Days / forecast for one host account (`grok/heavy`).
+pub fn cost_lines_for_account(
+    account_id: &str,
+    weekly_start_ms: Option<i64>,
+    weekly_pct: Option<f64>,
+    week_end_ms: Option<i64>,
+) -> Vec<MetricLine> {
+    cost_lines_filtered(Some(account_id), weekly_start_ms, weekly_pct, week_end_ms)
+}
+
+fn cost_lines_filtered(
+    account_id: Option<&str>,
+    weekly_start_ms: Option<i64>,
+    weekly_pct: Option<f64>,
+    week_end_ms: Option<i64>,
+) -> Vec<MetricLine> {
     let now = util::now_ms();
-    let recs = read_window(now);
+    let recs: Vec<_> = read_window(now)
+        .into_iter()
+        .filter(|r| match account_id {
+            Some(id) => r.account_id.as_deref() == Some(id),
+            None => r.account_id.is_none(),
+        })
+        .collect();
     if recs.is_empty() {
         let hint = empty_capture_hint();
         return vec![MetricLine::text(MetricKind::Cost, "Last 30 Days", hint)];
@@ -165,12 +131,11 @@ fn empty_capture_hint() -> String {
 fn capture_ports_up() -> bool {
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
-    ["127.0.0.1:18736", "127.0.0.1:18737"].iter().all(|a| {
-        a.parse::<SocketAddr>()
-            .ok()
-            .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(150)).ok())
-            .is_some()
-    })
+    "127.0.0.1:18736"
+        .parse::<SocketAddr>()
+        .ok()
+        .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(150)).ok())
+        .is_some()
 }
 
 fn lines_from_records(
@@ -194,7 +159,7 @@ fn lines_from_records(
         let tok = r.tokens_for_total();
         total_tokens = total_tokens.saturating_add(tok);
         // Public API list price (not SuperGrok subscription ticks).
-        let cost = match r.list_cost_usd() {
+        let cost = match list_cost_usd(r) {
             Some(c) => {
                 has_cost = true;
                 tokens_with_cost = tokens_with_cost.saturating_add(tok);
@@ -269,7 +234,7 @@ fn lines_from_records(
             }
             let tok = r.tokens_for_total();
             win_tokens = win_tokens.saturating_add(tok);
-            if let Some(c) = r.list_cost_usd() {
+            if let Some(c) = list_cost_usd(r) {
                 win_has_cost = true;
                 win_cost += c;
                 win_tokens_with_cost = win_tokens_with_cost.saturating_add(tok);
@@ -345,27 +310,174 @@ fn ms_to_ymd(ms: i64) -> Option<String> {
     ))
 }
 
+/// Parse official usage from a Responses API JSON object or SSE body.
+pub fn usage_from_response_body(body: &str) -> Option<UsagePartial> {
+    // Try whole body as JSON first.
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) {
+        if let Some(u) = usage_from_json(&v) {
+            return Some(u);
+        }
+    }
+    // SSE: find last `response.completed` (or any object with usage).
+    let mut best: Option<UsagePartial> = None;
+    for line in body.lines() {
+        let line = line.trim();
+        let payload = line.strip_prefix("data: ").unwrap_or(line);
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
+            continue;
+        };
+        if let Some(u) = usage_from_json(&v) {
+            best = Some(u);
+        }
+    }
+    best
+}
+
+#[derive(Debug, Clone)]
+pub struct UsagePartial {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub reasoning_tokens: u64,
+    pub total_tokens: u64,
+    pub cost_usd_ticks: u64,
+    pub model: Option<String>,
+    pub request_id: Option<String>,
+}
+
+fn usage_from_json(v: &serde_json::Value) -> Option<UsagePartial> {
+    // response.completed shape: { type, response: { usage, model, id } }
+    let response = v.get("response").filter(|r| r.is_object()).unwrap_or(v);
+    let usage = response.get("usage").or_else(|| v.get("usage"))?;
+    if !usage.is_object() {
+        return None;
+    }
+    let num = |k: &str| -> u64 {
+        usage
+            .get(k)
+            .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
+            .unwrap_or(0)
+    };
+    let input = num("input_tokens").max(num("prompt_tokens"));
+    let output = num("output_tokens").max(num("completion_tokens"));
+    let total = num("total_tokens");
+    let cached = usage
+        .get("input_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
+        .unwrap_or(0);
+    let reasoning = usage
+        .get("output_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
+        .unwrap_or(0);
+    let cost_ticks = usage
+        .get("cost_in_usd_ticks")
+        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
+        .unwrap_or(0);
+
+    if input == 0 && output == 0 && total == 0 && cost_ticks == 0 {
+        return None;
+    }
+
+    let model = response
+        .get("model")
+        .or_else(|| v.get("model"))
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string());
+    let request_id = response
+        .get("id")
+        .or_else(|| v.get("id"))
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string());
+
+    Some(UsagePartial {
+        input_tokens: input,
+        output_tokens: output,
+        cached_input_tokens: cached,
+        reasoning_tokens: reasoning,
+        total_tokens: if total > 0 {
+            total
+        } else {
+            input.saturating_add(output)
+        },
+        cost_usd_ticks: cost_ticks,
+        model,
+        request_id,
+    })
+}
+
+impl UsagePartial {
+    pub fn into_record(
+        self,
+        ts_ms: i64,
+        session_id: Option<String>,
+        account_id: Option<String>,
+        route: Option<String>,
+    ) -> UsageRecord {
+        UsageRecord {
+            ts_ms,
+            session_id,
+            model: self.model,
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cached_input_tokens: self.cached_input_tokens,
+            reasoning_tokens: self.reasoning_tokens,
+            total_tokens: self.total_tokens,
+            cost_usd_ticks: self.cost_usd_ticks,
+            request_id: self.request_id,
+            account_id,
+            route,
+            provider: None,
+            ..Default::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn list_cost_matches_public_rates() {
-        // 60 unc * $2/M + 40 cache * $0.30/M + 20 out * $6/M
-        let rec = UsageRecord {
-            ts_ms: 1_000,
-            session_id: Some("sess".into()),
-            model: Some("grok-4.5".into()),
-            input_tokens: 100,
-            output_tokens: 20,
-            cached_input_tokens: 40,
-            reasoning_tokens: 5,
-            total_tokens: 120,
-            cost_usd_ticks: 500_000_000,
-            request_id: Some("resp_1".into()),
+    fn old_jsonl_roundtrip_without_account() {
+        let rec: UsageRecord = serde_json::from_str(r#"{"ts_ms":1,"input_tokens":10}"#).unwrap();
+        assert!(rec.account_id.is_none());
+        assert!(rec.route.is_none());
+        let tagged = UsageRecord {
+            ts_ms: 2,
+            input_tokens: 5,
+            account_id: Some("grok/heavy".into()),
+            route: Some("grok".into()),
+            ..Default::default()
         };
+        let s = serde_json::to_string(&tagged).unwrap();
+        assert!(s.contains("grok/heavy"));
+        let back: UsageRecord = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.account_id.as_deref(), Some("grok/heavy"));
+    }
+
+    #[test]
+    fn parses_response_completed_usage() {
+        let body = r#"data: {"type":"response.created"}
+data: {"type":"response.completed","response":{"id":"resp_1","model":"grok-4.5","usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120,"input_tokens_details":{"cached_tokens":40},"output_tokens_details":{"reasoning_tokens":5},"cost_in_usd_ticks":500000000}}}
+data: [DONE]
+"#;
+        let u = usage_from_response_body(body).unwrap();
+        assert_eq!(u.input_tokens, 100);
+        assert_eq!(u.output_tokens, 20);
+        assert_eq!(u.cached_input_tokens, 40);
+        assert_eq!(u.reasoning_tokens, 5);
+        assert_eq!(u.total_tokens, 120);
+        assert_eq!(u.cost_usd_ticks, 500_000_000);
+        assert_eq!(u.model.as_deref(), Some("grok-4.5"));
+        assert_eq!(u.request_id.as_deref(), Some("resp_1"));
+        let rec = u.into_record(1_000, Some("sess".into()), None, Some("grok".into()));
         assert!((rec.ticks_usd().unwrap() - 0.5).abs() < 1e-9);
-        let list = rec.list_cost_usd().unwrap();
+        // Public list: 60 unc * $2/M + 40 cache * $0.30/M + 20 out * $6/M
+        let list = list_cost_usd(&rec).unwrap();
         let expected = 60.0 * 2e-6 + 40.0 * 3e-7 + 20.0 * 6e-6;
         assert!(
             (list - expected).abs() < 1e-12,
@@ -386,14 +498,21 @@ mod tests {
             total_tokens: 201_000,
             cost_usd_ticks: 0,
             request_id: None,
+            ..Default::default()
         };
         // All tokens at long rates: unc 100k * $4/M + cache 100k * $0.60/M + out 1k * $12/M
         let expected = 100_000.0 * 4e-6 + 100_000.0 * 6e-7 + 1_000.0 * 1.2e-5;
-        let got = rec.list_cost_usd().unwrap();
+        let got = list_cost_usd(&rec).unwrap();
         assert!(
             (got - expected).abs() < 1e-9,
             "got={got} expected={expected}"
         );
+    }
+
+    #[test]
+    fn ignores_body_without_usage() {
+        assert!(usage_from_response_body("data: {\"type\":\"ping\"}\n").is_none());
+        assert!(usage_from_response_body("").is_none());
     }
 
     #[test]
@@ -423,6 +542,7 @@ mod tests {
                 total_tokens: 1100,
                 cost_usd_ticks: 1_000_000_000, // ticks ignored for $ display
                 request_id: Some("a".into()),
+                ..Default::default()
             },
             UsageRecord {
                 ts_ms: 1_700_086_400_000, // next day
@@ -435,6 +555,7 @@ mod tests {
                 total_tokens: 250,
                 cost_usd_ticks: 0,
                 request_id: Some("b".into()),
+                ..Default::default()
             },
         ];
         let lines = lines_from_records(&recs, None, None, None);
@@ -501,6 +622,7 @@ mod tests {
             total_tokens: 110,
             cost_usd_ticks: 500_000_000,
             request_id: Some("only".into()),
+            ..Default::default()
         }];
         let lines = lines_from_records(&recs, None, None, None);
         let last30 = lines.iter().find_map(|l| match l {
@@ -536,6 +658,7 @@ mod tests {
                 total_tokens: 1_000_000,
                 cost_usd_ticks: 0,
                 request_id: Some("priced".into()),
+                ..Default::default()
             },
             UsageRecord {
                 ts_ms: 6_000,
@@ -548,6 +671,7 @@ mod tests {
                 total_tokens: 50,
                 cost_usd_ticks: 0,
                 request_id: Some("bare".into()),
+                ..Default::default()
             },
         ];
         let lines = lines_from_records(&recs, Some(4_000), None, None);
@@ -581,6 +705,7 @@ mod tests {
                 total_tokens: 100,
                 cost_usd_ticks: 0,
                 request_id: Some("old".into()),
+                ..Default::default()
             },
             UsageRecord {
                 ts_ms: 5_000,
@@ -593,6 +718,7 @@ mod tests {
                 total_tokens: 25,
                 cost_usd_ticks: 0,
                 request_id: Some("new".into()),
+                ..Default::default()
             },
         ];
         let lines = lines_from_records(&recs, Some(4_000), None, None);

@@ -8,6 +8,222 @@ fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_spanreed")
 }
 
+#[test]
+fn capture_runs_independently_with_local_controls_and_closed_credential_boundary() {
+    use std::io::{BufRead, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::process::{Child, Stdio};
+    use std::time::{Duration, Instant};
+    struct Capture {
+        child: Child,
+        directory: std::path::PathBuf,
+    }
+    impl Capture {
+        fn log(&self) -> String {
+            [
+                "data/spanreed/logs/capture.log",
+                "config/spanreed/logs/capture.log",
+                "Library/Application Support/spanreed/logs/capture.log",
+                "stderr.log",
+            ]
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(self.directory.join(path)).ok())
+            .collect::<Vec<_>>()
+            .join("\n")
+        }
+    }
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            if std::thread::panicking() {
+                eprintln!("fixture capture log: {}", self.log());
+            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+    let port = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = port.local_addr().unwrap();
+    let compat_port = TcpListener::bind("127.0.0.1:0").unwrap();
+    let compat_address = compat_port.local_addr().unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "spanreed-capture-{}-{}",
+        std::process::id(),
+        address.port()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    drop(port);
+    drop(compat_port);
+    let child = Command::new(bin())
+        .args([
+            "capture",
+            "serve",
+            "--bind",
+            &address.to_string(),
+            "--xai-api-bind",
+            &compat_address.to_string(),
+        ])
+        .env_clear()
+        // Windows socket providers need the OS directory even in a clean fixture.
+        .envs(
+            ["SystemRoot", "WINDIR"]
+                .into_iter()
+                .filter_map(|name| std::env::var_os(name).map(|value| (name, value))),
+        )
+        .env("HOME", &directory)
+        .env("USERPROFILE", &directory)
+        .env("APPDATA", directory.join("config"))
+        .env("LOCALAPPDATA", directory.join("data"))
+        .env("XDG_CONFIG_HOME", directory.join("config"))
+        .env("XDG_DATA_HOME", directory.join("data"))
+        .env("SPANREED_OFFLINE", "1")
+        .env("AI_RELAY_BIN", directory.join("does-not-exist"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(
+            std::fs::File::create(directory.join("stderr.log")).unwrap(),
+        ))
+        .spawn()
+        .unwrap();
+    let mut capture = Capture { child, directory };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = capture.child.try_wait().unwrap() {
+            panic!("capture exited before listening: {status}");
+        }
+        // A connect before bind can self-connect on a free ephemeral port.
+        let log = capture.log();
+        if log.contains(&format!("listening on http://{address}"))
+            && log.contains(&format!("listening on http://{compat_address}"))
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "capture did not bind");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let request_at = |address: std::net::SocketAddr,
+                      method: &str,
+                      path: &str,
+                      headers: &str,
+                      body: &str| {
+        let mut socket = TcpStream::connect(address).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write!(socket, "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}", body.len()).unwrap();
+        let mut reader = std::io::BufReader::new(socket);
+        let mut response = String::new();
+        let mut length = None;
+        loop {
+            let mut line = String::new();
+            assert!(
+                reader.read_line(&mut line).unwrap_or_else(|error| panic!(
+                    "{method} {path}: {error}; received {response:?}"
+                )) > 0,
+                "{method} {path}: missing response headers"
+            );
+            if let Some((key, value)) = line.split_once(':') {
+                if key.eq_ignore_ascii_case("content-length") {
+                    length = Some(value.trim().parse::<usize>().unwrap());
+                }
+            }
+            response.push_str(&line);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let mut body = vec![0; length.expect("response content length")];
+        reader.read_exact(&mut body).unwrap();
+        response.push_str(std::str::from_utf8(&body).unwrap());
+        response
+    };
+    let request = |method: &str, path: &str, headers: &str, body: &str| {
+        request_at(address, method, path, headers, body)
+    };
+    assert!(
+        request_at(compat_address, "GET", "/health", "", "").contains("\"service\":\"spanreed\"")
+    );
+    let health = request("GET", "/health", "", "");
+    assert!(health.starts_with("HTTP/1.1 200"), "{health}");
+    assert!(health.contains("\"service\":\"spanreed\""));
+    assert!(request("POST", "/health", "", "").starts_with("HTTP/1.1 405"));
+    let environment = request("GET", "/__spanreed/environment", "", "");
+    assert!(environment.starts_with("HTTP/1.1 200"), "{environment}");
+    assert!(environment.contains("environment_id"));
+    assert_eq!(
+        environment,
+        request("GET", "/__spanreed/environment", "", "")
+    );
+    let denied = request(
+        "POST",
+        "/__spanreed/autosteer",
+        "Origin: https://untrusted.example\r\n",
+        r#"{"on":false}"#,
+    );
+    assert!(denied.starts_with("HTTP/1.1 403"), "{denied}");
+    let updated = request(
+        "POST",
+        "/__spanreed/autosteer",
+        "Content-Type: application/json\r\n",
+        r#"{"on":false}"#,
+    );
+    assert!(updated.starts_with("HTTP/1.1 200"), "{updated}");
+    let threshold = request(
+        "POST",
+        "/__spanreed/autosteer",
+        "Content-Type: application/json\r\n",
+        r#"{"on":true,"exhausted_pct":75}"#,
+    );
+    assert!(threshold.starts_with("HTTP/1.1 200"), "{threshold}");
+    assert!(threshold.contains("\"exhausted_pct\":75.0"));
+    let invalid = request(
+        "POST",
+        "/__spanreed/autosteer",
+        "Content-Type: application/json\r\n",
+        r#"{"on":false,"exhausted_pct":0}"#,
+    );
+    assert!(invalid.starts_with("HTTP/1.1 400"), "{invalid}");
+    assert!(request("GET", "/__spanreed/autosteer", "", "").contains("\"exhausted_pct\":75.0"));
+    request(
+        "POST",
+        "/__spanreed/autosteer",
+        "Content-Type: application/json\r\n",
+        r#"{"on":false}"#,
+    );
+    assert!(request("GET", "/__spanreed/autosteer", "", "").contains("\"autosteer\":false"));
+    assert!(request("POST", "/v1/files", "", "{}").starts_with("HTTP/1.1 404"));
+    assert!(request("POST", "/v1/responses", "", r#"{"model":12}"#).starts_with("HTTP/1.1 400"));
+    assert!(request(
+        "POST",
+        "/acct/unknown/nous/v1/responses",
+        "",
+        r#"{"model":"fixture"}"#
+    )
+    .starts_with("HTTP/1.1 503"));
+    assert!(request("GET", "/__spanreed/limits", "", "").starts_with("HTTP/1.1 200"));
+}
+
+#[test]
+fn capture_rejects_invalid_configuration_before_starting_watchdog() {
+    for args in [
+        vec!["capture", "serve", "--bind"],
+        vec!["capture", "serve", "--watchdog", "--bind", "0.0.0.0:12345"],
+        vec!["capture", "serve", "--unknown"],
+        vec![
+            "capture",
+            "serve",
+            "--bind",
+            "127.0.0.1:12345",
+            "--xai-api-bind",
+            "127.0.0.1:12345",
+        ],
+    ] {
+        let (_, stderr, status) = run_full(&args, true);
+        assert!(!status.success(), "{args:?}");
+        assert!(stderr.contains("capture:"), "{stderr}");
+    }
+}
+
 /// Run the binary with args in a clean, isolated HOME so it never touches the
 /// developer's real credentials/logs, and capture stdout.
 fn run(args: &[&str]) -> (String, std::process::ExitStatus) {
@@ -25,8 +241,8 @@ fn run_full(args: &[&str], offline: bool) -> (String, String, std::process::Exit
     let _ = std::fs::create_dir_all(&tmp);
 
     let mut cmd = Command::new(bin());
-    // Isolate all OS profile dirs the `dirs` crate may consult (Windows uses
-    // APPDATA/LOCALAPPDATA, not XDG_* alone).
+    // Explicit home/XDG overrides isolate product paths on every platform;
+    // Windows known-folder APIs alone do not honor redirected profile variables.
     cmd.args(args)
         .env("HOME", &tmp)
         .env("USERPROFILE", &tmp)
@@ -91,6 +307,26 @@ fn list_shows_all_providers() {
 }
 
 #[test]
+fn addon_list_shows_grok_bridge() {
+    let (stdout, status) = run(&["plugin", "list"]);
+    assert!(status.success(), "plugin list: {stdout}");
+    assert!(
+        stdout.contains("grok-bridge"),
+        "expected grok-bridge in\n{stdout}"
+    );
+}
+
+#[test]
+fn account_help_and_empty_list() {
+    let (stdout, status) = run(&["account", "help"]);
+    assert!(status.success(), "account help");
+    assert!(stdout.contains("account add grok"), "{stdout}");
+    let (stdout, status) = run(&["account", "ls"]);
+    assert!(status.success());
+    assert!(stdout.contains("no accounts"), "{stdout}");
+}
+
+#[test]
 fn json_is_valid_array_when_nothing_detected() {
     let (stdout, status) = run(&["json"]);
     assert!(status.success());
@@ -121,9 +357,11 @@ fn help_lists_subcommands() {
         "history",
         "capture",
         "ensure",
+        "grok-proxy",
         "setup",
         "auth",
         "share",
+        "sync",
         "self-update",
         "tray",
     ] {
@@ -149,6 +387,10 @@ fn share_help_documents_auth_subcommands() {
         stdout.contains("SPANREED_API_BASE") || stdout.contains("authenticated"),
         "share help should mention auth/API base\n{stdout}"
     );
+    assert!(
+        stdout.contains("fabrials.com"),
+        "share help should target fabrials.com\n{stdout}"
+    );
 }
 
 #[test]
@@ -163,18 +405,11 @@ fn share_status_without_session_instructs_login() {
 }
 
 #[test]
-fn share_without_session_instructs_login() {
-    // Online path (no OFFLINE) so share attempts auth gate before probe skip.
+fn share_without_consent_stops_before_login_or_probes() {
     let (stdout, stderr, status) = run_full(&["share"], false);
     let combined = format!("{stdout}{stderr}");
-    assert!(
-        !status.success(),
-        "share without session must fail\n{combined}"
-    );
-    assert!(
-        combined.contains("not logged in") || combined.contains("share login"),
-        "expected login instruction\n{combined}"
-    );
+    assert!(!status.success());
+    assert!(combined.contains("privacy metrics on"), "{combined}");
 }
 
 #[test]
@@ -202,6 +437,10 @@ fn setup_status_exits_zero_in_isolated_home() {
     assert!(
         stdout.contains("Tray autostart:"),
         "missing tray autostart line\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Capture fabric:") && stdout.contains("/xai/v1"),
+        "missing fabric routes\n{stdout}"
     );
     // Prefer exit 0 in a fully isolated profile. On Windows the `dirs` crate
     // uses known folders (not APPDATA env), so host Grok/OpenCode wire can
