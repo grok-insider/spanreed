@@ -22,8 +22,13 @@ def run(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
-def api(path):
-    return json.loads(run("gh", "api", f"repos/{REPO}/{path}"))
+def api(path, missing_ok=False):
+    try:
+        return json.loads(run("gh", "api", f"repos/{REPO}/{path}"))
+    except subprocess.CalledProcessError as error:
+        if missing_ok and json.loads(error.output).get("status") == "404":
+            return None
+        raise
 
 
 def git(*args):
@@ -217,11 +222,16 @@ def publish(sha, run_id):
         releases = api("releases?per_page=100")
         release = next((r for r in releases if r["tag_name"] == tag), None)
         if release:
-            remote = api("git/ref/tags/" + tag)["object"]
-            if remote["type"] == "tag":
-                remote = api("git/tags/" + remote["sha"])["object"]
-            if remote["sha"] != sha:
-                raise ValueError("Remote tag conflict")
+            reference = api("git/ref/tags/" + tag, missing_ok=release["draft"])
+            if reference is None:
+                if release.get("target_commitish") != sha:
+                    raise ValueError("Draft target differs from the release SHA")
+            else:
+                remote = reference["object"]
+                if remote["type"] == "tag":
+                    remote = api("git/tags/" + remote["sha"])["object"]
+                if remote["sha"] != sha:
+                    raise ValueError("Remote tag conflict")
             existing = {a["name"]: a for a in release["assets"]}
             if set(existing) - set(files):
                 raise ValueError("Release has unexpected assets")

@@ -153,15 +153,18 @@ class ArtifactTests(unittest.TestCase):
             artifacts(fixture)
             files = release.verify_assets(fixture, "0.3.1", SHA)
             existing = {next(iter(files)): next(iter(files.values())).read_bytes()}
-            remote = {"tag_name": "v0.3.1", "draft": True, "assets": []}
+            remote = {"tag_name": "v0.3.1", "draft": True, "assets": [], "target_commitish": SHA}
             mutations = []
-            def api(path):
+            def api(path, **kwargs):
                 if '/jobs?' in path:
                     return {"jobs": [{"name": prefix + os, "conclusion": "success"}
                             for prefix in ("cli / cli (", "desktop / desktop (") for os in ("linux)", "windows)")]}
                 if path.startswith("actions/runs/"):
                     return {"head_sha": SHA, "event": "push", "path": ".github/workflows/release.yml", "conclusion": "success", "status": "completed"}
                 if path.startswith("git/ref"):
+                    if remote["draft"]:
+                        self.assertTrue(kwargs.get("missing_ok"))
+                        return None
                     return {"object": {"type": "commit", "sha": SHA}}
                 remote["assets"] = [{"name": name} for name in existing]
                 return [remote]
