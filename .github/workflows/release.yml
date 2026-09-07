@@ -111,6 +111,7 @@ jobs:
           set -euo pipefail
           sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${NEXT}\"/" Cargo.toml
           cargo update --workspace
+          python3 scripts/sync-desktop-version.py
           if git diff --quiet -- Cargo.toml Cargo.lock; then
             echo "::error::Version bump produced no Cargo.toml or Cargo.lock changes."
             exit 1
@@ -137,7 +138,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git add Cargo.toml Cargo.lock CHANGELOG.md desktop/package.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/src-tauri/tauri.conf.json
           git commit -m "chore: release v${NEXT}"
           git push --force --set-upstream origin "$branch"
 
