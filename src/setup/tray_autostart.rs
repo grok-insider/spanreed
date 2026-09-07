@@ -150,7 +150,7 @@ mod platform {
     const LABEL: &str = "net.grokinsider.spanreed-tray";
 
     fn plist_path() -> std::path::PathBuf {
-        dirs::home_dir()
+        crate::creds::home_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
             .join("Library/LaunchAgents")
             .join(format!("{LABEL}.plist"))
@@ -215,8 +215,7 @@ mod platform {
     use super::*;
 
     fn desktop_path() -> std::path::PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        crate::creds::config_home()
             .join("autostart")
             .join("spanreed-tray.desktop")
     }

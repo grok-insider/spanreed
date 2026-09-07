@@ -386,6 +386,8 @@ impl Provider for Codex {
         };
         let plan = build_plan(&data);
         let mut lines = parse_usage(&data);
+        let reset_inventory = crate::resets::codex(&access_token, account_id.as_deref(), &data);
+        crate::resets::append_lines(&mut lines, &reset_inventory);
         if lines.is_empty() {
             return ProviderOutput::error(ID, NAME, "no usage windows returned");
         }
@@ -431,7 +433,11 @@ impl Provider for Codex {
             ));
         }
         lines.extend(cost);
-        ProviderOutput::new(ID, NAME, lines).with_plan(plan)
+        {
+            let mut output = ProviderOutput::new(ID, NAME, lines).with_plan(plan);
+            output.reset_inventory = Some(reset_inventory);
+            output
+        }
     }
 }
 

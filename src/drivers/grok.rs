@@ -1,6 +1,6 @@
 //! Grok SuperGrok identity driver: native device-code, refresh, billing.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::accounts;
 use crate::creds;
@@ -8,17 +8,12 @@ use crate::http::Request;
 use crate::model::{MetricLine, ProviderOutput};
 use crate::util;
 
-const ISSUER: &str = "https://auth.x.ai";
-const CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
-const SCOPES: &str = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write workspaces:read workspaces:write";
-const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
-const REFRESH_URL: &str = "https://auth.x.ai/oauth2/token";
+use fabrials_providers::grok::device::CLIENT_ID;
 const BILLING_CREDITS_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const BILLING_LEGACY_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
 const SUBS_URL: &str = "https://grok.com/rest/subscriptions";
 const TOKEN_AUTH: &str = "xai-grok-cli";
-const REFRESH_BUFFER_MS: i64 = 5 * 60 * 1000;
 const AUTH_JSON_ENTRY: &str = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
 
 pub fn login_add(requested: Option<&str>) -> Result<String, String> {
@@ -32,11 +27,7 @@ pub fn login_refresh(raw: &str) -> Result<String, String> {
     let acc = accounts::resolve(raw).ok_or_else(|| format!("unknown account {raw}"))?;
     eprintln!("spanreed: re-auth {}", acc.id);
     let blob = device_login()?;
-    accounts::put_secret(
-        &acc.provider,
-        &acc.alias,
-        &serde_json::to_string_pretty(&blob).unwrap(),
-    )?;
+    accounts::replace_secret(&acc, &serde_json::to_string_pretty(&blob).unwrap())?;
     if let Some(token) = token_from_doc(&blob) {
         let snap = snapshot_from_token(&token);
         persist_snap(&acc.id, snap);
@@ -61,8 +52,14 @@ fn commit_doc(
 ) -> Result<String, String> {
     let token = token_from_doc(doc).ok_or("auth blob has no access token")?;
     let snap = snapshot_from_token(&token);
-    let canon = accounts::unique_alias("grok", snap.slug.as_deref().unwrap_or("acct"));
-    accounts::put_secret("grok", &canon, &serde_json::to_string_pretty(doc).unwrap())?;
+    let vault = accounts::lock_vault()?;
+    let registry = vault.registry()?;
+    let taken: Vec<String> = registry
+        .accounts
+        .iter()
+        .flat_map(|a| std::iter::once(a.alias.clone()).chain(a.aliases.clone()))
+        .collect();
+    let canon = accounts::unique_alias_among(&taken, snap.slug.as_deref().unwrap_or("acct"));
     let mut acc = accounts::Account::new("grok", &canon)?;
     acc.plan_slug = snap.slug.clone();
     acc.plan_label = snap.label.clone();
@@ -76,14 +73,16 @@ fn commit_doc(
     if let Some(l) = &snap.label {
         acc.label = l.clone();
     }
-    accounts::upsert(acc)?;
     let mut extra = String::new();
     if let Some(nick) = requested.filter(|n| !n.is_empty() && *n != canon) {
-        match accounts::add_nick(&format!("grok/{canon}"), nick) {
-            Ok(_) => extra = format!("  alias {nick}"),
-            Err(e) => extra = format!("  (alias {nick} skipped: {e})"),
+        if !accounts::valid_alias(nick) || taken.iter().any(|name| name == nick) {
+            return Err("Account nickname is invalid or already in use".into());
         }
+        acc.aliases.push(nick.into());
+        extra = format!("  alias {nick}");
     }
+    let removed = registry.removed.get(&acc.id);
+    vault.register(acc, &doc.to_string(), removed)?;
     let plan = snap.label.unwrap_or_else(|| "unknown plan".into());
     Ok(format!(
         "{verb} grok/{canon} ({plan}){extra} — /v1 or /acct/{canon}/v1"
@@ -213,109 +212,43 @@ fn probe_one(alias: &str, active: bool) -> ProviderOutput {
             billing: fetch_plan_billing(&token),
         },
     );
-    ProviderOutput::new(&id, &name, lines).with_plan(plan)
+    let inventory = crate::resets::grok(&token);
+    crate::resets::append_lines(&mut lines, &inventory);
+    let mut output = ProviderOutput::new(&id, &name, lines).with_plan(plan);
+    output.reset_inventory = Some(inventory);
+    output
 }
 
 fn device_login() -> Result<serde_json::Value, String> {
-    let code_url = format!("{ISSUER}/oauth2/device/code");
-    let body = format!(
-        "client_id={}&scope={}&referrer=grok-build",
-        urlenc(CLIENT_ID),
-        urlenc(SCOPES)
+    use fabrials_providers::device_flow::{DeviceFlow, Progress};
+    let client = fabrials_providers::grok::device::Client::new()?;
+    let mut flow = DeviceFlow::new(client.begin()?, util::now_ms());
+    let view = flow.view();
+    eprintln!(
+        "Open: {}\nCode: {}\nWaiting for approval…",
+        view.verification_uri, view.user_code
     );
-    let resp = Request::post(code_url)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("x-grok-client-surface", "cli")
-        .body(body)
-        .send()
-        .map_err(|e| format!("device code: {e}"))?;
-    if resp.status == 404 {
-        return Err("device-code login is not enabled for this xAI deployment".into());
-    }
-    if !(200..300).contains(&resp.status) {
-        return Err(format!(
-            "device code HTTP {}: {}",
-            resp.status,
-            resp.body.chars().take(200).collect::<String>()
-        ));
-    }
-    let json = resp.json().ok_or("device code json")?;
-    let device_code = json
-        .get("device_code")
-        .and_then(|v| v.as_str())
-        .ok_or("no device_code")?
-        .to_string();
-    let user_code = json
-        .get("user_code")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?")
-        .to_string();
-    let uri = json
-        .get("verification_uri_complete")
-        .and_then(|v| v.as_str())
-        .or_else(|| json.get("verification_uri").and_then(|v| v.as_str()))
-        .unwrap_or("https://auth.x.ai")
-        .to_string();
-    let interval = json.get("interval").and_then(|v| v.as_u64()).unwrap_or(5);
-    let expires = json
-        .get("expires_in")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(900);
-
-    eprintln!("Open:  {uri}");
-    eprintln!("Code:  {user_code}");
-    eprintln!("Waiting for approval…");
-
-    let token_url = format!("{ISSUER}/oauth2/token");
-    let deadline = Instant::now() + Duration::from_secs(expires.max(60));
-    let mut wait = Duration::from_secs(interval.max(1));
-    std::thread::sleep(wait);
+    let mut interval = view.interval;
     loop {
-        if Instant::now() > deadline {
-            return Err("device code expired".into());
-        }
-        let poll = format!(
-            "grant_type={}&device_code={}&client_id={}",
-            urlenc(DEVICE_GRANT),
-            urlenc(&device_code),
-            urlenc(CLIENT_ID)
-        );
-        let resp = Request::post(&token_url)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("x-grok-client-surface", "cli")
-            .body(poll)
-            .send()
-            .map_err(|e| format!("token poll: {e}"))?;
-        if (200..300).contains(&resp.status) {
-            let tok = resp.json().ok_or("token json")?;
-            return Ok(tokens_to_auth_json(&tok));
-        }
-        let err = resp
-            .json()
-            .and_then(|j| j.get("error").and_then(|e| e.as_str()).map(str::to_string))
-            .unwrap_or_default();
-        match err.as_str() {
-            "authorization_pending" => {
-                std::thread::sleep(wait);
+        std::thread::sleep(Duration::from_secs(interval));
+        let mut authorized = None;
+        match flow.advance(
+            util::now_ms(),
+            |code| client.poll(code),
+            |document| {
+                authorized = Some(tokens_to_auth_json(document));
+                Ok(())
+            },
+        )? {
+            Progress::Connected => {
+                return authorized.ok_or("Grok authorization unavailable".into())
             }
-            "slow_down" => {
-                wait += Duration::from_secs(5);
-                std::thread::sleep(wait);
-            }
-            "access_denied" => return Err("authorization denied".into()),
-            "expired_token" => return Err("device code expired".into()),
-            other => {
-                return Err(format!(
-                    "token exchange: {} ({})",
-                    other,
-                    resp.body.chars().take(160).collect::<String>()
-                ));
-            }
+            Progress::Pending { retry_after_secs } => interval = retry_after_secs,
         }
     }
 }
 
-fn tokens_to_auth_json(tok: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn tokens_to_auth_json(tok: &serde_json::Value) -> serde_json::Value {
     let access = tok
         .get("access_token")
         .and_then(|v| v.as_str())
@@ -326,7 +259,7 @@ fn tokens_to_auth_json(tok: &serde_json::Value) -> serde_json::Value {
         .get("expires_in")
         .and_then(|v| v.as_f64())
         .filter(|n| *n > 0.0)
-        .map(|n| now + (n as i64) * 1000)
+        .map(|n| now.saturating_add((n.min(86400.0) as i64) * 1000))
         .or_else(|| util::jwt_exp_ms(access))
         .unwrap_or(now + 3600 * 1000);
     let iso = util::ms_to_iso(expires_at).unwrap_or_default();
@@ -341,122 +274,13 @@ fn tokens_to_auth_json(tok: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({ AUTH_JSON_ENTRY: entry })
 }
 
-fn load_doc(alias: &str) -> Option<serde_json::Value> {
-    let raw = accounts::get_secret("grok", alias)?;
-    serde_json::from_str(&raw).ok()
-}
-
-fn save_doc(alias: &str, doc: &serde_json::Value) {
-    if let Ok(s) = serde_json::to_string_pretty(doc) {
-        let _ = accounts::put_secret("grok", alias, &s);
-    }
-}
-
+/// Resolve managed Grok credentials through the same rotation path as capture.
 pub fn token_for_alias(alias: &str) -> Option<String> {
     ensure_token(alias)
 }
 
 fn ensure_token(alias: &str) -> Option<String> {
-    let mut doc = load_doc(alias)?;
-    if !doc.is_object() {
-        return None;
-    }
-    let now = util::now_ms();
-    let keys: Vec<String> = doc.as_object()?.keys().cloned().collect();
-    for entry_key in keys {
-        let entry = doc.get(&entry_key)?.clone();
-        if !entry.is_object() {
-            continue;
-        }
-        let token = entry
-            .get("key")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        if token.is_empty() {
-            continue;
-        }
-        if needs_refresh(&entry, &token, now) {
-            if let Some(new_tok) = refresh(&mut doc, &entry_key) {
-                save_doc(alias, &doc);
-                return Some(new_tok);
-            }
-        }
-        return Some(token);
-    }
-    None
-}
-
-fn needs_refresh(entry: &serde_json::Value, token: &str, now_ms: i64) -> bool {
-    let entry_ms = entry
-        .get("expires_at")
-        .or_else(|| entry.get("expires"))
-        .and_then(util::to_iso)
-        .and_then(|iso| {
-            time::OffsetDateTime::parse(&iso, &time::format_description::well_known::Rfc3339)
-                .ok()
-                .map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
-        });
-    let token_ms = util::jwt_exp_ms(token);
-    entry_ms
-        .map(|ms| now_ms + REFRESH_BUFFER_MS >= ms)
-        .unwrap_or(false)
-        || token_ms
-            .map(|ms| now_ms + REFRESH_BUFFER_MS >= ms)
-            .unwrap_or(false)
-}
-
-fn refresh(doc: &mut serde_json::Value, entry_key: &str) -> Option<String> {
-    let entry = doc.get(entry_key)?.clone();
-    let refresh_token = ["refresh_token", "refresh"]
-        .iter()
-        .find_map(|k| entry.get(*k).and_then(|v| v.as_str()))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())?;
-    let client_id = entry
-        .get("oidc_client_id")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(CLIENT_ID);
-    let body = format!(
-        "grant_type=refresh_token&client_id={}&refresh_token={}",
-        urlenc(client_id),
-        urlenc(refresh_token)
-    );
-    let resp = Request::post(REFRESH_URL)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(body)
-        .send()
-        .ok()?;
-    if !(200..300).contains(&resp.status) {
-        return None;
-    }
-    let json = resp.json()?;
-    let access = json.get("access_token")?.as_str()?.trim().to_string();
-    if access.is_empty() {
-        return None;
-    }
-    if let Some(obj) = doc.get_mut(entry_key).and_then(|v| v.as_object_mut()) {
-        obj.insert("key".into(), serde_json::json!(access));
-        if let Some(rt) = json.get("refresh_token").and_then(|v| v.as_str()) {
-            if !rt.trim().is_empty() {
-                obj.insert("refresh_token".into(), serde_json::json!(rt.trim()));
-            }
-        }
-        let now = util::now_ms();
-        let expires_at = json
-            .get("expires_in")
-            .and_then(|v| v.as_f64())
-            .filter(|n| *n > 0.0)
-            .map(|n| now + (n as i64) * 1000)
-            .or_else(|| util::jwt_exp_ms(&access))
-            .unwrap_or(now + 3600 * 1000);
-        if let Some(iso) = util::ms_to_iso(expires_at) {
-            obj.insert("expires_at".into(), serde_json::json!(iso));
-        }
-    }
-    Some(access)
+    crate::local_tokens::grok(Some(alias)).ok().flatten()
 }
 
 fn load_billing(token: &str, url: &str) -> Result<serde_json::Value, String> {
@@ -859,20 +683,6 @@ fn grok_burn_rank(slug: &str) -> u8 {
 fn deadline_first_score(used: f64, hours: Option<f64>, rank: u8) -> f64 {
     let h = hours.unwrap_or(0.0);
     1e12 / h.max(0.01) + 10_000.0 * f64::from(rank) + 100.0 * used
-}
-
-fn urlenc(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

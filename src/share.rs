@@ -310,6 +310,11 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
 
 /// Probe + POST. `force` bypasses the local same-day skip.
 pub fn share_once(force: bool) -> Result<String, String> {
+    if !crate::privacy::load().share_metrics {
+        return Err(
+            "Metrics sharing is off. Enable explicitly: spanreed privacy metrics on".into(),
+        );
+    }
     if is_offline() {
         return Err("share: SPANREED_OFFLINE=1 — not sending".into());
     }
@@ -379,6 +384,7 @@ mod tests {
     #[test]
     fn maps_quota_progress_and_skips_cost_charts() {
         let out = ProviderOutput {
+            reset_inventory: None,
             provider_id: "grok".into(),
             display_name: "Grok".into(),
             plan: Some("SuperGrok".into()),
@@ -432,6 +438,7 @@ mod tests {
     fn maps_count_progress_as_count_not_percent() {
         // Absolute used/limit (e.g. request pools) must not become "50%".
         let out = ProviderOutput {
+            reset_inventory: None,
             provider_id: "cursor".into(),
             display_name: "Cursor".into(),
             plan: None,
@@ -457,6 +464,7 @@ mod tests {
     #[test]
     fn snapshot_json_has_no_secret_field_names() {
         let out = ProviderOutput {
+            reset_inventory: None,
             provider_id: "codex".into(),
             display_name: "Codex".into(),
             plan: None,

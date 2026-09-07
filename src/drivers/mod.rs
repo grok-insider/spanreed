@@ -3,6 +3,7 @@
 //! proxy fabric — drivers only know how to login, refresh, and parse billing.
 
 pub mod grok;
+pub mod nous;
 
 /// `spanreed account …`
 pub fn dispatch_account(args: &[String]) -> Result<String, String> {
@@ -16,6 +17,7 @@ pub fn dispatch_account(args: &[String]) -> Result<String, String> {
             let name = optional_name(args);
             match provider.as_str() {
                 "grok" => grok::login_add(name.as_deref()),
+                "nous" => nous::login_add(name.as_deref()),
                 other => Err(format!("no identity driver for {other}")),
             }
         }

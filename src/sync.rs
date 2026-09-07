@@ -51,6 +51,9 @@ fn access_token() -> Result<String, String> {
 
 /// Best-effort after a Grok probe: push the active account + recent ledger, pull hops.
 pub fn after_probe() {
+    if !crate::privacy::load().sync_history {
+        return;
+    }
     if crate::app::env_offline() {
         return;
     }
@@ -87,6 +90,9 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
 }
 
 pub fn run(verbose: bool) -> Result<String, String> {
+    if !crate::privacy::load().sync_history {
+        return Err("History sync is off. Enable explicitly: spanreed privacy sync on".into());
+    }
     let token = access_token()?;
     let Some(acc) = accounts::active("grok") else {
         return Err("no active grok account".into());

@@ -1,0 +1,23 @@
+[package]
+name = "spanreed-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+[dependencies]
+tauri-plugin-notification = "2"
+tauri = { version = "2", features = ["tray-icon"] }
+spanreed = { path = "../.." }
+serde_json = "1"
+fabrials-core = "0.1.0"
+
+[patch.crates-io]
+fabrials-core = { path = "../../vendor/fabrials-core" }
+fabrials-providers = { path = "../../vendor/fabrials-providers" }
+fabrials-runtime = { path = "../../vendor/fabrials-runtime" }
+fabrials-model = { path = "../../vendor/fabrials-model" }
+fabrials-metrics = { path = "../../vendor/fabrials-metrics" }
+fabrials-accounts = { path = "../../vendor/fabrials-accounts" }
+fabrials-oauth-grok = { path = "../../vendor/fabrials-oauth-grok" }
+fabrials-share = { path = "../../vendor/fabrials-share" }

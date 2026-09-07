@@ -16,6 +16,7 @@ pub struct Response {
 #[derive(Debug)]
 pub struct BytesResponse {
     pub status: u16,
+    pub headers: reqwest::header::HeaderMap,
     pub body: Vec<u8>,
 }
 
@@ -119,7 +120,7 @@ impl Request {
         self
     }
 
-    pub fn send(self) -> Result<Response, String> {
+    fn execute(self) -> Result<reqwest::blocking::Response, String> {
         let client = client_with(self.insecure).map_err(|e| e.to_string())?;
         let mut req = client.request(self.method, &self.url);
         for (k, v) in self.headers {
@@ -128,10 +129,49 @@ impl Request {
         if let Some(body) = self.body {
             req = req.body(body);
         }
-        let resp = req.send().map_err(|e| e.to_string())?;
+        req.send().map_err(|e| e.to_string())
+    }
+
+    pub fn send(self) -> Result<Response, String> {
+        let resp = self.execute()?;
         let status = resp.status().as_u16();
         let body = resp.text().map_err(|e| e.to_string())?;
         Ok(Response { status, body })
+    }
+
+    pub fn send_limited(self, limit: usize) -> Result<Response, String> {
+        use std::io::Read;
+        let resp = self.execute()?;
+        let status = resp.status().as_u16();
+        let mut bytes = Vec::new();
+        resp.take(limit.saturating_add(1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "Response read failed")?;
+        if bytes.len() > limit {
+            return Err("Response exceeds size limit".into());
+        }
+        let body = String::from_utf8(bytes).map_err(|_| "Invalid response text")?;
+        Ok(Response { status, body })
+    }
+
+    /// Bounded provider response using the normal timeout and redirect policy.
+    pub fn send_bytes_limited(self, limit: usize) -> Result<BytesResponse, String> {
+        use std::io::Read;
+        let resp = self.execute()?;
+        let status = resp.status().as_u16();
+        let headers = resp.headers().clone();
+        let mut body = Vec::new();
+        resp.take(limit.saturating_add(1) as u64)
+            .read_to_end(&mut body)
+            .map_err(|_| "Response read failed")?;
+        if body.len() > limit {
+            return Err("Response exceeds size limit".into());
+        }
+        Ok(BytesResponse {
+            status,
+            headers,
+            body,
+        })
     }
 
     /// Download response body as raw bytes (release archives, etc.).
@@ -158,7 +198,88 @@ impl Request {
         }
         let resp = req.send().map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
+        let headers = resp.headers().clone();
         let body = resp.bytes().map_err(|e| e.to_string())?.to_vec();
-        Ok(BytesResponse { status, body })
+        Ok(BytesResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bounded_binary_response_preserves_status_without_following_redirects() {
+        use std::io::{Read, Write};
+        for (status, headers, body, limit, expected) in [
+            ("200 OK", "grpc-status: 16\r\n", "abc", 3, Ok(200)),
+            ("200 OK", "", "abc", 2, Err("Response exceeds size limit")),
+            (
+                "302 Found",
+                "Location: http://127.0.0.1:1/\r\n",
+                "",
+                3,
+                Ok(302),
+            ),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    assert!(request.len() < 4096);
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                write!(stream, "HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            });
+            let result = Request::get(format!("http://{address}/resets")).send_bytes_limited(limit);
+            match expected {
+                Ok(status) => {
+                    let response = result.unwrap();
+                    assert_eq!(response.status, status);
+                    assert_eq!(response.body, body.as_bytes());
+                    if headers.starts_with("grpc-status") {
+                        assert_eq!(response.headers["grpc-status"], "16");
+                    }
+                }
+                Err(error) => assert_eq!(result.unwrap_err(), error),
+            }
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn bounded_response_rejects_chunked_body_over_limit() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                assert!(request.len() < 4096);
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\n\r\n").unwrap();
+        });
+        let error = Request::get(format!("http://{address}/models"))
+            .send_limited(2)
+            .unwrap_err();
+        assert_eq!(error, "Response exceeds size limit");
+        server.join().unwrap();
     }
 }

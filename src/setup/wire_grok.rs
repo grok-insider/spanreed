@@ -145,11 +145,13 @@ pub fn remove_shell_block(content: &str) -> String {
 #[cfg(windows)]
 mod platform {
     use super::*;
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     pub fn get_env() -> Option<String> {
         let script = format!("[Environment]::GetEnvironmentVariable('{ENV_KEY}','User')");
         let out = Command::new("powershell")
+            .creation_flags(0x0800_0000)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
             .ok()?;
@@ -169,6 +171,7 @@ mod platform {
         let script =
             format!("[Environment]::SetEnvironmentVariable('{ENV_KEY}','{escaped}','User')");
         let out = Command::new("powershell")
+            .creation_flags(0x0800_0000)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .output()
             .map_err(|e| format!("powershell set env: {e}"))?;
@@ -188,6 +191,7 @@ mod platform {
                 let script =
                     format!("[Environment]::SetEnvironmentVariable('{ENV_KEY}',$null,'User')");
                 let out = Command::new("powershell")
+                    .creation_flags(0x0800_0000)
                     .args(["-NoProfile", "-NonInteractive", "-Command", &script])
                     .output()
                     .map_err(|e| format!("powershell clear env: {e}"))?;
@@ -287,7 +291,7 @@ mod platform {
     }
 
     fn profile_paths() -> Vec<PathBuf> {
-        let home = dirs::home_dir().unwrap_or_else(|| crate::creds::expand("~"));
+        let home = crate::creds::home_dir().unwrap_or_else(|| crate::creds::expand("~"));
         vec![
             home.join(".bashrc"),
             home.join(".zshrc"),

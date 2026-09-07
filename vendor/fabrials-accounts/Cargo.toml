@@ -1,0 +1,13 @@
+[package]
+name = "fabrials-accounts"
+version = "0.1.1"
+description = "Host-owned account registry for Fabrials (Spanreed and ai-relay)"
+edition = "2021"
+license = "MIT"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+repository = "https://github.com/grok-insider/fabrials-accounts"
+publish = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

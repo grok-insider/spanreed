@@ -102,19 +102,12 @@ fn detect_opencode() -> OpenCodeHit {
 
 /// Global OpenCode config candidates (never project-local).
 pub fn opencode_config_candidates() -> Vec<PathBuf> {
-    let mut v = Vec::new();
-    let cfg = creds::config_home();
-    v.push(cfg.join("opencode").join("opencode.json"));
-    // Some installs use ~/.config even when dirs::config_dir differs.
-    let xdg = creds::expand("~/.config/opencode/opencode.json");
-    if !v.iter().any(|p| p == &xdg) {
-        v.push(xdg);
-    }
-    v
+    let cfg = creds::opencode::config_home().join("opencode");
+    vec![cfg.join("opencode.json"), cfg.join("opencode.jsonc")]
 }
 
 pub fn opencode_data_dir() -> PathBuf {
-    creds::data_home().join("opencode")
+    creds::opencode::data_home().join("opencode")
 }
 
 /// Preferred path to write: existing config, else first candidate.
@@ -151,7 +144,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opencode_candidates_non_empty() {
-        assert!(!opencode_config_candidates().is_empty());
+    fn opencode_config_candidates_share_the_client_root() {
+        let candidates = opencode_config_candidates();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates[0],
+            creds::opencode::config_home().join("opencode/opencode.json")
+        );
+        assert_eq!(candidates[0].with_extension("jsonc"), candidates[1]);
     }
 }
