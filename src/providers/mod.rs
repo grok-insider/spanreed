@@ -5,8 +5,6 @@ use crate::model::ProviderOutput;
 
 pub mod amp;
 pub mod antigravity;
-/// Kept for possible re-enable; not registered in [`all`].
-#[allow(dead_code)]
 pub mod claude;
 pub mod codex;
 pub mod copilot;
@@ -18,6 +16,7 @@ pub mod jetbrains;
 pub mod kimi;
 pub mod kiro;
 pub mod minimax;
+pub mod nous;
 pub mod opencode_go;
 pub mod perplexity;
 pub mod synthetic;
@@ -42,14 +41,13 @@ pub trait Provider: Send + Sync {
 }
 
 /// All known providers, in display order.
-///
-/// Claude remains in-tree (`claude` module + tests) but is **not registered** —
-/// it is out of the active product surface for this install.
 pub fn all() -> Vec<Box<dyn Provider>> {
     vec![
         Box::new(codex::Codex),
+        Box::new(claude::Claude),
         Box::new(cursor::Cursor),
         Box::new(grok::Grok),
+        Box::new(nous::Nous),
         Box::new(opencode_go::OpenCodeGo),
         Box::new(amp::Amp),
         Box::new(zai::Zai),

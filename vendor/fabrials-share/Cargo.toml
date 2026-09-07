@@ -1,0 +1,14 @@
+[package]
+name = "fabrials-share"
+version = "0.2.0"
+description = "Community usage snapshot builder for Fabrials (Spanreed and ai-relay)"
+edition = "2021"
+license = "MIT"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+repository = "https://github.com/grok-insider/fabrials-share"
+publish = true
+
+[dependencies]
+fabrials-model = "0.1.0"
+fabrials-metrics = "0.1.0"
+serde_json = "1"

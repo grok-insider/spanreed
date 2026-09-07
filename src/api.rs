@@ -39,7 +39,7 @@ pub fn fetch_cached() -> Option<Vec<ProviderOutput>> {
         return None;
     }
     let outputs: Vec<ProviderOutput> = serde_json::from_str(resp.body.trim()).ok()?;
-    if outputs.is_empty() || outputs.iter().all(ProviderOutput::has_error) {
+    if outputs.is_empty() {
         None
     } else {
         Some(outputs)
@@ -91,7 +91,18 @@ fn merge(
                             "{}: probe failed, serving last-good result ({n}/{max_stale})",
                             out.provider_id
                         );
-                        good.clone()
+                        let mut retained = good.clone();
+                        retained.lines.retain(|line| !matches!(line, crate::model::MetricLine::Badge { label, .. } if label == "Freshness"));
+                        retained.lines.push(crate::model::MetricLine::badge(
+                            crate::model::MetricKind::Quota,
+                            "Freshness",
+                            "Last known reading · provider refresh failed",
+                        ));
+                        if let Some(observation) = &mut retained.reset_inventory {
+                            observation.freshness = fabrials_core::Freshness::Stale;
+                            observation.error = Some("Provider refresh failed".into());
+                        }
+                        retained
                     } else {
                         out
                     }

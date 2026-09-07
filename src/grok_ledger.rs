@@ -1,7 +1,7 @@
-//! Local ledger of official Grok/xAI API usage records.
+//! Local SQLite ledger of captured API usage, with Grok-specific metric projections.
 //!
-//! Records are written by [`crate::grok_proxy`] when it observes a completed
-//! Responses API call with a `usage` object. Probe reads this file for
+//! Records are written by capture and [`crate::grok_proxy`] after completed calls.
+//! Probe reads the shared database for
 //! accurate Last-30-Days totals — never invents tokens from session context.
 //!
 //! Dollar estimates use **public API list prices** from [`crate::pricing`]
@@ -10,8 +10,6 @@
 //! still captured for reference but are not what we display — SuperGrok
 //! pool ticks are not public API rates.
 
-use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use crate::model::{BarChartPoint, MetricKind, MetricLine};
@@ -25,77 +23,49 @@ const DAY_MS: i64 = 86_400_000;
 
 pub use fabrials_model::UsageRecord;
 
-/// Path to the append-only ledger JSONL.
+/// Shared local usage database. The legacy JSONL remains available for recovery.
 pub fn ledger_path() -> PathBuf {
-    crate::app::data_dir().join("grok-usage.jsonl")
+    crate::app::data_dir().join("runtime.sqlite3")
 }
 
-/// Append one usage record. Best-effort; logs and returns Err on IO failure.
+fn store() -> Result<fabrials_runtime::hops::HopStore, String> {
+    let mut store = fabrials_runtime::hops::HopStore::open(&ledger_path())?;
+    store.import_jsonl_once(
+        "local",
+        "grok-usage.jsonl.v1",
+        &crate::app::data_dir().join("grok-usage.jsonl"),
+    )?;
+    Ok(store)
+}
+
+pub fn ensure_store() -> Result<(), String> {
+    store().map(|_| ())
+}
+
 pub fn append(record: &UsageRecord) -> Result<(), String> {
-    let path = ledger_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir ledger dir: {e}"))?;
-    }
-    // Dedup: skip if same request_id already present (last few KB scan).
-    if let Some(rid) = record.request_id.as_deref() {
-        if !rid.is_empty() && recent_has_request_id(rid) {
-            return Ok(());
-        }
-    }
-    let mut f = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("open ledger: {e}"))?;
-    let line = serde_json::to_string(record).map_err(|e| e.to_string())?;
-    writeln!(f, "{line}").map_err(|e| format!("write ledger: {e}"))?;
-    Ok(())
+    store()?.append("local", record).map(|_| ())
 }
 
-fn recent_has_request_id(rid: &str) -> bool {
-    let path = ledger_path();
-    let Ok(f) = std::fs::File::open(path) else {
-        return false;
-    };
-    let needle = format!("\"request_id\":\"{rid}\"");
-    // Only scan last ~256 KiB for recent dups.
-    let meta = f.metadata().ok();
-    let reader = BufReader::new(f);
-    if let Some(m) = meta {
-        if m.len() > 256 * 1024 {
-            // Fall through: full scan is fine for typical ledger sizes; for huge
-            // files we still scan all lines (simple + correct).
-        }
-    }
-    for line in reader.lines().map_while(Result::ok) {
-        if line.contains(&needle) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Read all ledger records with `ts_ms` in `[cutoff, now]`.
+/// Only Grok records contribute to Grok metrics; other providers share storage.
 pub fn read_window(now_ms: i64) -> Vec<UsageRecord> {
-    let cutoff = now_ms - WINDOW_DAYS * DAY_MS;
-    let path = ledger_path();
-    let Ok(f) = std::fs::File::open(path) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for line in BufReader::new(f).lines().map_while(Result::ok) {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(rec) = serde_json::from_str::<UsageRecord>(line) else {
-            continue;
-        };
-        if rec.ts_ms >= cutoff && rec.ts_ms <= now_ms + DAY_MS {
-            out.push(rec);
+    match store().and_then(|store| {
+        store.read_window(
+            "local",
+            Some("grok"),
+            now_ms - WINDOW_DAYS * DAY_MS,
+            now_ms + DAY_MS,
+        )
+    }) {
+        Ok(records) => records,
+        Err(error) => {
+            log::warn!("Grok usage ledger unavailable: {error}");
+            Vec::new()
         }
     }
-    out
+}
+
+pub fn recent_hops() -> Result<Vec<UsageRecord>, String> {
+    store()?.recent("local", 200)
 }
 
 /// Aggregate ledger into Last-30-Days lines. Returns empty when no capture data.
@@ -462,6 +432,7 @@ impl UsagePartial {
             account_id,
             route,
             provider: None,
+            ..Default::default()
         }
     }
 }

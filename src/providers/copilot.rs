@@ -140,10 +140,13 @@ pub fn token_for_gh_user(user: &str) -> Option<String> {
 }
 
 fn token_from_gh_cli_user(user: &str) -> Option<String> {
-    let out = Command::new("gh")
-        .args(["auth", "token", "-u", user])
-        .output()
-        .ok()?;
+    let mut command = Command::new("gh");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let out = command.args(["auth", "token", "-u", user]).output().ok()?;
     if !out.status.success() {
         return None;
     }

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Spanreed",
+  "version": "0.3.0",
+  "identifier": "com.fabrials.spanreed",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Spanreed",
+        "width": 1180,
+        "height": 800,
+        "minWidth": 400,
+        "minHeight": 500
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "useLocalToolsDir": true,
+    "targets": "all",
+    "shortDescription": "Your AI accounts and usage, on your machine",
+    "category": "DeveloperTool",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libc6 (>= 2.39)",
+          "libsecret-tools",
+          "xdg-utils"
+        ]
+      }
+    }
+  }
+}

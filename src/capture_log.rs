@@ -17,8 +17,7 @@ const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 pub fn log_dir() -> PathBuf {
     #[cfg(windows)]
     {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| creds::expand("~/AppData/Local"))
+        creds::data_local_home()
             .join(crate::app::APP_ID)
             .join("logs")
     }

@@ -116,7 +116,7 @@ Useful setup commands:
 ```sh
 spanreed setup status
 spanreed setup uninstall          # unwire + stop capture service
-spanreed capture serve            # run capture in the foreground
+spanreed capture serve            # integrated local proxy; no ai-relay binary needed
 spanreed capture serve --watchdog # auto-restart worker; log under spanreed/logs
 spanreed capture ensure           # start capture+watchdog if :18736 is down
 spanreed capture status           # exit 0 if listening, 1 if DOWN; shows log path
@@ -239,7 +239,7 @@ wall-clock pace. Set `SPANREED_OFFLINE=1` to skip remote price-table refresh.
 
 | Id | Credential source (typical) |
 |----|-----------------------------|
-| `codex` | `~/.codex` / `$CODEX_HOME` |
+| `codex` | `~/.codex` / `$CODEX_HOME` (ChatGPT plan: 5h + Weekly + Reviews) |
 | `grok` | `~/.grok/auth.json` (+ optional local capture) |
 | `copilot` | opt-in via `spanreed auth copilot` |
 | `cursor` | Cursor state DB under `~/.config/Cursor/` |
@@ -253,3 +253,12 @@ Pricing overrides: `~/.config/spanreed/pricing.json`.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+#### Private certificate authorities
+
+The shared HTTP client trusts public certificate roots and the operating system's
+trusted certificate authorities. For a self-hosted ai-relay using a private CA,
+install that CA in the system trust store. On Linux, a PEM bundle can also be
+supplied to the Spanreed process with `SSL_CERT_FILE=/absolute/path/ca.pem`.
+Certificate chain and hostname verification remain required; redirects are not
+followed during migration. This does not configure trust in your web browser.

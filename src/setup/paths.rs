@@ -8,8 +8,7 @@ use crate::creds;
 pub fn install_dir() -> PathBuf {
     #[cfg(windows)]
     {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| creds::expand("~/AppData/Local"))
+        creds::data_local_home()
             .join(crate::app::APP_ID)
             .join("bin")
     }
@@ -87,10 +86,12 @@ pub fn ensure_install_dir_on_user_path(dry_run: bool) -> Result<bool, String> {
 
 #[cfg(windows)]
 fn ensure_windows_user_path(dir: &str, dry_run: bool) -> Result<bool, String> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     // Read current user PATH via PowerShell.
     let out = Command::new("powershell")
+        .creation_flags(0x0800_0000)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -121,6 +122,7 @@ fn ensure_windows_user_path(dir: &str, dry_run: bool) -> Result<bool, String> {
     let escaped = new_path.replace('\'', "''");
     let script = format!("[Environment]::SetEnvironmentVariable('Path','{escaped}','User')");
     let set = Command::new("powershell")
+        .creation_flags(0x0800_0000)
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .output()
         .map_err(|e| format!("powershell PATH set: {e}"))?;

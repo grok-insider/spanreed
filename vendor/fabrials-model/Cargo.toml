@@ -1,0 +1,23 @@
+[package]
+name = "fabrials-model"
+version = "0.1.0"
+description = "Shared DTO types for Fabrials (Spanreed and ai-relay)"
+edition = "2021"
+license = "MIT"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+repository = "https://github.com/grok-insider/fabrials-model"
+publish = true
+
+[dependencies]
+fabrials-core = "0.1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+ts-rs = { version = "12.0.1", optional = true }
+
+[features]
+contracts = ["dep:ts-rs", "fabrials-core/contracts"]
+
+[[example]]
+name = "contracts"
+required-features = ["contracts"]

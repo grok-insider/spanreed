@@ -1,4 +1,4 @@
-//! Linux-native credential and local-state discovery:
+//! Cross-platform credential and local-state discovery:
 //! - XDG paths (`~/.config`, `~/.local/share`)
 //! - plain credential files (JSON)
 //! - app SQLite state DBs (via rusqlite, read-only)
@@ -7,34 +7,63 @@
 //! SecretStore seam); process & listening-port discovery lives in
 //! [`crate::proc`] (the cross-platform ProcessList seam).
 
+pub mod opencode;
+
 use std::path::{Path, PathBuf};
+
+/// Explicit absolute overrides work on every host, including Windows known folders.
+fn configured_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
+pub fn home_dir() -> Option<PathBuf> {
+    configured_path("HOME")
+        .or_else(|| configured_path("USERPROFILE"))
+        .or_else(dirs::home_dir)
+}
 
 /// Expand a leading `~` to the user's home directory.
 pub fn expand(path: &str) -> PathBuf {
     if path == "~" {
-        return dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+        return home_dir().unwrap_or_else(|| PathBuf::from("~"));
     }
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             return home.join(rest);
         }
     }
     PathBuf::from(path)
 }
 
-/// `$XDG_CONFIG_HOME` or `~/.config`.
+/// Absolute `$XDG_CONFIG_HOME`, then the OS-native configuration directory.
 pub fn config_home() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| expand("~/.config"))
+    configured_path("XDG_CONFIG_HOME")
+        .or_else(dirs::config_dir)
+        .unwrap_or_else(|| expand("~/.config"))
 }
 
-/// `$XDG_DATA_HOME` or `~/.local/share`.
+/// Absolute `$XDG_DATA_HOME`, then the OS-native data directory.
 pub fn data_home() -> PathBuf {
-    dirs::data_dir().unwrap_or_else(|| expand("~/.local/share"))
+    configured_path("XDG_DATA_HOME")
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(|| expand("~/.local/share"))
 }
 
-/// `$XDG_CACHE_HOME` or `~/.cache`.
+/// Absolute `$XDG_CACHE_HOME`, then the OS-native cache directory.
 pub fn cache_home() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(|| expand("~/.cache"))
+    configured_path("XDG_CACHE_HOME")
+        .or_else(dirs::cache_dir)
+        .unwrap_or_else(|| expand("~/.cache"))
+}
+
+/// Machine-local data on Windows; an explicit XDG data root still takes precedence.
+#[cfg(windows)]
+pub fn data_local_home() -> PathBuf {
+    configured_path("XDG_DATA_HOME")
+        .or_else(dirs::data_local_dir)
+        .unwrap_or_else(|| expand("~/AppData/Local"))
 }
 
 /// Read a file to a string, returning None on any error.
@@ -115,7 +144,7 @@ mod tests {
 
     #[test]
     fn expand_tilde() {
-        let home = dirs::home_dir().unwrap();
+        let home = home_dir().unwrap();
         assert_eq!(expand("~"), home);
         assert_eq!(expand("~/foo/bar"), home.join("foo/bar"));
         assert_eq!(expand("/abs/path"), PathBuf::from("/abs/path"));

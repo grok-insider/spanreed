@@ -8,8 +8,8 @@ name: Release
 #                           `dev`, bump PATCH, changelog, open release-plz-v*.
 #   * release-plz-release — when that PR is merged into master, tag `vX.Y.Z`
 #                           + GitHub Release from CHANGELOG.md.
-#   * resolve / artifacts — build `spanreed` for Linux (x86_64/aarch64 musl
-#                           static), macOS (x86_64/arm64), and Windows, and attach.
+#   * resolve / artifacts — build `spanreed` for Linux x86_64 musl and Windows.
+#                           macOS/ARM distribution is deferred.
 #   * release-notes       — set GH Release body from CHANGELOG section.
 #
 # Nothing is published to crates.io (`git_only` + `publish = false`).
@@ -85,14 +85,14 @@ jobs:
           fi
           if [ "$FORCE" != "true" ] \
             && ! git log "v${current}..HEAD" --no-merges --format=%s \
-               | grep -qE '^(feat|fix)(\(.*\))?!?:'; then
+               | grep -E '^(feat|fix)(\(.*\))?!?:' > /dev/null; then
             echo "::notice::no feat/fix commits since v${current}; nothing to release."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           breaking=false
           if git log "v${current}..HEAD" --no-merges --format='%s%n%b' \
-            | grep -qE '^[a-z]+(\(.*\))?!:|^BREAKING CHANGE'; then
+            | grep -E '^[a-z]+(\(.*\))?!:|^BREAKING CHANGE' > /dev/null; then
             breaking=true
           fi
           next="${major}.${minor}.$(( patch + 1 ))"
@@ -111,6 +111,7 @@ jobs:
           set -euo pipefail
           sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${NEXT}\"/" Cargo.toml
           cargo update --workspace
+          python3 scripts/sync-desktop-version.py
           if git diff --quiet -- Cargo.toml Cargo.lock; then
             echo "::error::Version bump produced no Cargo.toml or Cargo.lock changes."
             exit 1
@@ -137,7 +138,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git add Cargo.toml Cargo.lock CHANGELOG.md desktop/package.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock desktop/src-tauri/tauri.conf.json
           git commit -m "chore: release v${NEXT}"
           git push --force --set-upstream origin "$branch"
 
@@ -238,9 +239,7 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, cross: zig }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, cross: zig }
-          - { os: macos-15-intel, target: x86_64-apple-darwin, cross: "" }
-          - { os: macos-14, target: aarch64-apple-darwin, cross: "" }
+          # macOS/ARM release qualification is deferred pending a hardware contributor.
           - { os: windows-latest, target: x86_64-pc-windows-msvc, cross: "" }
     runs-on: ${{ matrix.os }}
     env:

@@ -1,4 +1,4 @@
-//! Append-only usage history for rate-limit progress metrics.
+//! SQLite usage history for rate-limit progress metrics, with legacy JSONL import.
 //!
 //! Written on `spanreed serve` refresh (and optionally when
 //! `SPANREED_HISTORY=1` is set). Segmented by epoch via `resets_at`: a material
@@ -8,8 +8,6 @@
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-
-use serde::{Deserialize, Serialize};
 
 use crate::creds;
 use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
@@ -21,35 +19,51 @@ const DAY_MS: i64 = 86_400_000;
 /// Soft size cap before rewrite (bytes).
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct HistorySample {
-    pub ts_ms: i64,
-    pub provider: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plan: Option<String>,
-    pub label: String,
-    pub used: f64,
-    pub limit: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resets_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window_start_ms: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit_window_secs: Option<i64>,
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event: Option<String>,
-}
-
-impl HistorySample {
-    fn key(&self) -> (String, String) {
-        (self.provider.clone(), self.label.clone())
-    }
-}
+pub use fabrials_runtime::history::{prepare_sample, HistorySample};
 
 /// Default history path under XDG data.
 pub fn history_path() -> PathBuf {
-    crate::app::data_dir().join("usage-history.jsonl")
+    crate::app::data_dir().join("runtime.sqlite3")
+}
+
+fn sqlite_store(path: &Path) -> Result<fabrials_runtime::history::HistoryStore, String> {
+    use std::io::Read;
+    const SOURCE: &str = "usage-history.jsonl.v1";
+    let mut store = fabrials_runtime::history::HistoryStore::open(path)?;
+    if !store.imported("local", SOURCE)? {
+        let legacy = path.with_file_name("usage-history.jsonl");
+        let mut samples = Vec::new();
+        match std::fs::File::open(&legacy) {
+            Ok(file) => {
+                let mut bytes = Vec::new();
+                file.take(64 * 1024 * 1024 + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| e.to_string())?;
+                if bytes.len() > 64 * 1024 * 1024 {
+                    return Err("Legacy history exceeds import limit".into());
+                }
+                for line in bytes.split(|byte| *byte == b'\n') {
+                    if line.len() > 16_384 {
+                        return Err("Legacy history sample exceeds import limit".into());
+                    }
+                    if let Ok(sample) = serde_json::from_slice::<HistorySample>(line) {
+                        samples.push(sample);
+                    }
+                    if samples.len() > 100_000 {
+                        return Err("Too many legacy history samples".into());
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        store.import_once("local", SOURCE, &samples)?;
+    }
+    Ok(store)
+}
+
+pub fn local_samples(provider: Option<&str>, limit: usize) -> Result<Vec<HistorySample>, String> {
+    sqlite_store(&history_path())?.read("local", provider, limit)
 }
 
 /// Extract percent progress samples from probe outputs.
@@ -93,46 +107,19 @@ pub fn samples_from_outputs(outputs: &[ProviderOutput], ts_ms: i64) -> Vec<Histo
     out
 }
 
-/// Whether `curr` should be treated as a new rate-limit epoch vs `prev`.
-pub fn is_reset_event(prev: &HistorySample, curr: &HistorySample) -> bool {
-    matches!(
-        (&prev.resets_at, &curr.resets_at),
-        (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() && a != b
-    )
-}
-
-/// Whether we should skip writing `curr` because nothing material changed.
-pub fn is_duplicate(prev: &HistorySample, curr: &HistorySample) -> bool {
-    if is_reset_event(prev, curr) {
-        return false;
-    }
-    same_used(prev.used, curr.used) && prev.resets_at == curr.resets_at
-}
-
-fn same_used(a: f64, b: f64) -> bool {
-    (a * 10.0).round() == (b * 10.0).round()
-}
-
-/// Apply reset event flag and decide write eligibility against last known sample.
-pub fn prepare_sample(
-    prev: Option<&HistorySample>,
-    mut curr: HistorySample,
-) -> Option<HistorySample> {
-    if let Some(p) = prev {
-        if is_duplicate(p, &curr) {
-            return None;
-        }
-        if is_reset_event(p, &curr) {
-            curr.event = Some("reset".into());
-        }
-    }
-    Some(curr)
-}
-
 /// Append samples to `path`, deduping against the last line per (provider,label).
 pub fn append_samples(path: &Path, samples: &[HistorySample]) -> Result<usize, String> {
     if samples.is_empty() {
         return Ok(0);
+    }
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "sqlite3")
+    {
+        let mut store = sqlite_store(path)?;
+        let written = store.append("local", samples)?;
+        store.prune("local", util::now_ms() - RETAIN_DAYS * DAY_MS)?;
+        return Ok(written);
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir history: {e}"))?;
@@ -158,7 +145,7 @@ pub fn append_samples(path: &Path, samples: &[HistorySample]) -> Result<usize, S
     Ok(written)
 }
 
-/// Record progress metrics from a full probe into the default history file.
+/// Record progress metrics from a full probe into the shared local store.
 pub fn record(outputs: &[ProviderOutput]) {
     let samples = samples_from_outputs(outputs, util::now_ms());
     if samples.is_empty() {
@@ -176,6 +163,18 @@ pub fn should_record_on_probe() -> bool {
 
 /// Read samples, optionally filtered by provider id, newest last.
 pub fn read_samples(path: &Path, provider: Option<&str>) -> Vec<HistorySample> {
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "sqlite3")
+    {
+        return match sqlite_store(path).and_then(|store| store.read("local", provider, 100_000)) {
+            Ok(samples) => samples,
+            Err(error) => {
+                log::warn!("History unavailable: {error}");
+                Vec::new()
+            }
+        };
+    }
     let Ok(f) = std::fs::File::open(path) else {
         return Vec::new();
     };
@@ -263,6 +262,43 @@ fn maybe_rotate(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::model::MetricLine;
+    use fabrials_runtime::history::{is_duplicate, is_reset_event};
+
+    #[test]
+    fn sqlite_import_preserves_source_and_survives_repeated_reads() {
+        let directory = std::env::temp_dir().join(format!(
+            "spanreed-history-import-{}",
+            fabrials_runtime::accounting::new_request_id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let legacy = directory.join("usage-history.jsonl");
+        let database = directory.join("runtime.sqlite3");
+        let now = util::now_ms();
+        let rows = [
+            sample("grok", "Weekly", 10.0, "2030-01-01", now - 1000),
+            sample("grok", "Weekly", 20.0, "2030-01-01", now),
+        ];
+        let source = rows
+            .iter()
+            .map(|row| serde_json::to_string(row).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(&legacy, &source).unwrap();
+        assert_eq!(read_samples(&database, None).len(), 2);
+        assert_eq!(read_samples(&database, Some("grok")).len(), 2);
+        assert_eq!(
+            append_samples(
+                &database,
+                &[sample("grok", "Weekly", 30.0, "2030-01-01", now + 1000)]
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(read_samples(&database, None).len(), 3);
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), source);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     fn sample(provider: &str, label: &str, used: f64, resets: &str, ts: i64) -> HistorySample {
         HistorySample {

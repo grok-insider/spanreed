@@ -4,6 +4,16 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-07
+
+- Add a local desktop console with the same design system and components as ai-relay, including accounts, model discovery, routing, usage history and request inspection.
+- Embed the shared provider runtime directly in Spanreed, with durable credential rotation and SQLite usage storage.
+- Add Nous OAuth and API-key accounts, SuperGrok device authorization, and read-only Codex/SuperGrok reset inventories with opt-in notifications.
+- Add reviewed client configuration and bidirectional account migration with explicit approvals and fresh OAuth grants.
+- Add built-in Waybar/Eww profiles, independent privacy controls, and Windows Credential Manager integration.
+- Build Linux x86_64 and Windows x64 desktop review installers. Windows signing remains pending; macOS/ARM qualification and distribution are deferred until a hardware contributor provides native evidence.
+- Keep CLI and desktop release versions synchronized; preserve generated contract line endings on Windows.
+
 ## [0.2.1] - 2026-08-28
 
 - feat: Grok autosteer picks the soonest pool reset, then smaller plans (Premium+ before Heavy), without waiting for 100%

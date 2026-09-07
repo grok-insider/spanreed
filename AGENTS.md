@@ -9,12 +9,12 @@ tracker: one Rust binary (`spanreed`) that acts as a CLI, a background daemon,
 and a data source for status bars. It reads local AI-CLI credentials, queries
 each provider's usage API, and renders the result.
 
-- Single binary crate. Shared DTOs/pricing/accounts live in crates.io
+- CLI/library crate with an optional Tauri host under `desktop/`. Shared DTOs/pricing/accounts live in crates.io
   `fabrials-*` crates (local path patch in `~/dev/fabrials/.cargo`).
   `src/model.rs` re-exports `fabrials-model`.
-- `spanreed capture serve` execs the `ai-relay` binary (`AI_RELAY_BIN` override).
-- No workspace. Binary target `spanreed` (`src/main.rs`).
-- No async runtime: probes are blocking I/O fanned out over threads.
+- `spanreed capture serve` runs the shared `fabrials-runtime` directly; no ai-relay executable is required. The optional xAI compatibility listener shares the runtime.
+- No workspace. Binary target `spanreed` (`src/main.rs`) delegates to `src/lib.rs`.
+- Probes are blocking I/O fanned out over threads. The shared runtime contains Tokio transport; Tauri runs blocking probes off the renderer thread.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.
 - **Accounts** are host-owned (`src/accounts.rs`, `spanreed account`). Drivers
@@ -25,18 +25,25 @@ each provider's usage API, and renders the result.
   files, SQLite state DBs (`rusqlite`, read-only), the GitHub CLI, `/proc`, and
   the OS secret store — Secret Service via `secret-tool` on Linux, Keychain on
   macOS, Credential Manager on Windows. Linux/Wayland is the primary target; the
-  same code compiles, tests, and ships binaries for macOS and Windows.
+  Windows builds and native smoke checks are verified. macOS/ARM qualification
+  is deferred pending a contributor with Mac hardware; configuration alone is
+  not evidence of support (see `desktop/README.md`).
 
 ## Module layout
 
 One file per concern. To add a top-level concern, add a `src/<name>.rs` and
-declare it in `src/main.rs`.
+declare it in `src/lib.rs`.
 
 | File | Owns |
 |------|------|
-| `src/main.rs`           | CLI entry + subcommand dispatch (`list`, `probe`, `waybar`, `json`, `serve`, `addon`, `help`). |
+| `src/main.rs` / `src/lib.rs` | Thin binary entry / CLI dispatch and reusable host library. |
+| `desktop/` | Tauri + React local console; shared styles/components from `@fabrials/ui`. |
+| `src/privacy.rs` | Independent, default-off metrics publication and history synchronization consent. |
+| `src/history.rs` | Quota observations in `runtime.sqlite3` through shared `fabrials-runtime::history`; one-time import preserves `usage-history.jsonl`. CLI and desktop read the same store. |
+| `src/local_tokens.rs` | Grok refresh through shared durable rotation journal and scoped advisory locks; journal is separate from usage data. Nous uses the same journal from its driver. |
+| `src/profiles.rs` | Built-in Waybar, Eww and SketchyBar fragments; explicit new-file installation. |
 | `src/addons/`           | Addon protocol, host (PATH/toml/inproc), grok-bridge shim. |
-| `src/accounts.rs`       | Host identity registry + secrets. |
+| `src/accounts.rs`       | Host identity registry + secrets; shared recoverable file transactions coordinate mutations with refreshes. Account generations prevent stale authorization writes. |
 | `src/drivers/`          | First-party identity drivers (`grok` login/probe/fabric token). |
 | `src/app.rs`            | Product identity (`spanreed`): dirs, bin name, GitHub repo. |
 | `src/probe.rs`          | Probe orchestration: runs detected (or all/one) providers concurrently. |
@@ -49,7 +56,7 @@ declare it in `src/main.rs`.
 | `src/output.rs`         | Renderers: `plain` (terminal + sparkline), `waybar` (custom-module JSON), severity classes. |
 | `src/api.rs`            | Local HTTP API on `127.0.0.1:6736` (`/usage`, `/health`) with background refresh. |
 | `src/cost.rs`           | Local-log cost engine (Claude/Codex): parallel + `memchr` + mtime pre-filter + dedup + TTL cache; produces `Last 30 Days` + `Usage Trend`. |
-| `src/grok_ledger.rs`    | Grok capture ledger (`grok-usage.jsonl`). Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
+| `src/grok_ledger.rs`    | Capture ledger in shared `runtime.sqlite3`; legacy `grok-usage.jsonl` is imported once and preserved. Grok metrics filter by provider. Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
 | `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service, optional tray autostart, wire Grok Build + OpenCode xAI to the local capture proxy. |
 | `src/self_update.rs`    | `spanreed self-update`: GitHub Releases check + sha256-verified binary replace. |
 | `src/tray_format.rs`    | Pure tooltip / severity helpers for the tray (always compiled). |
@@ -199,8 +206,9 @@ numbers and no PR ids.
 
 ## Validation status
 
-Only `claude`, `codex`, `grok`, and `copilot` have been validated against live
-APIs. The other providers are implemented to the documented API shapes but are
+Only `claude`, `codex`, `grok`, `copilot`, and `nous` have been validated against live
+APIs. Nous validation covers OAuth, quota and model discovery, without paid inference.
+The other providers are implemented to the documented API shapes but are
 not yet confirmed against real accounts — treat field parsing as unverified
 until someone runs `spanreed probe <id>` against a live account.
 
@@ -249,7 +257,7 @@ the website.
 
 - **Requires Grok Insider account** (Sign in with X once via device flow).
 - **Login:** `spanreed share login` → browser `/spanreed/link` → approve.
-- **Automatic:** `spanreed setup` enables **once-per-day** auto-share
+- **Opt-in:** `spanreed setup` can enable **once-per-day** auto-share only after an affirmative choice; `--yes` keeps sharing and client wiring disabled. `spanreed privacy metrics on` explicitly enables publication consent. The schedule uses
   (`src/share_schedule.rs`): preferred evening timer (**23:00 Europe/Madrid** /
   local) **plus** login / missed-run catch-up (systemd `Persistent` + login
   oneshot; macOS `RunAtLoad`; Windows `StartWhenAvailable` + logon).
