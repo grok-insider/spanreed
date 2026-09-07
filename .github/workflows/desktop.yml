@@ -5,6 +5,12 @@ on:
     paths: ['desktop/**', 'src/**', 'vendor/**', 'Cargo.*', '.gitattributes', '.github/workflows/desktop.yml']
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: Bot PR to validate (optional for human dispatch)
+        type: string
+      expected_sha:
+        description: Exact bot PR commit
+        type: string
       build_macos:
         description: Opt in to deferred macOS qualification with a hardware contributor
         type: boolean
@@ -14,11 +20,18 @@ on:
         type: boolean
         default: false
 
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,6 +44,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate dispatched PR revision
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        shell: bash
+        run: |
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          python scripts/release.py validate-pr --pr "$PR_NUMBER" --sha "$EXPECTED_SHA"
       - uses: dtolnay/rust-toolchain@stable
       - uses: oven-sh/setup-bun@v2
         with:
@@ -81,13 +110,13 @@ jobs:
               digest = hashlib.sha256(target.read_bytes()).hexdigest()
               target.with_name(target.name + ".sha256").write_text(
                   f"{digest}  {target.name}\n", encoding="utf-8")
+      - name: Record release provenance
+        shell: bash
+        run: python scripts/release.py provenance --directory desktop/installers
       - uses: actions/upload-artifact@v4
         with:
-          name: spanreed-desktop-unsigned-${{ runner.os }}
-          path: |
-            desktop/src-tauri/target/release/spanreed-desktop
-            desktop/src-tauri/target/release/spanreed-desktop.exe
-            desktop/installers/
+          name: spanreed-release-desktop-${{ runner.os }}
+          path: desktop/installers/
           if-no-files-found: error
 
   signed-macos:
