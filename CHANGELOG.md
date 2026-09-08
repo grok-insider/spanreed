@@ -6,6 +6,8 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.0] - 2026-09-08
 
+- refactor: restrict unbound remote calls to dashboard discovery
+- fix: explain authorization conflicts and pending session checks
 - feat: expose the Eww launcher for monitor-aware desktop bindings
 - fix: report Windows notification delivery failures
 - feat: connect native workspaces and synchronize selected private history
