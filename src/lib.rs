@@ -33,6 +33,7 @@ mod creds;
 pub mod desktop;
 mod drivers;
 mod epoch;
+pub mod fabrials_login;
 mod forecast;
 mod grok_ledger;
 mod grok_proxy;
@@ -44,6 +45,7 @@ mod local_tokens;
 pub mod migration;
 pub mod model;
 mod output;
+pub mod panel;
 mod pool_baseline;
 mod pricing;
 pub mod privacy;
@@ -51,6 +53,7 @@ mod probe;
 mod proc;
 mod profiles;
 pub mod providers;
+pub mod remote_workspace;
 mod resets;
 mod secret;
 mod self_update;
@@ -60,7 +63,9 @@ mod share;
 mod share_economics;
 mod share_schedule;
 mod share_session;
-mod sync;
+pub mod sharing_control;
+pub mod sync;
+mod sync_store;
 mod tray_format;
 mod usage_stats;
 mod util;
@@ -190,7 +195,7 @@ fn print_help() {
          \tspanreed share               Upload plan/quota metrics (requires X login)\n\
          \tspanreed share login         Link CLI via device code on fabrials.com\n\
          \tspanreed share logout|status Session management\n\
-         \tspanreed sync                Push/pull SuperGrok hops to ai.fabrials.com\n\
+         \tspanreed sync                Synchronize selected private usage sources with Fabrials\n\
          \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\
          \t                               evening timer + login/missed-run catch-up\n\

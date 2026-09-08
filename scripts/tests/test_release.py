@@ -74,6 +74,31 @@ class VersionTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_dispatch_waits_for_pushed_head_without_dispatching_stale_code(self):
+        def pr(sha):
+            return {"state": "open", "head": {"repo": {"full_name": release.REPO},
+                    "sha": sha, "ref": "release-plz-manual-v0.4.0"}, "base": {"ref": "master"}}
+        with patch.object(release, "api", side_effect=[pr("b" * 40), pr(SHA)]), \
+                patch.object(release.time, "sleep") as sleep, patch.object(release, "run") as run:
+            release.dispatch(15, SHA)
+            sleep.assert_called_once_with(2)
+            self.assertEqual(run.call_count, 4)
+            for call in run.call_args_list:
+                self.assertIn(f"expected_sha={SHA}", call.args)
+        with patch.object(release, "api", return_value=pr("b" * 40)) as api, \
+                patch.object(release.time, "sleep") as sleep, patch.object(release, "run") as run:
+            with self.assertRaisesRegex(ValueError, "changed SHA"):
+                release.dispatch(15, SHA)
+            self.assertEqual(api.call_count, 6)
+            self.assertEqual(sleep.call_count, 5)
+            run.assert_not_called()
+        closed = pr(SHA)
+        closed["state"] = "closed"
+        with patch.object(release, "api", return_value=closed), patch.object(release.time, "sleep") as sleep:
+            with self.assertRaisesRegex(ValueError, "closed"):
+                release.dispatch(15, SHA)
+            sleep.assert_not_called()
+
     def test_changed_external_or_closed_pr_rejected(self):
         pr = {"state": "open", "head": {"repo": {"full_name": release.REPO},
               "sha": SHA, "ref": "release-plz-v0.3.1"}, "base": {"ref": "master"}}

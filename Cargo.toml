@@ -1,6 +1,6 @@
 [package]
 name = "spanreed"
-version = "0.3.1"
+version = "0.4.0"
 description = "Linux-native AI coding subscription usage tracker (daemon + CLI + Waybar)"
 edition = "2021"
 license = "MIT"
@@ -77,3 +77,7 @@ fabrials-metrics = { path = "vendor/fabrials-metrics" }
 fabrials-accounts = { path = "vendor/fabrials-accounts" }
 fabrials-oauth-grok = { path = "vendor/fabrials-oauth-grok" }
 fabrials-share = { path = "vendor/fabrials-share" }
+
+[[example]]
+name = "model-contracts"
+required-features = ["contracts"]

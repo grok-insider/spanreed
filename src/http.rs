@@ -90,8 +90,8 @@ impl Request {
     pub fn post(url: impl Into<String>) -> Self {
         Self::new(reqwest::Method::POST, url)
     }
-    pub fn put(url: impl Into<String>) -> Self {
-        Self::new(reqwest::Method::PUT, url)
+    pub fn delete(url: impl Into<String>) -> Self {
+        Self::new(reqwest::Method::DELETE, url)
     }
     fn new(method: reqwest::Method, url: impl Into<String>) -> Self {
         Request {

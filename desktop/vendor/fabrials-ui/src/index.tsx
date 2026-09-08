@@ -98,7 +98,7 @@ function metricText(line: MetricLine): string {
   return line.type === "text" ? line.value : line.type === "badge" ? line.text : "";
 }
 export function ProviderCard({ provider }: { provider: ProviderOutput }) {
-  const lines = provider.lines.filter(line => line.type !== "barChart" && !(provider.resetInventory && line.label.startsWith("Reset")));
+  const lines = provider.lines.filter(line => line.type !== "barChart" && !(provider.resetInventory && (line.label.startsWith("Reset") || line.label === "Limit reset credits")));
   return <article className="fb-card"><header className="fb-row"><div><h2>{provider.displayName}</h2><span className="fb-muted">{provider.plan || "Connected provider"}</span></div><span className="fb-provider-mark" aria-hidden>{provider.displayName.slice(0, 1)}</span></header>
     <div className="fb-card-body">{lines.map((line, index) => line.type === "progress" ? <div className="fb-metric" key={index}>
       <div className="fb-row"><span>{line.label}</span><strong>{line.format?.kind === "dollars" ? dollars(line.used ?? null) : `${Math.round(line.used ?? 0)}${line.format?.kind === "percent" ? "%" : ""}`}</strong></div>
@@ -125,3 +125,9 @@ export { MigrationReviewDetails } from "./migration-review";
 export type { MigrationCandidate, MigrationSessionView, MigrationSelection, MigrationInvitation, MigrationDirection } from "./contracts";
 
 export type { HistorySample, UsageRecord } from "./contracts";
+
+export { HostedMigration } from "./hosted-migration";
+export type { HostedMigrationApi, MigrationAuthorization } from "./hosted-migration";
+
+export { PrivateHistoryView } from "./private-history";
+export type { PrivateRecentPage, PrivateStoredObservation, PrivateObservation, PrivateEvent } from "./contracts";
