@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 
 REPO = "grok-insider/spanreed"
@@ -104,10 +105,18 @@ def release_notes(version):
         "https://fabrials.com/install/spanreed.ps1 (Windows x64).\n"
 
 
-def validate_pr(number, sha, release_only=False):
-    pr = api(f"pulls/{int(number)}")
-    if pr["state"] != "open" or pr["head"]["repo"]["full_name"] != REPO or pr["head"]["sha"] != sha:
-        raise ValueError("PR is closed, external, or changed SHA")
+def validate_pr(number, sha, release_only=False, wait_for_head=False):
+    attempts = 6 if wait_for_head else 1
+    for attempt in range(attempts):
+        pr = api(f"pulls/{int(number)}")
+        if pr["state"] != "open" or pr["head"]["repo"]["full_name"] != REPO:
+            raise ValueError("PR is closed or external")
+        if pr["head"]["sha"] == sha:
+            break
+        if attempt == attempts - 1:
+            raise ValueError("PR changed SHA or its pushed head has not propagated")
+        # The PR projection can briefly lag behind a successful branch push.
+        time.sleep(2)
     base, head = pr["base"]["ref"], pr["head"]["ref"]
     if release_only or base == "master":
         if base != "master" or not head.startswith(PREFIXES):
@@ -118,7 +127,7 @@ def validate_pr(number, sha, release_only=False):
 
 
 def dispatch(number, sha):
-    pr = validate_pr(number, sha)
+    pr = validate_pr(number, sha, wait_for_head=True)
     workflows = list(CHECK_WORKFLOWS)
     if pr["base"]["ref"] == "master":
         workflows.append("guard-master.yml")
