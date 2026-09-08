@@ -35,6 +35,14 @@ fn files(name: &str) -> Option<Vec<(&'static str, &'static str)>> {
             ("spanreed.css", WAYBAR_CSS),
         ]),
         "eww" => Some(vec![("spanreed.yuck", EWW), ("spanreed.scss", EWW_CSS)]),
+        "eww-panel" => Some(vec![
+            ("eww.yuck", include_str!("../profiles/eww/eww.yuck")),
+            ("eww.scss", include_str!("../profiles/eww/eww.scss")),
+            (
+                "spanreed-panel",
+                include_str!("../profiles/eww/spanreed-panel"),
+            ),
+        ]),
         "sketchybar" => Some(vec![("spanreed.sh", SKETCHYBAR)]),
         _ => None,
     }
@@ -72,7 +80,7 @@ fn install(name: &str, directory: &Path) -> Result<(), String> {
 pub fn cmd(args: &[String]) -> ExitCode {
     let result = match args.first().map(String::as_str) {
         None | Some("list") => {
-            println!("waybar\neww\nsketchybar");
+            println!("waybar\neww\neww-panel\nsketchybar");
             return ExitCode::SUCCESS;
         }
         Some("show") if args.len() == 2 => files(&args[1])
@@ -97,8 +105,12 @@ pub fn cmd(args: &[String]) -> ExitCode {
 }
 
 pub fn widget(args: &[String]) -> ExitCode {
+    if args.first().is_some_and(|arg| arg == "panel") {
+        println!("{}", crate::panel::snapshot());
+        return ExitCode::SUCCESS;
+    }
     if args.first().is_some_and(|arg| arg != "json") {
-        eprintln!("Usage: spanreed widget json");
+        eprintln!("Usage: spanreed widget json | panel");
         return ExitCode::FAILURE;
     }
     let mut outputs = crate::desktop::snapshot(false);
