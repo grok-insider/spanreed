@@ -49,7 +49,7 @@ export function FabrialsLink({ onChange }: { onChange?: (view: LinkView) => void
     {view?.state === "declined" && <p role="status">Connection declined. You can start a new connection.</p>}
     {view?.state === "expired" && <p role="status">This code expired. Start a new connection to continue.</p>}
     {error && <p role="alert" className="fb-error">{error}</p>}
-    {view?.state === "linked" ? <><p role="status">Connected as @{view.user.username}</p><button className="fb-button" disabled={busy} onClick={() => void disconnect()}>Disconnect this installation</button></> : view?.state === "pending" ? <>
+    {view === null && !error ? <p role="status">Checking this installation’s connection…</p> : view?.state === "linked" ? <><p role="status">Connected as @{view.user.username}</p><button className="fb-button" disabled={busy} onClick={() => void disconnect()}>Disconnect this installation</button></> : view?.state === "pending" ? <>
       <p>Approve this code in your browser:</p><output aria-label="Fabrials authorization code"><strong>{view.userCode}</strong></output>
       <p className="fb-muted">Waiting for approval. Code expires at {new Date(view.expiresAtMs).toLocaleTimeString()}.</p>
       <div className="fb-row"><button className="fb-button fb-button-primary" disabled={busy} onClick={() => void invoke("fabrials_open", {id: view.id}).catch(error => setError(String(error)))}>Open authorization</button><button className="fb-button" disabled={busy} onClick={() => void cancel()}>Cancel</button></div>

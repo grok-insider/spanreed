@@ -195,7 +195,7 @@ fn print_help() {
          \tspanreed share               Upload plan/quota metrics (requires X login)\n\
          \tspanreed share login         Link CLI via device code on fabrials.com\n\
          \tspanreed share logout|status Session management\n\
-         \tspanreed sync                Push/pull SuperGrok hops to ai.fabrials.com\n\
+         \tspanreed sync                Synchronize selected private usage sources with Fabrials\n\
          \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\
          \t                               evening timer + login/missed-run catch-up\n\

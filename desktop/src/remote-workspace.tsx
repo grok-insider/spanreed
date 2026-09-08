@@ -4,7 +4,7 @@ import * as React from "react";
 import { ApiKeyForm, BalanceCard, ResetInventory, RoutingExplanation } from "@fabrials/ui";
 import { RemoteDeviceLogin } from "./remote-device-login";
 import { FabrialsLink } from "./fabrials-link";
-import { remote, boundRemote, RemoteContext, useRemote } from "./remote-api";
+import { loadDashboard, boundRemote, RemoteContext, useRemote } from "./remote-api";
 import type { AccountView, DashboardPayload, IssuedKey, KeyView, KeyPolicyRequest } from "./relay-contracts";
 import type { RemoteOperation } from "./contracts";
 
@@ -24,7 +24,7 @@ export function RemoteWorkspace({ page }: { page: string }) {
   const load = React.useCallback(async () => {
     const current = ++sequence.current;
     setBusy(true); setError(null);
-    try { const next = await remote<DashboardPayload>("dashboard", {}, days); if (current === sequence.current) { if (loadedOwner.current !== next.session.owner) setIssuedKey(null); loadedOwner.current = next.session.owner; setData(next); } }
+    try { const next = await loadDashboard<DashboardPayload>(days); if (current === sequence.current) { if (loadedOwner.current !== next.session.owner) setIssuedKey(null); loadedOwner.current = next.session.owner; setData(next); } }
     catch (error) { if (current === sequence.current) { setData(null); setIssuedKey(null); setError(String(error)); } }
     finally { if (current === sequence.current) setBusy(false); }
   }, [days]);
