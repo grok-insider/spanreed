@@ -173,6 +173,9 @@ fn execute(
         );
     }
     if !(200..300).contains(&response.status) {
+        if let Some(message) = response.json().as_ref().and_then(public_remote_error) {
+            return Err(message.into());
+        }
         return Err(format!("ai-relay could not complete the operation (HTTP {}). Refresh before retrying a change.", response.status));
     }
     response
@@ -183,6 +186,14 @@ fn execute(
                     && value.is_array())
         })
         .ok_or_else(|| "Invalid ai-relay response".into())
+}
+
+fn public_remote_error(body: &serde_json::Value) -> Option<&'static str> {
+    match body.get("error")?.as_str()? {
+        "provider_identity_already_linked" => Some("This provider identity is already connected. Renew authorization on its existing account."),
+        "account_name_already_exists" => Some("This account name already exists. Choose another name or renew the existing account."),
+        _ => None,
+    }
 }
 
 pub fn verification_url(raw: &str) -> Result<String, String> {
@@ -204,6 +215,16 @@ pub fn verification_url(raw: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_known_public_error_codes_reach_the_renderer() {
+        assert!(public_remote_error(
+            &serde_json::json!({"error":"provider_identity_already_linked"})
+        )
+        .unwrap()
+        .contains("existing account"));
+        assert!(public_remote_error(&serde_json::json!({"error":"secret-token-value"})).is_none());
+        assert!(public_remote_error(&serde_json::json!({"detail":"secret-token-value"})).is_none());
+    }
     #[test]
     fn stale_owner_and_subject_cannot_use_replacement_session() {
         let token = "e30.eyJzdWIiOiJhbGljZSIsInhfdXNlcl9pZCI6IngtYWxpY2UifQ.signature";
