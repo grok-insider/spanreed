@@ -4,6 +4,15 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-08
+
+- fix: wait for pushed release heads before dispatching checks
+- refactor: restrict unbound remote calls to dashboard discovery
+- fix: explain authorization conflicts and pending session checks
+- feat: expose the Eww launcher for monitor-aware desktop bindings
+- fix: report Windows notification delivery failures
+- feat: connect native workspaces and synchronize selected private history
+
 ## [0.3.1] - 2026-09-07
 
 - fix: resume release drafts before their tag exists
