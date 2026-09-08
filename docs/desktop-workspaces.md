@@ -43,7 +43,8 @@ and `programs.spanreed.serve.enable = true`; bind Waybar's click action to
 Opt-in reset alerts also run after the daemon's provider refresh, independent
 of an open GUI. They share the durable delivery store with GUI checks. Linux
 requires `notify-send` and a desktop notification service. Windows uses the
-installed application's notification identity; Windows qualification is pending.
+installed application's notification identity. GUI delivery and background delivery
+with process-restart deduplication were verified in the Windows 11 QA VM.
 macOS/ARM qualification and Windows signing remain deferred.
 
 ## Private synchronization and publication

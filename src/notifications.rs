@@ -142,6 +142,7 @@ fn system_notification(title: &str, body: &str) -> Result<(), String> {
     let status = std::process::Command::new("powershell.exe")
         .creation_flags(0x08000000)
         .args(["-NoProfile", "-NonInteractive", "-Command", r#"
+$ErrorActionPreference = 'Stop'
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
 $document = New-Object Windows.Data.Xml.Dom.XmlDocument
