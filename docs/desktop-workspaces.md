@@ -32,13 +32,15 @@ the renderer cannot redirect the native credential transport.
 `spanreed profile install eww-panel --output ~/.config/eww-spanreed` installs a
 standalone Eww window. Run `sh ~/.config/eww-spanreed/spanreed-panel toggle`;
 use `open` or `close` for an explicit action. `SPANREED_PANEL_HEIGHT` defaults
-to 720 pixels and `SPANREED_PANEL_MONITOR` to monitor index 0. Eww and the
+to 720 pixels and `SPANREED_PANEL_MONITOR` to monitor index 0; a connector name
+such as `DP-1` is also accepted. Eww and the
 Spanreed CLI must be on PATH. `spanreed widget panel` reads only
 `127.0.0.1:6736/usage`, so opening the panel does not log in, probe providers,
 or present hosted data as local data. The launcher suspends polling when closed.
 Home Manager can install the launcher with `programs.spanreed.eww.enable = true`
 and `programs.spanreed.serve.enable = true`; bind Waybar's click action to
 `spanreed-panel toggle`.
+Bindings can use the absolute launcher path from `programs.spanreed.eww.package`.
 
 Opt-in reset alerts also run after the daemon's provider refresh, independent
 of an open GUI. They share the durable delivery store with GUI checks. Linux

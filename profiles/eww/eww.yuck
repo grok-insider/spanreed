@@ -1,7 +1,7 @@
 (defvar panel-visible false)
 (defpoll snapshot :interval "60s" :run-while panel-visible :initial "{\"status\":\"Loading…\",\"providers\":[]}" "spanreed widget panel")
-(defwindow spanreed [panel-height panel-monitor]
-  :monitor panel-monitor
+(defwindow spanreed [panel-height]
+  :monitor 0
   :geometry (geometry :x "12px" :y "46px" :width "420px" :height panel-height :anchor "top right")
   :stacking "overlay" :exclusive false :focusable "ondemand"
   (box :class "spanreed-panel" :orientation "v" :space-evenly false :spacing 16

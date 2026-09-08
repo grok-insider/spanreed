@@ -235,7 +235,15 @@
               };
             };
 
-            eww.enable = lib.mkEnableOption "standalone Spanreed Eww panel (spanreed-panel toggle)";
+            eww = {
+              enable = lib.mkEnableOption "standalone Spanreed Eww panel (spanreed-panel toggle)";
+              package = lib.mkOption {
+                type = lib.types.package;
+                default = panelLauncher;
+                defaultText = lib.literalExpression "Spanreed Eww launcher using programs.spanreed.package";
+                description = "Standalone panel launcher, also available for absolute-path desktop bindings.";
+              };
+            };
 
             serve = {
               enable = lib.mkOption {
@@ -321,7 +329,7 @@
           };
 
           config = lib.mkIf cfg.enable {
-            home.packages = [ cfg.package ] ++ lib.optionals cfg.desktop.enable [ cfg.desktop.package ] ++ lib.optionals cfg.eww.enable [ panelLauncher ];
+            home.packages = [ cfg.package ] ++ lib.optionals cfg.desktop.enable [ cfg.desktop.package ] ++ lib.optionals cfg.eww.enable [ cfg.eww.package ];
             assertions = [{ assertion = !cfg.eww.enable || (pkgs.stdenv.hostPlatform.isLinux && cfg.serve.enable); message = "The Spanreed Eww panel requires Linux and programs.spanreed.serve.enable."; }];
 
             systemd.user.services.spanreed = lib.mkIf cfg.serve.enable {
