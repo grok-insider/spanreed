@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+SPANREED_PANEL_CONFIG=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export SPANREED_PANEL_CONFIG
+panel_height=${SPANREED_PANEL_HEIGHT:-720}
+panel_monitor=${SPANREED_PANEL_MONITOR:-0}
+case "$panel_monitor" in ''|*[!0-9]*) printf '%s\n' 'SPANREED_PANEL_MONITOR must be a monitor index' >&2; exit 1;; esac
+case "$panel_height" in ''|*[!0-9]*) printf '%s\n' 'SPANREED_PANEL_HEIGHT must be an integer' >&2; exit 1;; esac
+if [ "$panel_height" -lt 240 ] || [ "$panel_height" -gt 2160 ]; then
+  printf '%s\n' 'SPANREED_PANEL_HEIGHT must be between 240 and 2160' >&2
+  exit 1
+fi
+eww_cmd() { eww --config "$SPANREED_PANEL_CONFIG" "$@"; }
+action=${1:-toggle}
+case "$action" in open|close|toggle) ;; *) printf '%s\n' 'Usage: sh spanreed-panel [open|close|toggle]' >&2; exit 1;; esac
+if ! eww_cmd ping >/dev/null 2>&1; then
+  if [ "$action" = close ]; then exit 0; fi
+  eww_cmd daemon
+fi
+if [ "$action" = toggle ]; then
+  case "$(eww_cmd active-windows)" in *'spanreed: spanreed'*) action=close;; *) action=open;; esac
+fi
+case "$action" in
+  open)
+    eww_cmd update panel-visible=true
+    eww_cmd open spanreed --arg "panel-height=$panel_height" --arg "panel-monitor=$panel_monitor" || { eww_cmd update panel-visible=false; exit 1; }
+    ;;
+  close)
+    eww_cmd close spanreed
+    eww_cmd update panel-visible=false
+    ;;
+  *) printf '%s\n' 'Usage: sh spanreed-panel [open|close|toggle]' >&2; exit 1;;
+esac

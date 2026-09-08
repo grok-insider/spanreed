@@ -1,261 +1,294 @@
-//! Push/pull SuperGrok plan + hops to ai.fabrials.com. No OAuth secrets.
-//!
-//! Requires `spanreed share login` (same Fabrials X JWT). Only the **active**
-//! Grok account is pulled back into this install.
+//! Opt-in, selected-source private synchronization across compatible providers.
+use crate::remote_workspace::{request_for_subject, RemoteOperation};
+use fabrials_model::private_sync::{PrivateEvent, PrivateObservation, PrivatePage, PrivatePush};
+use fabrials_runtime::credential_journal::{Rotation, Scope};
+use serde::{Deserialize, Serialize};
 
-use fabrials_model::UsageRecord;
-
-use crate::accounts;
-use crate::app;
-use crate::drivers;
-use crate::grok_ledger;
-use crate::http::Request;
-use crate::share_session;
-use crate::util;
-
-const DEFAULT_RELAY: &str = "https://ai.fabrials.com";
-const ENV_RELAY: &str = "SPANREED_RELAY_BASE";
-const BATCH: usize = 200;
-
-pub fn relay_base() -> String {
-    std::env::var(ENV_RELAY)
-        .ok()
-        .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_RELAY.into())
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSettings {
+    pub sources: Vec<String>,
+}
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    pub last_success_ms: Option<i64>,
+    pub uploaded: usize,
+    pub downloaded: usize,
+    pub error: Option<String>,
 }
 
-pub fn grok_material_from_token(token: &str) -> Option<String> {
-    let v = util::jwt_payload(token)?;
-    v.get("sub")
-        .and_then(|x| x.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            v.get("email")
-                .and_then(|x| x.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
+fn cached_owner() -> Option<String> {
+    let session = crate::share_session::load()?;
+    crate::util::jwt_payload(&session.access_token)?
+        .get("sub")?
+        .as_str()
+        .filter(|owner| !owner.is_empty())
+        .map(str::to_owned)
+}
+pub fn recent(
+    before: Option<i64>,
+) -> Result<fabrials_model::private_sync::PrivateRecentPage, String> {
+    if before.is_some_and(|value| value <= 0) {
+        return Err("Invalid private history cursor".into());
+    }
+    let owner = cached_owner().ok_or("Connect this installation to view its downloaded history")?;
+    crate::sync_store::Store::open()?.recent(&owner, before)
+}
+
+#[derive(Serialize, Deserialize)]
+struct OwnedSelection {
+    owner: String,
+    settings: SyncSettings,
+}
+#[derive(Serialize, Deserialize)]
+struct OwnedStatus {
+    owner: String,
+    status: SyncStatus,
+}
+
+pub fn settings() -> Result<SyncSettings, String> {
+    match std::fs::read(crate::app::config_dir().join("sync-selection.json")) {
+        Ok(bytes) => {
+            // Legacy selections were not bound to an identity; require a new explicit selection.
+            let value: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| "Invalid sync selection")?;
+            if value.get("owner").is_none() {
+                return Ok(SyncSettings::default());
+            }
+            let saved: OwnedSelection =
+                serde_json::from_value(value).map_err(|_| "Invalid sync selection")?;
+            Ok(if cached_owner().as_deref() == Some(saved.owner.as_str()) {
+                saved.settings
+            } else {
+                SyncSettings::default()
+            })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(SyncSettings::default()),
+        Err(_) => Err("Could not read sync selection".into()),
+    }
+}
+pub fn save_settings(mut settings: SyncSettings) -> Result<(), String> {
+    if settings.sources.len() > 200
+        || settings.sources.iter().any(|source| {
+            source.is_empty()
+                || source.len() > 128
+                || !source
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-_/:.".contains(&byte))
         })
+    {
+        return Err("Invalid sync sources".into());
+    }
+    settings.sources.sort();
+    settings.sources.dedup();
+    let owner = cached_owner()
+        .ok_or("Connect this installation before selecting synchronization sources")?;
+    let bytes = serde_json::to_vec(&OwnedSelection { owner, settings })
+        .map_err(|_| "Invalid sync selection")?;
+    fabrials_runtime::files::atomic_write_private(
+        &crate::app::config_dir().join("sync-selection.json"),
+        &bytes,
+    )
+    .map_err(|_| "Could not save sync selection".into())
 }
-
-fn access_token() -> Result<String, String> {
-    if crate::app::env_offline() {
-        return Err("offline".into());
-    }
-    let base = crate::share::api_base();
-    share_session::ensure_access(&base)
+pub fn status() -> SyncStatus {
+    let Some(owner) = cached_owner() else {
+        return SyncStatus::default();
+    };
+    status_for(&owner)
 }
-
-/// Best-effort after a Grok probe: push the active account + recent ledger, pull hops.
-pub fn after_probe() {
-    if !crate::privacy::load().sync_history {
+fn status_for(owner: &str) -> SyncStatus {
+    std::fs::read(crate::app::data_dir().join("sync-status.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<OwnedStatus>(&bytes).ok())
+        .filter(|saved| saved.owner == owner)
+        .map(|saved| saved.status)
+        .unwrap_or_default()
+}
+fn save_status(owner: &str, status: SyncStatus) {
+    if let Ok(bytes) = serde_json::to_vec(&OwnedStatus {
+        owner: owner.to_owned(),
+        status,
+    }) {
+        let _ = fabrials_runtime::files::atomic_write_private(
+            &crate::app::data_dir().join("sync-status.json"),
+            &bytes,
+        );
+    }
+}
+pub fn after_probe(outputs: &[crate::model::ProviderOutput]) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if !crate::privacy::load().sync_history
+        || crate::app::env_offline()
+        || !crate::share_session::is_logged_in()
+    {
         return;
     }
-    if crate::app::env_offline() {
+    if RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
         return;
     }
-    if share_session::load().is_none() {
-        return;
-    }
-    if let Err(e) = run(false) {
-        log::debug!("sync: {e}");
-    }
+    let outputs = outputs.to_vec();
+    let owner = cached_owner();
+    std::thread::spawn(move || {
+        struct Guard;
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                RUNNING.store(false, Ordering::Release);
+            }
+        }
+        let _guard = Guard;
+        if let Err(error) = run_outputs(&outputs) {
+            if let Some(owner) = owner {
+                let mut status = status_for(&owner);
+                status.error = Some(error);
+                save_status(&owner, status);
+            }
+        }
+    });
 }
 
 pub fn cmd(args: &[String]) -> std::process::ExitCode {
-    if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!(
-            "spanreed sync — push/pull SuperGrok plan + capture hops to ai.fabrials.com\n\n\
-             Requires: spanreed share login (same X account as the dashboard).\n\
-             Pushes the active Grok account (plan, pool %, request ledger).\n\
-             Pulls hops for that fingerprint only — other cloud accounts stay on the VPS.\n\n\
-             {ENV_RELAY}  default {DEFAULT_RELAY}\n\
-             SPANREED_OFFLINE=1 skips."
-        );
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("spanreed sync — synchronize selected private usage sources with Fabrials.\nSelect sources in Spanreed Settings and explicitly enable private history synchronization.\nNo provider credentials or request bodies are uploaded.");
         return std::process::ExitCode::SUCCESS;
     }
     match run(true) {
-        Ok(msg) => {
-            println!("{msg}");
+        Ok(message) => {
+            println!("{message}");
             std::process::ExitCode::SUCCESS
         }
-        Err(e) => {
-            eprintln!("sync: {e}");
+        Err(error) => {
+            eprintln!("{error}");
             std::process::ExitCode::FAILURE
         }
     }
 }
-
-pub fn run(verbose: bool) -> Result<String, String> {
+pub fn run(_verbose: bool) -> Result<String, String> {
+    run_outputs(&crate::api::fetch_cached().unwrap_or_default())
+}
+fn allowed(source: &str) -> Result<bool, String> {
+    Ok(crate::privacy::load().sync_history
+        && settings()?
+            .sources
+            .iter()
+            .any(|selected| selected == source))
+}
+fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, String> {
+    if crate::app::env_offline() {
+        return Err("Offline mode is enabled".into());
+    }
     if !crate::privacy::load().sync_history {
-        return Err("History sync is off. Enable explicitly: spanreed privacy sync on".into());
+        return Err("Private history synchronization is off".into());
     }
-    let token = access_token()?;
-    let Some(acc) = accounts::active("grok") else {
-        return Err("no active grok account".into());
-    };
-    let Some(grok_tok) = drivers::grok::token_for_alias(&acc.alias) else {
-        return Err(format!("no grok token for {}", acc.id));
-    };
-    let Some(material) = grok_material_from_token(&grok_tok) else {
-        return Err("grok access token has no OIDC sub — cannot fingerprint".into());
-    };
-    let base = relay_base();
-    let _id = put_account(&base, &token, &acc, &material)?;
-    let recs = grok_ledger::read_window(util::now_ms());
-    let mine: Vec<_> = recs
-        .into_iter()
-        .filter(|r| r.account_id.as_deref() == Some(acc.id.as_str()) || r.account_id.is_none())
-        .collect();
-    let mut pushed = 0usize;
-    for chunk in mine.chunks(BATCH) {
-        pushed += post_usage(&base, &token, chunk)?;
+    let selection = settings()?;
+    if selection.sources.is_empty() {
+        return Err("Select the providers and accounts to synchronize in Settings".into());
     }
-    let pulled = pull_into_local(&base, &token, &material, &acc)?;
-    let _ = verbose;
+    let environment = crate::app::config_dir().to_string_lossy().into_owned();
+    let _lock = Rotation::acquire(
+        &crate::app::data_dir().join("credential-recovery"),
+        Scope {
+            environment: &environment,
+            owner: "local",
+            provider: "private-sync",
+            alias: "worker",
+        },
+    )?;
+    let owner = match crate::fabrials_login::status()? {
+        crate::fabrials_login::LinkView::Linked { user } => user.id,
+        _ => return Err("Connect this installation to Fabrials first".into()),
+    };
+    let mut store = crate::sync_store::Store::open()?;
+    let now = crate::util::now_ms();
+    for output in outputs {
+        if selection.sources.contains(&output.provider_id) {
+            store.enqueue(
+                &owner,
+                &PrivateObservation {
+                    source: output.provider_id.clone(),
+                    event: PrivateEvent::Quota {
+                        at_ms: now,
+                        output: output.clone(),
+                    },
+                },
+            )?;
+        }
+    }
+    while store.scan_page(&owner, &selection.sources)? {
+        if !crate::privacy::load().sync_history {
+            return Err("Private synchronization was disabled".into());
+        }
+    }
+    let device = crate::client_id::ensure()?;
+    let mut uploaded = 0;
+    let mut downloaded = 0;
+    loop {
+        if !crate::privacy::load().sync_history {
+            return Err("Private synchronization was disabled".into());
+        }
+        let selection = settings()?;
+        let batch = store.pending(&owner, &selection.sources)?;
+        if batch.is_empty() {
+            break;
+        }
+        if !batch
+            .iter()
+            .all(|(_, item)| allowed(&item.source).unwrap_or(false))
+        {
+            continue;
+        }
+        let push = PrivatePush {
+            device: device.clone(),
+            observations: batch.iter().map(|(_, item)| item.clone()).collect(),
+        };
+        let response = request_for_subject(
+            RemoteOperation::PushSync,
+            serde_json::to_value(push).map_err(|_| "Invalid sync batch")?,
+            &owner,
+        )?;
+        if response["accepted"].as_u64() != Some(batch.len() as u64) {
+            return Err("ai-relay did not acknowledge the entire sync batch".into());
+        }
+        store.acknowledge(
+            &owner,
+            &batch.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+        )?;
+        uploaded += batch.len();
+    }
+    loop {
+        if !crate::privacy::load().sync_history {
+            return Err("Private synchronization was disabled".into());
+        }
+        let value = request_for_subject(
+            RemoteOperation::PullSync,
+            serde_json::json!({"cursor":store.cursor(&owner)?}),
+            &owner,
+        )?;
+        let page: PrivatePage =
+            serde_json::from_value(value).map_err(|_| "Invalid private history response")?;
+        downloaded += page.observations.len();
+        store.import(&owner, &page)?;
+        if !page.has_more {
+            break;
+        }
+    }
+    save_status(
+        &owner,
+        SyncStatus {
+            last_success_ms: Some(crate::util::now_ms()),
+            uploaded,
+            downloaded,
+            error: None,
+        },
+    );
     Ok(format!(
-        "synced {} (pushed {pushed} hops, pulled {pulled})",
-        acc.id
+        "Synchronized {uploaded} private observations; downloaded {downloaded}."
     ))
-}
-
-fn put_account(
-    base: &str,
-    access: &str,
-    acc: &accounts::Account,
-    material: &str,
-) -> Result<String, String> {
-    let body = serde_json::json!({
-        "provider": "grok",
-        "alias": acc.alias,
-        "account_id": acc.id,
-        "plan_slug": acc.plan_slug,
-        "plan_label": acc.plan_label,
-        "used_pct": acc.used_pct,
-        "resets_at": acc.resets_at,
-        "material": material,
-    });
-    put_json(base, access, "/__spanreed/sync/account", &body.to_string())
-}
-
-fn put_json(base: &str, access: &str, path: &str, body: &str) -> Result<String, String> {
-    let url = format!("{}{path}", base.trim_end_matches('/'));
-    let res = put_request(&url, access, body)?;
-    if res.status == 403 {
-        return Err("forbidden — invite or @grokinsider subscriber required".into());
-    }
-    if res.status == 401 {
-        return Err("unauthorized — run: spanreed share login".into());
-    }
-    if !(200..300).contains(&res.status) {
-        return Err(format!(
-            "sync account HTTP {}: {}",
-            res.status,
-            res.body.chars().take(160).collect::<String>()
-        ));
-    }
-    let v = res.json().unwrap_or_else(|| serde_json::json!({}));
-    Ok(v.get("id")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string())
-}
-
-fn put_request(url: &str, access: &str, body: &str) -> Result<crate::http::Response, String> {
-    // http::Request may only expose get/post. Use POST-with-override if needed.
-    crate::http::Request::put(url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {access}"))
-        .header("User-Agent", app::user_agent())
-        .body(body.to_string())
-        .send()
-        .map_err(|e| e.to_string())
-}
-
-fn post_usage(base: &str, access: &str, recs: &[UsageRecord]) -> Result<usize, String> {
-    if recs.is_empty() {
-        return Ok(0);
-    }
-    let body = serde_json::json!({ "records": recs });
-    let url = format!("{}/__spanreed/sync/usage", base.trim_end_matches('/'));
-    let res = Request::post(url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {access}"))
-        .header("User-Agent", app::user_agent())
-        .body(body.to_string())
-        .send()
-        .map_err(|e| e.to_string())?;
-    if !(200..300).contains(&res.status) {
-        return Err(format!("sync usage HTTP {}", res.status));
-    }
-    Ok(recs.len())
-}
-
-fn pull_into_local(
-    base: &str,
-    access: &str,
-    material: &str,
-    acc: &accounts::Account,
-) -> Result<usize, String> {
-    let since = util::now_ms().saturating_sub(31 * 86_400_000);
-    let body = serde_json::json!({ "material": material, "since_ms": since });
-    let url = format!("{}/__spanreed/sync/pull", base.trim_end_matches('/'));
-    let res = Request::post(url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {access}"))
-        .header("User-Agent", app::user_agent())
-        .body(body.to_string())
-        .send()
-        .map_err(|e| e.to_string())?;
-    if !(200..300).contains(&res.status) {
-        return Err(format!("sync pull HTTP {}", res.status));
-    }
-    let v = res.json().ok_or("sync pull json")?;
-    if let Some(remote) = v.get("account") {
-        if !remote.is_null() {
-            let used = remote.get("used_pct").and_then(|x| x.as_f64());
-            let plan = remote
-                .get("plan_slug")
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string());
-            let label = remote
-                .get("plan_label")
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string());
-            let reset = remote
-                .get("resets_at")
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string());
-            let _ =
-                accounts::apply_snapshot(&acc.id, plan, label, used, reset, util::now_ms(), None);
-        }
-    }
-    let mut n = 0;
-    if let Some(arr) = v.get("records").and_then(|x| x.as_array()) {
-        for rec in arr {
-            if let Ok(r) = serde_json::from_value::<UsageRecord>(rec.clone()) {
-                if grok_ledger::append(&r).is_ok() {
-                    n += 1;
-                }
-            }
-        }
-    }
-    Ok(n)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn material_prefers_sub() {
-        let token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJnb29nbGUtb2F1dGgyfHVzZXJfYWJjIiwiZXhwIjoxNzAwMDAwMDAwfQ.";
-        assert_eq!(
-            grok_material_from_token(token).as_deref(),
-            Some("google-oauth2|user_abc")
-        );
-    }
 }

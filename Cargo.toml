@@ -77,3 +77,7 @@ fabrials-metrics = { path = "vendor/fabrials-metrics" }
 fabrials-accounts = { path = "vendor/fabrials-accounts" }
 fabrials-oauth-grok = { path = "vendor/fabrials-oauth-grok" }
 fabrials-share = { path = "vendor/fabrials-share" }
+
+[[example]]
+name = "model-contracts"
+required-features = ["contracts"]

@@ -119,6 +119,9 @@ pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
 
     let initial = probe_with_retry();
     crate::history::record(&initial);
+    if let Err(error) = crate::notifications::deliver_background(&initial) {
+        log::warn!("{error}");
+    }
     let cache: Cache = Arc::new(Mutex::new(initial));
 
     // Background refresher.
@@ -130,6 +133,9 @@ pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
                 std::thread::sleep(Duration::from_secs(refresh_secs.max(30)));
                 let fresh = probe_with_retry();
                 crate::history::record(&fresh);
+                if let Err(error) = crate::notifications::deliver_background(&fresh) {
+                    log::warn!("{error}");
+                }
                 if let Ok(mut c) = cache.lock() {
                     *c = merge(&c, fresh, &mut stale_counts, MAX_STALE_REFRESHES);
                 }

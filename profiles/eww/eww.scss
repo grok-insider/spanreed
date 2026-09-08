@@ -1,0 +1,13 @@
+* { all: unset; font-family: "IBM Plex Sans"; font-size: 13px; }
+.spanreed-panel { background: #0e0e10; color: #c8c8cc; border: 1px solid #343438; border-radius: 12px; padding: 20px; }
+.heading { font-size: 22px; font-weight: 600; color: #f2f2f4; }
+.provider { background: #18181b; border-radius: 8px; padding: 14px; }
+.provider-name { font-size: 16px; font-weight: 600; color: #f2f2f4; }
+.detail { color: #a0a0a8; font-size: 12px; }
+button { background: #28282d; padding: 8px 12px; border-radius: 6px; }
+button:hover, button:focus { background: #3a3a42; color: #fff; }
+progressbar trough { background: #343438; min-height: 4px; border-radius: 2px; }
+progressbar progress { background: #b0b0ba; min-height: 4px; border-radius: 2px; }
+.warning, .critical, .error { color: #fff; }
+.critical, .error { font-weight: 600; }
+scrollbar slider { background: #55555d; min-width: 3px; border-radius: 2px; }

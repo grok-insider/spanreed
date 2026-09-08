@@ -2,6 +2,7 @@
 //!
 //! No I/O. Callers own persistence, HTTP, and pricing.
 
+pub mod private_sync;
 pub mod history;
 pub use history::HistorySample;
 pub mod metric;

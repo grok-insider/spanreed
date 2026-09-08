@@ -50,11 +50,12 @@
               bun install --frozen-lockfile --ignore-scripts --no-progress --cpu '*' --os linux
             '';
             installPhase = ''
+              rm -rf node_modules/@fabrials/ui
               cp -R node_modules "$out"
             '';
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-8jVjt6lU36rzS0xZkrbfifZdCoP2IgwaRnIj4GobhcM=";
+            outputHash = "sha256-PwGNtq0k/gx+xCs8YudQdlBgAYdVGnKJgwjZFL7xZ24=";
           };
         in pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed-desktop";
@@ -93,6 +94,7 @@
           dontWrapGApps = true;
           postFixup = ''
             wrapProgram "$out/bin/spanreed-desktop" \
+              --set-default WEBKIT_DISABLE_DMABUF_RENDERER 1 \
               --prefix PATH : "${lib.makeBinPath [ pkgs.libsecret pkgs.xdg-utils pkgs.libnotify ]}" \
               --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath [ pkgs.libayatana-appindicator pkgs.gtk3 ]}" \
               "''${gappsWrapperArgs[@]}"
@@ -202,6 +204,15 @@
       homeManagerModules.default = { config, lib, pkgs, ... }:
         let
           cfg = config.programs.spanreed;
+          panelConfig = pkgs.runCommand "spanreed-eww-config" { } ''
+            mkdir -p $out
+            cp ${./profiles/eww}/* $out/
+          '';
+          panelLauncher = pkgs.writeShellApplication {
+            name = "spanreed-panel";
+            runtimeInputs = [ pkgs.eww cfg.package ];
+            text = ''exec sh ${panelConfig}/spanreed-panel "$@"'';
+          };
         in
         {
           options.programs.spanreed = {
@@ -223,6 +234,8 @@
                 description = "Spanreed Desktop package to install alongside the CLI.";
               };
             };
+
+            eww.enable = lib.mkEnableOption "standalone Spanreed Eww panel (spanreed-panel toggle)";
 
             serve = {
               enable = lib.mkOption {
@@ -308,7 +321,8 @@
           };
 
           config = lib.mkIf cfg.enable {
-            home.packages = [ cfg.package ] ++ lib.optionals cfg.desktop.enable [ cfg.desktop.package ];
+            home.packages = [ cfg.package ] ++ lib.optionals cfg.desktop.enable [ cfg.desktop.package ] ++ lib.optionals cfg.eww.enable [ panelLauncher ];
+            assertions = [{ assertion = !cfg.eww.enable || (pkgs.stdenv.hostPlatform.isLinux && cfg.serve.enable); message = "The Spanreed Eww panel requires Linux and programs.spanreed.serve.enable."; }];
 
             systemd.user.services.spanreed = lib.mkIf cfg.serve.enable {
               Unit = {

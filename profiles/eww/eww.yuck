@@ -1,0 +1,25 @@
+(defvar panel-visible false)
+(defpoll snapshot :interval "60s" :run-while panel-visible :initial "{\"status\":\"Loading…\",\"providers\":[]}" "spanreed widget panel")
+(defwindow spanreed [panel-height panel-monitor]
+  :monitor panel-monitor
+  :geometry (geometry :x "12px" :y "46px" :width "420px" :height panel-height :anchor "top right")
+  :stacking "overlay" :exclusive false :focusable "ondemand"
+  (box :class "spanreed-panel" :orientation "v" :space-evenly false :spacing 16
+    (box :space-evenly false
+      (label :class "heading" :text "Spanreed" :hexpand true :halign "start")
+      (button :onclick "sh \"$SPANREED_PANEL_CONFIG/spanreed-panel\" close" "Close"))
+    (label :visible {snapshot.status != ""} :text {snapshot.status})
+    (scroll :vscroll true :hscroll false :vexpand true
+      (box :orientation "v" :space-evenly false :spacing 12
+        (for provider in {snapshot.providers}
+          (box :class "provider" :orientation "v" :space-evenly false :spacing 10
+            (label :class "provider-name" :text {provider.name} :halign "start")
+            (label :class "detail" :text {provider.plan} :halign "start")
+            (for metric in {provider.rows}
+              (box :class {"metric " + metric.state} :orientation "v" :space-evenly false :spacing 5
+                (box :space-evenly false
+                  (label :text {metric.label} :hexpand true :halign "start" :limit-width 24)
+                  (label :text {metric.value} :tooltip {metric.value} :wrap true :limit-width 25 :halign "end"))
+                (progress :visible {metric.bar} :value {metric.percent})
+                (label :class "detail" :visible {metric.detail != ""} :text {metric.detail} :wrap true :limit-width 45 :halign "start")))))))
+    (button :onclick "spanreed gui" "Open console")))

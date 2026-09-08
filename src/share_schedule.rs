@@ -1,6 +1,6 @@
 //! Daily authenticated share schedule (once per product day).
 //!
-//! Installed by `spanreed setup` (default on) so contributions to the
+//! Explicitly enabled from setup or Settings so contributions to the
 //! public plan pool happen automatically after `spanreed share login`.
 //!
 //! **Semantics:** at most one successful sample per Europe/Madrid product day
@@ -46,11 +46,31 @@ pub fn disable(dry_run: bool) -> Result<String, String> {
 }
 
 fn resolve_bin() -> Result<PathBuf, String> {
+    let name = if cfg!(windows) {
+        "spanreed.exe"
+    } else {
+        "spanreed"
+    };
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            if !directory.is_absolute() {
+                continue;
+            }
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
     let installed = setup::install_bin_path();
-    if installed.exists() {
+    if installed.is_file() {
         return Ok(installed);
     }
-    std::env::current_exe().map_err(|e| format!("current_exe: {e}"))
+    let current = std::env::current_exe().map_err(|_| "Could not locate the Spanreed CLI")?;
+    if current.file_name().is_some_and(|file| file == name) {
+        return Ok(current);
+    }
+    Err("Install the Spanreed CLI on PATH before enabling its daily publication schedule".into())
 }
 
 #[cfg(target_os = "linux")]
@@ -68,7 +88,20 @@ mod platform {
     }
 
     fn unit_dir() -> PathBuf {
-        crate::creds::expand("~/.config/systemd/user")
+        crate::creds::config_home().join("systemd/user")
+    }
+    fn command_path(bin: &std::path::Path) -> Result<String, String> {
+        let raw = bin.to_str().ok_or("Spanreed CLI path is not valid UTF-8")?;
+        if raw.chars().any(char::is_control) {
+            return Err("Spanreed CLI path contains control characters".into());
+        }
+        Ok(format!(
+            "\"{}\"",
+            raw.replace('\\', "\\\\")
+                .replace('\"', "\\\"")
+                .replace('%', "%%")
+                .replace('$', "$$")
+        ))
     }
 
     fn service_path() -> PathBuf {
@@ -107,6 +140,7 @@ mod platform {
         let svc = service_path();
         let tmr = timer_path();
         let login = login_service_path();
+        let executable = command_path(bin)?;
         let service_body = format!(
             "[Unit]\n\
              Description=spanreed daily share to fabrials.com\n\
@@ -115,7 +149,7 @@ mod platform {
              Type=oneshot\n\
              ExecStart={bin} share\n\
              Nice=10\n",
-            bin = bin.display()
+            bin = executable
         );
         let timer_body = format!(
             "[Unit]\n\
@@ -143,7 +177,7 @@ mod platform {
              \n\
              [Install]\n\
              WantedBy=default.target\n",
-            bin = bin.display()
+            bin = executable
         );
         if dry_run {
             return Ok(format!(

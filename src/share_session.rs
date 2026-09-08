@@ -8,11 +8,14 @@ use std::path::PathBuf;
 use crate::creds;
 use crate::http::Request;
 use crate::share;
+use fabrials_runtime::credential_journal::{Recovery, Rotation, Scope};
 
 const SESSION_FILE: &str = "share_session.json";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ShareSession {
+    #[serde(default)]
+    pub api_base: Option<String>,
     pub access_token: String,
     pub refresh_token: String,
     #[serde(default)]
@@ -24,6 +27,20 @@ pub struct ShareSession {
     pub obtained_at_unix: i64,
 }
 
+fn validate_base(session: &ShareSession, base: &str) -> Result<(), String> {
+    let bound = session
+        .api_base
+        .as_deref()
+        .unwrap_or("https://fabrials.com/api/spanreed");
+    if bound.trim_end_matches('/') != base.trim_end_matches('/') {
+        return Err(
+            "Fabrials origin changed. Connect again before using this session with another origin."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 fn session_path() -> PathBuf {
     crate::app::config_dir().join(SESSION_FILE)
 }
@@ -33,27 +50,39 @@ pub fn load() -> Option<ShareSession> {
     serde_json::from_str(raw.trim()).ok()
 }
 
+fn session_lock() -> Result<Rotation, String> {
+    let environment = crate::app::config_dir().to_string_lossy().into_owned();
+    Rotation::acquire(
+        &crate::app::data_dir().join("credential-recovery"),
+        Scope {
+            environment: &environment,
+            owner: "local",
+            provider: "fabrials",
+            alias: "session",
+        },
+    )
+}
+
+fn save_unlocked(session: &ShareSession) -> Result<(), String> {
+    let body = serde_json::to_vec_pretty(session).map_err(|_| "Invalid Fabrials session")?;
+    fabrials_runtime::files::atomic_write_private(&session_path(), &body)
+        .map_err(|_| "Could not persist Fabrials session".into())
+}
+
 pub fn save(session: &ShareSession) -> Result<(), String> {
-    let p = session_path();
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir session: {e}"))?;
-    }
-    let body = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
-    std::fs::write(&p, format!("{body}\n")).map_err(|e| format!("write session: {e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
+    let journal = session_lock()?;
+    save_unlocked(session)?;
+    journal.complete()
 }
 
 pub fn clear() -> Result<(), String> {
-    let p = session_path();
-    if p.exists() {
-        std::fs::remove_file(&p).map_err(|e| format!("remove session: {e}"))?;
+    let journal = session_lock()?;
+    match std::fs::remove_file(session_path()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("Could not remove Fabrials session".into()),
     }
-    Ok(())
+    journal.complete()
 }
 
 #[allow(dead_code)] // used by setup status / future UI hooks
@@ -63,7 +92,40 @@ pub fn is_logged_in() -> bool {
 
 /// Refresh access token using stored refresh; updates disk session.
 pub fn refresh_access(base: &str) -> Result<ShareSession, String> {
+    renew(base, true)
+}
+
+fn renew(base: &str, force: bool) -> Result<ShareSession, String> {
+    let expected_access = load().map(|session| session.access_token);
+    let journal = session_lock()?;
     let mut sess = load().ok_or_else(|| "not logged in — run: spanreed share login".to_string())?;
+    validate_base(&sess, base)?;
+    let current = serde_json::to_value(&sess).map_err(|_| "Invalid Fabrials session")?;
+    match journal.recover(&current)? {
+        Recovery::Clean => {}
+        Recovery::Interrupted => {
+            return Err("Fabrials renewal was interrupted. Connect this installation again.".into())
+        }
+        Recovery::Replacement(value) => {
+            sess =
+                serde_json::from_value(value).map_err(|_| "Invalid recovered Fabrials session")?;
+            save_unlocked(&sess)?;
+            journal.complete()?;
+            return Ok(sess);
+        }
+    }
+    let now = crate::util::now_ms() / 1000;
+    if (!force || expected_access.as_deref() != Some(sess.access_token.as_str()))
+        && !sess.access_token.is_empty()
+        && now
+            < (sess
+                .obtained_at_unix
+                .saturating_add(sess.expires_in.min(i64::MAX as u64) as i64))
+            .saturating_sub(60)
+    {
+        return Ok(sess);
+    }
+    journal.begin(&current)?;
     let url = format!("{}/auth/refresh", base.trim_end_matches('/'));
     let body = serde_json::json!({ "refresh_token": sess.refresh_token });
     let res = Request::post(url)
@@ -73,9 +135,8 @@ pub fn refresh_access(base: &str) -> Result<ShareSession, String> {
         .map_err(|e| e.to_string())?;
     if res.status < 200 || res.status >= 300 {
         return Err(format!(
-            "refresh failed HTTP {}: {}",
-            res.status,
-            res.body.chars().take(160).collect::<String>()
+            "Fabrials renewal failed (HTTP {}). Connect again if the session expired.",
+            res.status
         ));
     }
     let v = res
@@ -89,6 +150,7 @@ pub fn refresh_access(base: &str) -> Result<ShareSession, String> {
         .get("refresh_token")
         .and_then(|x| x.as_str())
         .unwrap_or(sess.refresh_token.as_str());
+    sess.api_base = Some(base.trim_end_matches('/').to_string());
     sess.access_token = access.to_string();
     sess.refresh_token = refresh.to_string();
     sess.expires_in = v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(900);
@@ -96,26 +158,31 @@ pub fn refresh_access(base: &str) -> Result<ShareSession, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    save(&sess)?;
+    journal.rotated(&serde_json::to_value(&sess).map_err(|_| "Invalid Fabrials session")?)?;
+    save_unlocked(&sess)?;
+    journal.complete()?;
     Ok(sess)
 }
 
 /// Valid access token, refreshing if missing/expired-ish (skew 60s).
 pub fn ensure_access(base: &str) -> Result<String, String> {
     let sess = load().ok_or_else(|| "not logged in — run: spanreed share login".to_string())?;
+    validate_base(&sess, base)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let exp_at = sess.obtained_at_unix + sess.expires_in as i64;
+    let exp_at = sess
+        .obtained_at_unix
+        .saturating_add(sess.expires_in.min(i64::MAX as u64) as i64);
     if !sess.access_token.is_empty() && now < exp_at.saturating_sub(60) {
         return Ok(sess.access_token);
     }
-    Ok(refresh_access(base)?.access_token)
+    Ok(renew(base, false)?.access_token)
 }
 
 /// In-flight device authorization (RFC 8628-style).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PendingLogin {
     pub device_code: String,
     pub user_code: String,
@@ -170,16 +237,22 @@ pub fn start_device_login() -> Result<PendingLogin, String> {
     let res = Request::post(url).send()?;
     if res.status < 200 || res.status >= 300 {
         return Err(format!(
-            "share login: HTTP {}: {}",
-            res.status,
-            res.body.chars().take(200).collect::<String>()
+            "Fabrials authorization failed (HTTP {})",
+            res.status
         ));
     }
     parse_device_code_json(&res.body)
 }
 
-/// One poll. `Ok(None)` = still pending. `Ok(Some)` = saved session.
-pub fn poll_device_login(pending: &PendingLogin) -> Result<Option<ShareSession>, String> {
+/// One poll. The caller persists an approved session before exposing it.
+pub enum DevicePoll {
+    Pending,
+    Approved(ShareSession),
+    Declined,
+    Expired,
+}
+
+pub fn check_device_login(pending: &PendingLogin) -> Result<DevicePoll, String> {
     let base = share::api_base();
     let poll_url = format!("{}/v1/usage/device/poll", base.trim_end_matches('/'));
     let body = serde_json::json!({ "device_code": pending.device_code });
@@ -189,13 +262,26 @@ pub fn poll_device_login(pending: &PendingLogin) -> Result<Option<ShareSession>,
         .send()
         .map_err(|e| e.to_string())?;
     if res.status == 400 {
-        return Ok(None);
+        return match res
+            .json()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(|error| error.as_str())
+                    .map(str::to_owned)
+            })
+            .as_deref()
+        {
+            Some("authorization_pending") => Ok(DevicePoll::Pending),
+            Some("access_denied") => Ok(DevicePoll::Declined),
+            Some("expired_token") => Ok(DevicePoll::Expired),
+            _ => Err("Fabrials rejected the connection request".into()),
+        };
     }
     if res.status < 200 || res.status >= 300 {
         return Err(format!(
-            "share login: poll HTTP {}: {}",
-            res.status,
-            res.body.chars().take(160).collect::<String>()
+            "Fabrials authorization check failed (HTTP {})",
+            res.status
         ));
     }
     let v = res
@@ -215,6 +301,7 @@ pub fn poll_device_login(pending: &PendingLogin) -> Result<Option<ShareSession>,
         return Err("share login: missing tokens in poll response".into());
     }
     let sess = ShareSession {
+        api_base: Some(base.trim_end_matches('/').to_string()),
         access_token: access,
         refresh_token: refresh,
         token_type: v
@@ -228,8 +315,24 @@ pub fn poll_device_login(pending: &PendingLogin) -> Result<Option<ShareSession>,
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0),
     };
-    save(&sess)?;
-    Ok(Some(sess))
+    Ok(DevicePoll::Approved(sess))
+}
+
+pub fn redeem_device_login(pending: &PendingLogin) -> Result<Option<ShareSession>, String> {
+    match check_device_login(pending)? {
+        DevicePoll::Pending => Ok(None),
+        DevicePoll::Approved(session) => Ok(Some(session)),
+        DevicePoll::Declined => Err("Fabrials connection declined".into()),
+        DevicePoll::Expired => Err("Fabrials connection code expired. Start again.".into()),
+    }
+}
+
+pub fn poll_device_login(pending: &PendingLogin) -> Result<Option<ShareSession>, String> {
+    let session = redeem_device_login(pending)?;
+    if let Some(ref value) = session {
+        save(value)?;
+    }
+    Ok(session)
 }
 
 /// Poll until approved, failed, or `expires_in` elapses.

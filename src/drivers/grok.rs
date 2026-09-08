@@ -274,11 +274,6 @@ pub(crate) fn tokens_to_auth_json(tok: &serde_json::Value) -> serde_json::Value 
     serde_json::json!({ AUTH_JSON_ENTRY: entry })
 }
 
-/// Resolve managed Grok credentials through the same rotation path as capture.
-pub fn token_for_alias(alias: &str) -> Option<String> {
-    ensure_token(alias)
-}
-
 fn ensure_token(alias: &str) -> Option<String> {
     crate::local_tokens::grok(Some(alias)).ok().flatten()
 }
