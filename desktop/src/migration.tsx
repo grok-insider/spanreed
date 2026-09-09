@@ -10,7 +10,7 @@ export function MigrationPage() {
   const [forgetting, setForgetting] = React.useState(false);
   const [cached, setCached] = React.useState(false);
   React.useEffect(()=>{let stopped=false;void invoke<SavedSession[]>("saved_migrations").then(list=>{if(!stopped)setSaved(list);}).catch(error=>{if(!stopped)setError(String(error));});return ()=>{stopped=true;};},[]);
-  const [authorizing, setAuthorizing] = React.useState<{provider:"grok" | "nous";alias:string;sourceId:string} | null>(null);
+  const [authorizing, setAuthorizing] = React.useState<{provider:"grok" | "nous" | "codex";alias:string;sourceId:string} | null>(null);
   const [authorized, setAuthorized] = React.useState<string[]>([]);
   const [origin, setOrigin] = React.useState("https://ai.fabrials.com");
   const [id, setId] = React.useState("");
@@ -97,7 +97,7 @@ export function MigrationPage() {
       {receipt && <div role="status"><p>API-key transfer completed. {receipt.length} account(s) imported.</p>{receipt.map(account=><p key={account}><code>{account}</code></p>)}{session.review?.items.some(item=>item.action === "authorizeOAuth") && <p>Each OAuth connection requires an independent login using its reviewed destination alias.</p>}</div>}
       {receipt && session.direction === "hostedToLocal" && <section className="fb-form" aria-label="Independent OAuth authorizations">
         {session.review?.items.filter(item=>item.action === "authorizeOAuth").map(item=><div key={item.sourceId}>
-          {authorized.includes(`${item.provider}/${item.targetAlias}`) ? <p role="status">Connected {item.provider}/{item.targetAlias} with a new authorization.</p> : <button className="fb-button" disabled={!!authorizing} onClick={()=>{if(item.provider === "grok" || item.provider === "nous")setAuthorizing({provider:item.provider,alias:item.targetAlias,sourceId:item.sourceId});}}>Authorize {item.provider}/{item.targetAlias}</button>}
+          {authorized.includes(`${item.provider}/${item.targetAlias}`) ? <p role="status">Connected {item.provider}/{item.targetAlias} with a new authorization.</p> : <button className="fb-button" disabled={!!authorizing} onClick={()=>{if(item.provider === "grok" || item.provider === "nous" || item.provider === "codex")setAuthorizing({provider:item.provider,alias:item.targetAlias,sourceId:item.sourceId});}}>Authorize {item.provider}/{item.targetAlias}</button>}
         </div>)}
         {authorizing && <div className="fb-form"><DeviceLogin key={`${authorizing.provider}/${authorizing.alias}`} provider={authorizing.provider} initialAlias={authorizing.alias} lockedAlias inactive migration={{id:session.id,sourceId:authorizing.sourceId}} onConnected={()=>{setAuthorizing(null);void run(async()=>setAuthorized(await invoke<string[]>("migration_authorizations", {id:session.id})));}} /><button className="fb-button" onClick={()=>setAuthorizing(null)}>Close authorization</button></div>}
       </section>}

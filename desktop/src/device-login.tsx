@@ -1,12 +1,13 @@
+import { ProviderIcon } from "@fabrials/ui";
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 import type { LoginView as Login, Progress } from "./contracts";
 
-export function DeviceLogin({ provider, accountId, initialAlias, lockedAlias = false, inactive = false, migration, onConnected }: { provider: "nous" | "grok"; accountId?: string; initialAlias?: string; lockedAlias?: boolean; inactive?: boolean; migration?: {id: string; sourceId: string}; onConnected: () => void }) {
-  const name = provider === "grok" ? "SuperGrok" : "Nous";
-  const portal = provider === "grok" ? "Grok authorization" : "Nous Portal";
-  const [alias, setAlias] = React.useState(initialAlias ?? (provider === "grok" ? "personal" : "portal"));
+export function DeviceLogin({ provider, accountId, initialAlias, lockedAlias = false, inactive = false, migration, onConnected }: { provider: "nous" | "grok" | "codex"; accountId?: string; initialAlias?: string; lockedAlias?: boolean; inactive?: boolean; migration?: {id: string; sourceId: string}; onConnected: () => void }) {
+  const name = provider === "grok" ? "SuperGrok" : provider === "codex" ? "Codex" : "Nous";
+  const portal = provider === "grok" ? "Grok authorization" : provider === "codex" ? "OpenAI authorization" : "Nous Portal";
+  const [alias, setAlias] = React.useState(initialAlias ?? (provider === "nous" ? "portal" : "personal"));
   const [login, setLogin] = React.useState<Login | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -55,7 +56,7 @@ export function DeviceLogin({ provider, accountId, initialAlias, lockedAlias = f
     finally { setBusy(false); }
   }
   return <section className="fb-card">
-    <header><h2>{accountId ? `Authorize ${initialAlias} again` : `Connect ${name}`}</h2><p className="fb-muted">Authorize a new local connection through {portal}.</p></header>
+    <header><div className="fb-row"><h2>{accountId ? `Authorize ${initialAlias} again` : `Connect ${name}`}</h2><ProviderIcon provider={provider}/></div><p className="fb-muted">Authorize a new local connection through {portal}.</p></header>
     <div className="fb-card-body">
       {error && <p className="fb-error" role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}

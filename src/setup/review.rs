@@ -109,7 +109,9 @@ fn prepare_change(
     if !address.ip().is_loopback() || address.port() == 0 {
         return Err("Use a nonzero loopback proxy port".into());
     }
-    if !matches!(provider, "grok" | "nous" | "openai") || !crate::accounts::valid_alias(alias) {
+    if !matches!(provider, "grok" | "codex" | "nous" | "openai")
+        || !crate::accounts::valid_alias(alias)
+    {
         return Err("Select a managed provider account".into());
     }
     if operation != Operation::Remove

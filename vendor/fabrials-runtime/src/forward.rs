@@ -13,10 +13,31 @@ use std::time::Duration;
 pub trait HopObserver {
     fn record(&self, record: UsageRecord);
     fn log(&self, message: &str);
+    fn authorize_response(
+        &self,
+        _model: &str,
+        _provider: &str,
+        _alias: Option<&str>,
+        _expected: Option<&serde_json::Value>,
+    ) -> Result<(), String> {
+        Err("WebSocket request authorization unavailable".into())
+    }
     fn response_headers(&self, _status: u16, _headers: &reqwest::header::HeaderMap) {}
     fn models_response(&self, body: Vec<u8>) -> Vec<u8> {
         body
     }
+}
+
+pub struct WebSocketHop<'a> {
+    pub client: &'a mut TcpStream,
+    pub headers: &'a HashMap<String, String>,
+    pub prefetched: Vec<u8>,
+    pub token: Option<&'a str>,
+    pub secret: Option<&'a serde_json::Value>,
+    pub upstream: &'a Upstream,
+    pub observer: &'a dyn HopObserver,
+    pub alias: Option<&'a str>,
+    pub key_hash: Option<&'a str>,
 }
 
 pub struct AuthorizedHop<'a> {
@@ -63,7 +84,7 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
     let strip_http_client_credentials = strict_credentials || inject.is_some();
     if class.transport == Transport::WebSocket {
         let extra = match inject.as_deref() {
-            Some(token) => prov.inject_for(token, &routed),
+            Some(token) => prov.credential_headers(token, &routed, secret.as_ref())?,
             None => Vec::new(),
         };
         let prefetched_client_bytes = match take_prefetched_client_bytes(&client, &mut reader) {
@@ -73,6 +94,19 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
                 return write_status(&mut client, 500, "{\"error\":\"websocket_handoff_failed\"}");
             }
         };
+        if let Some(result) = prov.websocket_hop(WebSocketHop {
+            client: &mut client,
+            headers: &headers,
+            prefetched: prefetched_client_bytes.clone(),
+            token: inject.as_deref(),
+            secret: secret.as_ref(),
+            upstream: &routed,
+            observer,
+            alias: alias.as_deref(),
+            key_hash: key_hash.as_deref(),
+        }) {
+            return result;
+        }
         let _ = client.set_read_timeout(None);
         let _ = client.set_write_timeout(None);
         drop(reader);
@@ -173,7 +207,8 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
     );
     let provider_headers = inject
         .as_deref()
-        .map(|token| prov.inject_for(token, &routed))
+        .map(|token| prov.credential_headers(token, &routed, secret.as_ref()))
+        .transpose()?
         .unwrap_or_default();
     for (k, v) in &headers {
         if is_hop_by_hop_header(k, &headers) {

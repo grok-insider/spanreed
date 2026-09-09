@@ -71,6 +71,42 @@ fn load_auth() -> Option<(serde_json::Value, Source, std::path::PathBuf)> {
     None
 }
 
+/// Identity hint for binding source selection; never exports a token.
+pub(crate) fn local_identity() -> Option<String> {
+    let (document, _, _) = load_auth()?;
+    let tokens = document.get("tokens")?;
+    tokens
+        .get("account_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            tokens
+                .get("access_token")
+                .and_then(serde_json::Value::as_str)
+                .and_then(util::jwt_payload)
+                .and_then(|claims| {
+                    claims["https://api.openai.com/auth"]["chatgpt_account_id"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+        })
+}
+
+pub(crate) fn identity_proof() -> Result<String, String> {
+    let (document, _, _) = load_auth().ok_or("No local Codex authorization found")?;
+    let proof = document["tokens"]["id_token"]
+        .as_str()
+        .filter(|proof| !proof.is_empty())
+        .ok_or("Codex identity proof unavailable; sign in to Codex again")?;
+    let claims = util::jwt_payload(proof).ok_or("Invalid Codex identity proof")?;
+    if claims["https://api.openai.com/auth"]["chatgpt_account_id"].as_str()
+        != local_identity().as_deref()
+    {
+        return Err("Codex identity changed; sign in again before linking".into());
+    }
+    Ok(proof.into())
+}
+
 fn last_refresh_ms(auth: &serde_json::Value) -> Option<i64> {
     let raw = auth.get("last_refresh")?;
     util::to_iso(raw).and_then(|iso| {
@@ -330,6 +366,13 @@ impl Provider for Codex {
     }
 
     fn probe(&self) -> ProviderOutput {
+        let _move_lock = match crate::codex_session_move::probe_lock() {
+            Ok(lock) => lock,
+            Err(error) => return ProviderOutput::error(ID, NAME, error),
+        };
+        if crate::codex_session_move::retired() {
+            return ProviderOutput::error(ID,NAME,"Codex session moved to ai-relay. View hosted usage or recover the saved session move.");
+        }
         let (mut auth, source, path) = match load_auth() {
             Some(t) => t,
             None => {

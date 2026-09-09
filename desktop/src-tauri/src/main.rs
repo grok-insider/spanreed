@@ -208,6 +208,10 @@ async fn save_sync_settings(settings: spanreed::sync::SyncSettings) -> Result<()
 #[tauri::command]
 fn sync_status() -> spanreed::sync::SyncStatus {spanreed::sync::status()}
 #[tauri::command]
+async fn link_codex_source()->Result<String,String> {
+    tauri::async_runtime::spawn_blocking(spanreed::sync::link_codex).await.map_err(|_|"Identity matching interrupted".to_string())?
+}
+#[tauri::command]
 async fn sync_now() -> Result<String,String> {
     tauri::async_runtime::spawn_blocking(|| spanreed::sync::run(true)).await.map_err(|_|"Sync worker stopped".to_string())?
 }
@@ -227,6 +231,31 @@ async fn set_publication_schedule(enabled: bool) -> Result<String,String> {
 #[tauri::command]
 fn remote_open_authorization(url: String) -> Result<(), String> {
     open_url(&spanreed::remote_workspace::verification_url(&url)?)
+}
+
+#[tauri::command]
+async fn preview_hosted_client(owner:String,client:String,alias:String,key:String,model:String)->Result<spanreed::hosted_client_configuration::HostedClientReview,String> {
+    tauri::async_runtime::spawn_blocking(move||spanreed::hosted_client_configuration::preview(&owner,&client,&alias,&key,&model)).await.map_err(|_|"Configuration worker stopped".to_string())?
+}
+#[tauri::command]
+async fn apply_hosted_client(owner:String,id:String)->Result<String,String> {
+    tauri::async_runtime::spawn_blocking(move||spanreed::hosted_client_configuration::apply(&owner,&id)).await.map_err(|_|"Configuration worker stopped".to_string())?
+}
+
+#[tauri::command]
+async fn codex_session_move(owner:String, operation:String, id:Option<String>, alias:Option<String>)->Result<serde_json::Value,String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use spanreed::codex_session_move as session;
+        let view=match operation.as_str() {
+            "current"=>return serde_json::to_value(session::current(&owner)?).map_err(|_|"Invalid session view".into()),
+            "preview"=>session::preview(&owner,alias.as_deref().ok_or("Choose an account name")?)?,
+            "apply"=>session::apply(&owner,id.as_deref().ok_or("Select a saved session move")?)?,
+            "recover"|"cancel"=>session::recover(&owner,id.as_deref().ok_or("Select a saved session move")?,operation=="cancel")?,
+            "dismiss"=>{session::dismiss(&owner,id.as_deref().ok_or("Select a saved session move")?)?;return Ok(serde_json::Value::Null);},
+            _=>return Err("Unknown session move operation".into()),
+        };
+        serde_json::to_value(view).map_err(|_|"Invalid session view".into())
+    }).await.map_err(|_|"Session move worker stopped; reopen its recovery view".to_string())?
 }
 
 #[tauri::command]
@@ -290,7 +319,7 @@ fn open_url(url: &str) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![private_history, sync_settings, save_sync_settings, sync_status, sync_now, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
+        .invoke_handler(tauri::generate_handler![preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
         .setup(|app| {
             let show = tauri::menu::MenuItem::with_id(app, "show", "Open Spanreed", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit Spanreed", true, None::<&str>)?;

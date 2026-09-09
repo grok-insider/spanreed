@@ -26,6 +26,18 @@ pub trait Provider: Send + Sync {
         let _ = hop;
         self.inject(token)
     }
+    fn credential_headers(
+        &self,
+        token: &str,
+        hop: &Upstream,
+        secret: Option<&Value>,
+    ) -> Result<Vec<(String, String)>, String> {
+        let _ = secret;
+        Ok(self.inject_for(token, hop))
+    }
+    fn websocket_hop(&self, _hop: crate::forward::WebSocketHop<'_>) -> Option<Result<(), String>> {
+        None
+    }
     fn parse_usage(&self, response_body: &[u8]) -> Option<UsageRecord>;
     /// What this hop is. Default: chat over HTTP (no voice tunnel).
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {

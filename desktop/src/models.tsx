@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ModelCatalog as Catalog } from "./contracts";
 import type { AccountSummary as Account } from "./contracts";
 export function ModelsPage({ accounts }: { accounts: Account[] }) {
-  const supported = accounts.filter(account => ["grok", "nous", "openai"].includes(account.provider));
+  const supported = accounts.filter(account => ["grok", "codex", "nous", "openai"].includes(account.provider));
   const [accountId, setAccountId] = React.useState("");
   const [catalog, setCatalog] = React.useState<Catalog | null>(null);
   const [query, setQuery] = React.useState("");

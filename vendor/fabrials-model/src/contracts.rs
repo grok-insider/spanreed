@@ -7,6 +7,9 @@ pub fn typescript() -> String {
         ($($ty:ty),+ $(,)?) => { vec![$(format!("export {}", <$ty>::decl(&config))),+] };
     }
     let declarations = declarations![
+        crate::private_sync::SynchronizedAccount,
+        crate::private_sync::LocalUsageSnapshot,
+        crate::private_sync::LocalUsageDay,
         crate::private_sync::PrivateEvent,
         crate::private_sync::PrivateObservation,
         crate::private_sync::PrivateStoredObservation,

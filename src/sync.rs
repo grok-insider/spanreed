@@ -40,6 +40,8 @@ pub fn recent(
 
 #[derive(Serialize, Deserialize)]
 struct OwnedSelection {
+    #[serde(default)]
+    identities: std::collections::BTreeMap<String, String>,
     owner: String,
     settings: SyncSettings,
 }
@@ -60,6 +62,18 @@ pub fn settings() -> Result<SyncSettings, String> {
             }
             let saved: OwnedSelection =
                 serde_json::from_value(value).map_err(|_| "Invalid sync selection")?;
+            if cached_owner().as_deref() == Some(saved.owner.as_str())
+                && saved
+                    .settings
+                    .sources
+                    .iter()
+                    .any(|source| source == "codex")
+            {
+                let current = crate::providers::codex::local_identity().unwrap_or_default();
+                if saved.identities.get("codex") != Some(&current) {
+                    return Err("Review and save synchronization sources to confirm the current local Codex account before uploading.".into());
+                }
+            }
             Ok(if cached_owner().as_deref() == Some(saved.owner.as_str()) {
                 saved.settings
             } else {
@@ -86,8 +100,19 @@ pub fn save_settings(mut settings: SyncSettings) -> Result<(), String> {
     settings.sources.dedup();
     let owner = cached_owner()
         .ok_or("Connect this installation before selecting synchronization sources")?;
-    let bytes = serde_json::to_vec(&OwnedSelection { owner, settings })
-        .map_err(|_| "Invalid sync selection")?;
+    let mut identities = std::collections::BTreeMap::new();
+    if settings.sources.iter().any(|source| source == "codex") {
+        identities.insert(
+            "codex".into(),
+            crate::providers::codex::local_identity().unwrap_or_default(),
+        );
+    }
+    let bytes = serde_json::to_vec(&OwnedSelection {
+        owner,
+        settings,
+        identities,
+    })
+    .map_err(|_| "Invalid sync selection")?;
     fabrials_runtime::files::atomic_write_private(
         &crate::app::config_dir().join("sync-selection.json"),
         &bytes,
@@ -159,7 +184,11 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
         println!("spanreed sync — synchronize selected private usage sources with Fabrials.\nSelect sources in Spanreed Settings and explicitly enable private history synchronization.\nNo provider credentials or request bodies are uploaded.");
         return std::process::ExitCode::SUCCESS;
     }
-    match run(true) {
+    match if args.first().is_some_and(|arg| arg == "link-codex") {
+        link_codex()
+    } else {
+        run(true)
+    } {
         Ok(message) => {
             println!("{message}");
             std::process::ExitCode::SUCCESS
@@ -227,6 +256,11 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
         }
     }
     let device = crate::client_id::ensure()?;
+    let capabilities = request_for_subject(
+        RemoteOperation::SyncCapabilities,
+        serde_json::json!({}),
+        &owner,
+    );
     let mut uploaded = 0;
     let mut downloaded = 0;
     loop {
@@ -244,7 +278,18 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
         {
             continue;
         }
+        let mut source_identities = std::collections::BTreeMap::new();
+        if capabilities
+            .as_ref()
+            .is_ok_and(|value| value["source_identity_v1"] == true)
+            && allowed("codex")?
+        {
+            if let Some(identity) = crate::providers::codex::local_identity() {
+                source_identities.insert("codex".into(), identity);
+            }
+        }
         let push = PrivatePush {
+            source_identities,
             device: device.clone(),
             observations: batch.iter().map(|(_, item)| item.clone()).collect(),
         };
@@ -279,6 +324,47 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
             break;
         }
     }
+    if capabilities
+        .as_ref()
+        .is_ok_and(|value| value["local_usage_snapshot_v1"] == true)
+    {
+        for (source, kind) in [
+            ("codex", crate::cost::Source::Codex),
+            ("claude", crate::cost::Source::Claude),
+        ] {
+            if !allowed(source)? {
+                continue;
+            }
+            if let Some(summary) = crate::cost::estimate(kind) {
+                let snapshot = fabrials_model::private_sync::LocalUsageSnapshot {
+                    device: device.clone(),
+                    source: source.into(),
+                    observed_at_ms: crate::util::now_ms(),
+                    partial: summary.partial,
+                    days: summary
+                        .daily
+                        .into_iter()
+                        .map(|day| fabrials_model::private_sync::LocalUsageDay {
+                            date: day.date,
+                            tokens: day.tokens,
+                            estimated_usd: day.cost,
+                        })
+                        .collect(),
+                };
+                if !allowed(source)? {
+                    return Err("Private synchronization selection changed".into());
+                }
+                let response = request_for_subject(
+                    RemoteOperation::PutLocalUsage,
+                    serde_json::to_value(snapshot).map_err(|_| "Invalid local usage")?,
+                    &owner,
+                )?;
+                if response["accepted"] != true {
+                    return Err("Local usage was not acknowledged".into());
+                }
+            }
+        }
+    }
     save_status(
         &owner,
         SyncStatus {
@@ -291,4 +377,21 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
     Ok(format!(
         "Synchronized {uploaded} private observations; downloaded {downloaded}."
     ))
+}
+
+pub fn link_codex() -> Result<String, String> {
+    if !allowed("codex")? {
+        return Err("Enable private synchronization and save the Codex source first".into());
+    }
+    let owner = cached_owner().ok_or("Connect this installation to Fabrials first")?;
+    let proof = crate::providers::codex::identity_proof()?;
+    let result = request_for_subject(
+        RemoteOperation::LinkCodexSource,
+        serde_json::json!({"device":crate::client_id::ensure()?,"id_token":proof}),
+        &owner,
+    )?;
+    let account = result["account_id"]
+        .as_str()
+        .ok_or("Invalid identity match response")?;
+    Ok(format!("Verified identity match with hosted {account}. Local log totals remain separate from relay traffic."))
 }

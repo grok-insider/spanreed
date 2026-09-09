@@ -2,8 +2,10 @@
 //! future JSON-RPC session. The host owns accounts, secrets, probe, and the
 //! proxy fabric — drivers only know how to login, refresh, and parse billing.
 
+pub mod codex;
 pub mod grok;
 pub mod nous;
+pub mod oauth;
 
 /// `spanreed account …`
 pub fn dispatch_account(args: &[String]) -> Result<String, String> {
