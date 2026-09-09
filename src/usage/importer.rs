@@ -98,6 +98,8 @@ fn import_file(
         && before.0 >= old.size
         && old.size > 0
         && digest(&mut file, old.size)? == old.hash;
+    let snapshot_hash = digest(&mut file, before.0)?;
+    let append_safe = parser.is_some() && wal.is_none();
     let (records, checkpoint, rejected) = if let Some(parser) = parser {
         let mut checkpoint = if incremental {
             previous.as_ref().unwrap().checkpoint.clone()
@@ -112,7 +114,10 @@ fn import_file(
         file.seek(SeekFrom::Start(checkpoint.offset))
             .map_err(|e| e.to_string())?;
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        (&mut file)
+            .take(before.0.saturating_sub(checkpoint.offset))
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
         let parsed = parser.parse(&bytes, &source, &checkpoint)?;
         (parsed.records, parsed.checkpoint, parsed.rejected_records)
     } else {
@@ -133,7 +138,11 @@ fn import_file(
         hash: digest(&mut file, before.0)?,
         wal,
     };
-    if before != metadata(path)?
+    let after = metadata(path)?;
+    // A live rollout may append while we parse its immutable prefix. Accept only
+    // the captured byte range; rewritten prefixes and database WAL changes retry.
+    if fingerprint.hash != snapshot_hash
+        || (before != after && !(append_safe && after.0 >= before.0))
         || fingerprint.wal
             != metadata(&std::path::PathBuf::from(format!("{}-wal", path.display()))).ok()
     {
