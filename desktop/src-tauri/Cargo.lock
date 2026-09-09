@@ -4011,7 +4011,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "dirs 5.0.1",
  "env_logger",
@@ -4044,7 +4044,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-desktop"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "fabrials-core",
  "serde_json",
