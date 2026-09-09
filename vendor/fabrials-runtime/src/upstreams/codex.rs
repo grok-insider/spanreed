@@ -1,5 +1,5 @@
 use crate::provider::{Provider, Upstream};
-use fabrials_core::hop::HopClass;
+use fabrials_core::hop::{HopClass, HopKind, Transport};
 use fabrials_model::UsageRecord;
 use serde_json::Value;
 pub mod translation;
@@ -57,15 +57,20 @@ impl Provider for CodexAdapter {
             .map(|p| p.into_record(translation::now_ms(), None, None, Some("codex".into())))
     }
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
-        HopClass::openai_compat(
-            if hop.path.ends_with("/models") {
-                "/v1/models"
+        HopClass {
+            kind: if hop.path.ends_with("/models") {
+                HopKind::Models
             } else {
-                "/v1/responses"
+                HopKind::Chat
             },
-            upgrade,
-        )
+            transport: if upgrade && hop.path == "/backend-api/codex/responses" {
+                Transport::WebSocket
+            } else {
+                Transport::Http
+            },
+        }
     }
+
     fn allows_request(&self, method: &str, hop: &Upstream, upgrade: bool) -> bool {
         match hop.path.as_str() {
             "/backend-api/codex/models" => method == "GET" && !upgrade,
@@ -104,6 +109,11 @@ mod tests {
         assert_eq!(hop.account_alias.as_deref(), Some("work"));
         assert_eq!(hop.path, "/backend-api/codex/responses");
         assert!(adapter.allows_request("GET", &hop, true));
+        assert_eq!(adapter.classify(&hop, true).transport, Transport::WebSocket);
+        assert_eq!(adapter.classify(&hop, false).transport, Transport::Http);
+        let catalog = adapter.resolve("/codex/v1/models").unwrap();
+        assert_eq!(adapter.classify(&catalog, false).kind, HopKind::Models);
+        assert_eq!(adapter.classify(&catalog, true).transport, Transport::Http);
         for path in [
             "/codex@evil/v1/responses",
             "/codex/v1/files",
