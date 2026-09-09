@@ -8,14 +8,9 @@ pub const USER_AGENT: &str = concat!(
     " (+https://fabrials.com)"
 );
 
+#[derive(Default)]
 pub struct NousAdapter {
     pub base: Option<String>,
-}
-
-impl Default for NousAdapter {
-    fn default() -> Self {
-        Self { base: None }
-    }
 }
 
 impl Provider for NousAdapter {

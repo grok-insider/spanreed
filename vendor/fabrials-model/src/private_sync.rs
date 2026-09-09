@@ -89,3 +89,28 @@ pub struct LocalUsageDay {
     pub tokens: u64,
     pub estimated_usd: f64,
 }
+
+/// Full replacement of one device/client projection. Empty days clear old usage.
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalUsageSnapshotV2 {
+    pub device: String,
+    pub source: String,
+    pub revision: u64,
+    pub observed_at_ms: i64,
+    pub partial: bool,
+    pub days: Vec<LocalUsageDay>,
+    #[serde(default)]
+    pub period_totals: Option<LocalUsageAggregate>,
+}
+
+/// Unallocated session/account totals; never assigned to invented daily requests.
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalUsageAggregate {
+    pub tokens: Option<u64>,
+    pub known_usd: f64,
+    pub partial: bool,
+}

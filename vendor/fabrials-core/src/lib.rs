@@ -7,3 +7,4 @@ pub use observation::*;
 pub use provider::*;
 
 pub mod hop;
+pub mod usage;

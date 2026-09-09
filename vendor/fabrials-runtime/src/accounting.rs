@@ -146,6 +146,7 @@ pub fn model_from_query(path: &str) -> Option<String> {
     validated_model_from_query(path).ok().flatten()
 }
 
+#[allow(clippy::result_unit_err)]
 pub fn validated_model_from_query(path: &str) -> Result<Option<String>, ()> {
     let Some((_, q)) = path.split_once('?') else {
         return Ok(None);
@@ -480,6 +481,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::result_unit_err)]
 pub fn request_model(body: &[u8]) -> Result<Option<String>, ()> {
     #[derive(serde::Deserialize)]
     struct ModelEnvelope {

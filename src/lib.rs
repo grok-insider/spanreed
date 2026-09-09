@@ -69,6 +69,7 @@ pub mod sharing_control;
 pub mod sync;
 mod sync_store;
 mod tray_format;
+pub mod usage;
 mod usage_stats;
 mod util;
 
@@ -116,6 +117,7 @@ pub fn run_cli() -> ExitCode {
         "json" => cmd_json(),
         "serve" => cmd_serve(rest),
         "history" => cmd_history(rest),
+        "usage" => usage::cmd(rest),
         "capture" => cmd_capture(rest),
         "grok-proxy" => cmd_grok_proxy(rest),
         "setup" => setup::cmd(rest),
@@ -197,6 +199,8 @@ fn print_help() {
          \tspanreed share               Upload plan/quota metrics (requires X login)\n\
          \tspanreed share login         Link CLI via device code on fabrials.com\n\
          \tspanreed share logout|status Session management\n\
+         \tspanreed usage [--client ID] [--days N] [--refresh]  Read local consumption\n\
+         \tspanreed usage sources        List consumption sources and connections\n\
          \tspanreed sync                Synchronize selected private usage sources with Fabrials\n\
          \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\

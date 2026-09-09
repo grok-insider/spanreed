@@ -69,6 +69,12 @@ strip = true
 
 
 
+[workspace]
+members = [".", "vendor/fabrials-core", "vendor/fabrials-providers", "vendor/fabrials-runtime"]
+default-members = ["."]
+exclude = ["desktop/src-tauri"]
+resolver = "2"
+
 [patch.crates-io]
 fabrials-core = { path = "vendor/fabrials-core" }
 fabrials-providers = { path = "vendor/fabrials-providers" }
