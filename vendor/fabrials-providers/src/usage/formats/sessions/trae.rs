@@ -78,7 +78,9 @@ pub(crate) fn parse_session(client: &str, session: &serde_json::Value) -> Option
     // `usage_time` near `i64::MAX` would panic in debug builds and silently
     // wrap to a negative timestamp in release builds.
     let timestamp_ms = usage_time.checked_mul(1000)?;
-    let cost = session["dollar_float"].as_f64().unwrap_or(0.0);
+    let cost = session["dollar_float"]
+        .as_f64()
+        .filter(|v| v.is_finite() && *v >= 0.0);
 
     let extra = &session["extra_info"];
     let input = extra["input_token"].as_i64().unwrap_or(0);
@@ -92,7 +94,7 @@ pub(crate) fn parse_session(client: &str, session: &serde_json::Value) -> Option
 
     let dedup_key = Some(format!("trae:{}:{}", session_id, usage_time));
 
-    Some(UnifiedMessage::new_with_dedup(
+    let mut message = UnifiedMessage::new_with_dedup(
         client,
         model_id,
         provider,
@@ -105,9 +107,13 @@ pub(crate) fn parse_session(client: &str, session: &serde_json::Value) -> Option
             cache_write,
             reasoning: 0,
         },
-        cost,
+        cost.unwrap_or(0.0),
         dedup_key,
-    ))
+    );
+    if cost.is_some() {
+        message.mark_provider_reported_cost();
+    }
+    Some(message)
 }
 
 /// Parse a cache file containing an array of sessions as returned by the API.
@@ -316,5 +322,22 @@ mod tests {
         let msgs = parse_trae_file("trae", f.path());
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].model_id, "trae-unknown");
+    }
+}
+
+#[cfg(test)]
+mod cost_provenance_tests {
+    #[test]
+    fn explicit_zero_is_reported_but_missing_cost_is_unknown() {
+        let mut row = serde_json::json!({"session_id":"s","usage_time":1788960000i64,"dollar_float":0.0,"extra_info":{"input_token":10}});
+        assert_eq!(
+            super::parse_session("trae", &row).unwrap().cost_source,
+            super::super::CostSource::ProviderReported
+        );
+        row.as_object_mut().unwrap().remove("dollar_float");
+        assert_eq!(
+            super::parse_session("trae", &row).unwrap().cost_source,
+            super::super::CostSource::Unknown
+        );
     }
 }
