@@ -1,1 +1,1 @@
-{"identifier":"main","description":"Spanreed local presentation window","windows":["main"],"permissions":["core:default"]}
+{"identifier":"main","description":"Spanreed local presentation window","windows":["main"],"permissions":["core:default","core:window:allow-set-theme"]}
