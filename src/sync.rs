@@ -326,6 +326,88 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
     }
     if capabilities
         .as_ref()
+        .is_ok_and(|value| value["local_usage_snapshot_v2"] == true)
+    {
+        let remote =
+            request_for_subject(RemoteOperation::Consumption, serde_json::json!({}), &owner)?;
+        let snapshots: Vec<fabrials_model::private_sync::LocalUsageSnapshotV2> =
+            serde_json::from_value(remote["snapshots"].clone())
+                .map_err(|_| "Invalid synchronized consumption response")?;
+        for client in fabrials_providers::usage::catalog::clients() {
+            if !allowed(&client.id)? {
+                continue;
+            }
+            let report = crate::usage::report(
+                fabrials_core::usage::UsageFilter {
+                    client: Some(client.id.clone()),
+                    ..Default::default()
+                },
+                false,
+            )?;
+            let days: Vec<_> = report
+                .daily
+                .into_iter()
+                .map(|day| fabrials_model::private_sync::LocalUsageDay {
+                    date: day.key,
+                    tokens: day.tokens,
+                    estimated_usd: day.known_usd,
+                })
+                .collect();
+            let period_totals = (!report.period_totals.is_empty()).then(|| {
+                fabrials_model::private_sync::LocalUsageAggregate {
+                    tokens: report
+                        .period_totals
+                        .iter()
+                        .all(|row| row.unknown_token_records == 0)
+                        .then(|| {
+                            report
+                                .period_totals
+                                .iter()
+                                .fold(0u64, |sum, row| sum.saturating_add(row.tokens))
+                        }),
+                    known_usd: report.period_totals.iter().map(|row| row.known_usd).sum(),
+                    partial: report.period_totals.iter().any(|row| row.partial),
+                }
+            });
+            let projection = serde_json::to_vec(&(report.total.partial, &days, &period_totals))
+                .map_err(|_| "Invalid usage projection")?;
+            use sha2::{Digest, Sha256};
+            let digest = format!("{:x}", Sha256::digest(projection));
+            let revision =
+                fabrials_runtime::local_usage::UsageStore::open(&crate::history::history_path())?
+                    .export_revision_after(
+                    &format!("{}:{}:{}", owner, device, client.id),
+                    &digest,
+                    snapshots
+                        .iter()
+                        .filter(|s| s.device == device && s.source == client.id)
+                        .map(|s| s.revision)
+                        .max()
+                        .unwrap_or(0),
+                )?;
+            let snapshot = fabrials_model::private_sync::LocalUsageSnapshotV2 {
+                device: device.clone(),
+                source: client.id.clone(),
+                revision,
+                period_totals,
+                observed_at_ms: crate::util::now_ms(),
+                partial: report.total.partial,
+                days,
+            };
+            if !allowed(&client.id)? {
+                return Err("Private synchronization selection changed".into());
+            }
+            let response = request_for_subject(
+                RemoteOperation::PutLocalUsageV2,
+                serde_json::to_value(snapshot).map_err(|_| "Invalid local usage")?,
+                &owner,
+            )?;
+            if response["accepted"] != true {
+                return Err("Local usage revision was not acknowledged".into());
+            }
+        }
+    } else if capabilities
+        .as_ref()
         .is_ok_and(|value| value["local_usage_snapshot_v1"] == true)
     {
         for (source, kind) in [

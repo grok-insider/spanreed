@@ -30,3 +30,13 @@
 .fb-synchronized-accounts{display:grid;gap:20px;width:100%;margin-block:24px}.fb-synchronized-accounts>header h2{font-size:17px;font-weight:500;margin:0 0 6px}.fb-synchronized-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;gap:20px}.fb-synchronized-account{display:grid;align-content:start;gap:12px;min-width:0}.fb-synchronized-account>p{font-size:12px;overflow-wrap:anywhere}.fb-synchronized-account .fb-row{flex-wrap:wrap;gap:8px}.fb-synchronized-account table{width:100%;font-size:12px;text-align:right}.fb-synchronized-account th:first-child,.fb-synchronized-account td:first-child{text-align:left}.fb-synchronized-account td,.fb-synchronized-account th{padding-block:6px}@media(max-width:1100px){.fb-synchronized-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.fb-synchronized-grid{grid-template-columns:minmax(0,1fr)}}
 
 .fb-synchronized-linked{display:grid;gap:16px;min-width:0}.fb-linked-account-usage{min-width:0;font-size:13px}.fb-linked-account-usage>summary{cursor:pointer;padding-block:10px}
+
+.fb-consumption-filters{display:flex;align-items:end;flex-wrap:wrap;gap:16px;margin-bottom:20px}
+.fb-consumption-filters label,.fb-consumption-device{display:grid;gap:8px;font-size:13px;color:var(--muted-foreground)}
+.fb-consumption-filters input,.fb-consumption-filters select,.fb-consumption-device select,.fb-form textarea{min-height:44px;max-width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--foreground);font:inherit}
+.fb-consumption-device{max-width:440px;margin-block:20px}
+.fb-table-wrap{max-width:100%;overflow-x:auto}
+.fb-card summary{cursor:pointer;min-height:44px}
+
+.fb-source-selection { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 16px; }
+.fb-source-selection label { min-height: 44px; display: flex; align-items: center; }

@@ -344,6 +344,7 @@ fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
+#[allow(clippy::result_unit_err)]
 pub fn validated_upstream_url(base: &str, path: &str) -> Result<reqwest::Url, ()> {
     if !crate::routes::is_safe_request_target(path) {
         return Err(());

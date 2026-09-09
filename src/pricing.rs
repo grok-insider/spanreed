@@ -66,6 +66,8 @@ pub struct Pricing {
     pub output: f64,
     pub cache_create: f64,
     pub cache_read: f64,
+    pub cache_create_known: bool,
+    pub cache_read_known: bool,
     pub input_above_200k: Option<f64>,
     pub output_above_200k: Option<f64>,
     pub cache_create_above_200k: Option<f64>,
@@ -79,10 +81,10 @@ impl Pricing {
         Some(Pricing {
             input,
             output,
-            // Anthropic-style defaults when the snapshot omits cache rates:
-            // cache write ≈ 1.25× input, cache read ≈ 0.1× input.
-            cache_create: r.cache_creation_input_token_cost.unwrap_or(input * 1.25),
-            cache_read: r.cache_read_input_token_cost.unwrap_or(input * 0.1),
+            cache_create: r.cache_creation_input_token_cost.unwrap_or(0.0),
+            cache_read: r.cache_read_input_token_cost.unwrap_or(0.0),
+            cache_create_known: r.cache_creation_input_token_cost.is_some(),
+            cache_read_known: r.cache_read_input_token_cost.is_some(),
             input_above_200k: r.input_cost_per_token_above_200k_tokens,
             output_above_200k: r.output_cost_per_token_above_200k_tokens,
             cache_create_above_200k: r.cache_creation_input_token_cost_above_200k_tokens,
@@ -112,47 +114,29 @@ pub struct PricingMap {
 }
 
 impl PricingMap {
-    /// Look up a model, trying exact, then normalized, then prefix matching.
-    pub fn find(&self, model: &str) -> Option<&Pricing> {
-        if let Some(p) = self.table.get(model) {
-            return Some(p);
-        }
-        let norm = normalize(model);
-        if let Some(p) = self.table.get(&norm) {
-            return Some(p);
-        }
-        // Prefix fallback: a dated/suffixed query (claude-opus-4-8-20260601)
-        // matches the longest base key that is a prefix of it (claude-opus-4-8),
-        // or vice versa. Compare on normalized keys.
-        let mut best: Option<(&Pricing, usize)> = None;
-        for (key, pricing) in &self.table {
-            let nkey = normalize(key);
-            let matched = if norm.starts_with(&nkey) || nkey.starts_with(&norm) {
-                nkey.len().min(norm.len())
-            } else {
-                0
-            };
-            if matched > 0 && best.map(|(_, l)| matched > l).unwrap_or(true) {
-                best = Some((pricing, matched));
-            }
-        }
-        best.map(|(p, _)| p)
+    /// Resolve an exact normalized model. Unknown variants stay unpriced.
+    pub fn exact(&self, model: &str) -> Option<&Pricing> {
+        self.table
+            .get(model)
+            .or_else(|| self.table.get(&normalize(model)))
     }
 
-    /// Compute the USD cost for a usage record under a model.
-    /// Returns None when the model has no known pricing.
-    pub fn cost(&self, model: &str, usage: Usage) -> Option<f64> {
-        let p = self.find(model)?;
-        Some(
-            tiered(usage.input, p.input, p.input_above_200k)
-                + tiered(usage.output, p.output, p.output_above_200k)
-                + tiered(
-                    usage.cache_create,
-                    p.cache_create,
-                    p.cache_create_above_200k,
-                )
-                + tiered(usage.cache_read, p.cache_read, p.cache_read_above_200k),
-        )
+    pub fn exact_cost(&self, model: &str, usage: Usage) -> Option<(f64, &Pricing)> {
+        let p = self.exact(model)?;
+        if usage.cache_create > 0 && !p.cache_create_known
+            || usage.cache_read > 0 && !p.cache_read_known
+        {
+            return None;
+        }
+        let cost = tiered(usage.input, p.input, p.input_above_200k)
+            + tiered(usage.output, p.output, p.output_above_200k)
+            + tiered(
+                usage.cache_create,
+                p.cache_create,
+                p.cache_create_above_200k,
+            )
+            + tiered(usage.cache_read, p.cache_read, p.cache_read_above_200k);
+        (cost.is_finite() && cost >= 0.0).then_some((cost, p))
     }
 }
 
@@ -307,11 +291,11 @@ mod tests {
     fn embedded_table_parses_and_has_claude_and_gpt() {
         let t = table();
         assert!(
-            t.find("claude-opus-4-8").is_some(),
+            t.exact("claude-opus-4-8").is_some(),
             "claude-opus-4-8 priced"
         );
-        assert!(t.find("gpt-5-codex").is_some(), "gpt-5-codex priced");
-        assert!(t.find("claude-fable-5").is_some(), "claude-fable-5 priced");
+        assert!(t.exact("gpt-5-codex").is_some(), "gpt-5-codex priced");
+        assert!(t.exact("claude-fable-5").is_some(), "claude-fable-5 priced");
     }
 
     #[test]
@@ -381,13 +365,13 @@ mod tests {
             "model-c": { "input_cost_per_token": 9e-6, "output_cost_per_token": 9e-6 }
         }"#;
         let t = build_table(embedded, Some(remote), Some(user));
-        assert!((t.find("model-a").unwrap().input - 1e-6).abs() < 1e-12);
+        assert!((t.exact("model-a").unwrap().input - 1e-6).abs() < 1e-12);
         assert!(
-            (t.find("model-b").unwrap().input - 2e-6).abs() < 1e-12,
+            (t.exact("model-b").unwrap().input - 2e-6).abs() < 1e-12,
             "remote overrides embedded"
         );
         assert!(
-            (t.find("model-c").unwrap().input - 9e-6).abs() < 1e-12,
+            (t.exact("model-c").unwrap().input - 9e-6).abs() < 1e-12,
             "user overrides remote"
         );
     }
@@ -396,15 +380,15 @@ mod tests {
     fn prefix_match_handles_dated_suffix() {
         let t = table();
         // A dated variant should fall back to the base model's pricing.
-        assert!(t.find("claude-opus-4-8-20260601").is_some());
+        assert!(t.exact("claude-opus-4-8-20260601").is_none());
     }
 
     #[test]
     fn unknown_model_has_no_price() {
         let t = table();
-        assert!(t.find("totally-made-up-model-xyz").is_none());
+        assert!(t.exact("totally-made-up-model-xyz").is_none());
         assert!(t
-            .cost(
+            .exact_cost(
                 "totally-made-up-model-xyz",
                 Usage {
                     input: 10,
@@ -424,6 +408,8 @@ mod tests {
                     output: 2e-6,
                     cache_create: 5e-7,
                     cache_read: 1e-7,
+                    cache_create_known: true,
+                    cache_read_known: true,
                     input_above_200k: None,
                     output_above_200k: None,
                     cache_create_above_200k: None,
@@ -438,7 +424,7 @@ mod tests {
             cache_read: 1_000_000,
         };
         // 1e6*(1e-6 + 2e-6 + 5e-7 + 1e-7) = 1.0 + 2.0 + 0.5 + 0.1 = 3.6
-        let cost = map.cost("m", usage).unwrap();
+        let (cost, _) = map.exact_cost("m", usage).unwrap();
         assert!((cost - 3.6).abs() < 1e-9, "got {cost}");
     }
 

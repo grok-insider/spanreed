@@ -8,3 +8,4 @@ pub mod device_flow;
 pub mod catalog;
 
 pub mod oauth;
+pub mod usage;

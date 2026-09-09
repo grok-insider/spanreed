@@ -13,7 +13,7 @@ each provider's usage API, and renders the result.
   `fabrials-*` crates (local path patch in `~/dev/fabrials/.cargo`).
   `src/model.rs` re-exports `fabrials-model`.
 - `spanreed capture serve` runs the shared `fabrials-runtime` directly; no ai-relay executable is required. The optional xAI compatibility listener shares the runtime.
-- No workspace. Binary target `spanreed` (`src/main.rs`) delegates to `src/lib.rs`.
+- Cargo workspace includes the vendored core, provider and runtime crates. Binary target `spanreed` (`src/main.rs`) delegates to `src/lib.rs`.
 - Probes are blocking I/O fanned out over threads. The shared runtime contains Tokio transport; Tauri runs blocking probes off the renderer thread.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.
@@ -55,7 +55,7 @@ declare it in `src/lib.rs`.
 | `src/util.rs`           | Time (`now_ms`, `to_iso`, `ms_to_iso`, `local_date_ymd`), `plan_label`, `cents_to_dollars`, `fmt_tokens`, `jwt_payload`/`jwt_exp_ms`, base64. |
 | `src/output.rs`         | Renderers: `plain` (terminal + sparkline), `waybar` (custom-module JSON), severity classes. |
 | `src/api.rs`            | Local HTTP API on `127.0.0.1:6736` (`/usage`, `/health`) with background refresh. |
-| `src/cost.rs`           | Local-log cost engine (Claude/Codex): parallel + `memchr` + mtime pre-filter + dedup + TTL cache; produces `Last 30 Days` + `Usage Trend`. |
+| `src/cost.rs`           | Cost presentation (Claude/Codex) from the shared local consumption store; produces `Last 30 Days` + `Usage Trend`. |
 | `src/grok_ledger.rs`    | Capture ledger in shared `runtime.sqlite3`; legacy `grok-usage.jsonl` is imported once and preserved. Grok metrics filter by provider. Dollars = **public API list price** via `pricing` (not SuperGrok `cost_in_usd_ticks`); xAI all-or-nothing ≥200k long-context tier per request. |
 | `src/setup/`            | `spanreed setup`: install binary to user PATH, ledger dir, optional capture user service, optional tray autostart, wire Grok Build + OpenCode xAI to the local capture proxy. |
 | `src/self_update.rs`    | `spanreed self-update`: GitHub Releases check + sha256-verified binary replace. |

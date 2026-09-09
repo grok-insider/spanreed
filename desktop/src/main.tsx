@@ -1,3 +1,4 @@
+import { LocalUsage } from "./usage";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -23,7 +24,7 @@ import "./desktop.css";
 type Consent = SharingConsent;
 import type { AccountSummary as Account, AccountsView } from "./contracts";
 import type { Detection } from "./contracts";
-const navigation = [{id:"overview",label:"Overview"},{id:"accounts",label:"Accounts"},{id:"routing",label:"Autosteer"},{id:"history",label:"History"},{id:"requests",label:"Requests"},{id:"connections",label:"Connections"},{id:"migration",label:"Migration"},{id:"models",label:"Models"},{id:"providers",label:"Providers"},{id:"settings",label:"Settings"}];
+const navigation = [{id:"overview",label:"Overview"},{id:"usage",label:"Usage"},{id:"accounts",label:"Accounts"},{id:"routing",label:"Autosteer"},{id:"history",label:"History"},{id:"requests",label:"Requests"},{id:"connections",label:"Connections"},{id:"migration",label:"Migration"},{id:"models",label:"Models"},{id:"providers",label:"Providers"},{id:"settings",label:"Settings"}];
 
 function App() {
   const [page, setPage] = React.useState("overview");
@@ -84,6 +85,7 @@ function App() {
   return <WorkspaceShell title="Spanreed" navigation={navigation} active={page} onNavigate={navigate} actions={<div className="fb-row">{workspacePicker}<button className="fb-button" disabled={busy} onClick={()=>void load(true)}>{busy?"Refreshing…":"Refresh"}</button></div>}>
     {error && <p role="alert" className="fb-error">{error}</p>}{notice && <p role="status">{notice}</p>}
     {page === "overview" && <><div className="fb-heading"><h1>Your usage, at a glance</h1><p>Live limits and reset credits across your connected providers.</p></div>{!outputs.length?<div className="fb-empty"><h2>{busy?"Reading your providers…":"No usage available yet"}</h2><p className="fb-muted">Sign in through a supported CLI, then refresh. Open Providers to inspect detection.</p></div>:<div className="fb-grid">{outputs.map(output=><ProviderCard key={output.providerId} provider={output}/>)}</div>}</>}
+    {page === "usage" && <LocalUsage />}
     {page === "accounts" && <><div className="fb-heading"><h1>Accounts</h1><p>Managed accounts on this machine. CLI credentials also appear in Overview.</p></div>{reauthorize && (reauthorize.provider === "grok" || reauthorize.provider === "nous" || reauthorize.provider === "codex") && <section><DeviceLogin key={reauthorize.id} provider={reauthorize.provider} accountId={reauthorize.id} initialAlias={reauthorize.alias} onConnected={()=>{setReauthorize(null);void load();}} /><button className="fb-button" onClick={()=>setReauthorize(null)}>Close authorization</button></section>}<div className="fb-grid"><DeviceLogin provider="grok" onConnected={()=>void load()} /><DeviceLogin provider="nous" onConnected={()=>void load()} /><DeviceLogin provider="codex" onConnected={()=>void load()} /><ApiKeyForm accounts={accounts} onSave={async input => { await invoke("add_api_key", {...input}); await load(); }} /></div><div className="fb-grid">{accounts.map(account=><article className="fb-card" key={account.id}><header><div className="fb-row"><h2>{account.alias}</h2><ProviderIcon provider={account.provider}/></div><p className="fb-muted">{account.provider} · {account.plan_label || "Plan not reported"}</p></header><div className="fb-card-body"><button className="fb-button" disabled={busy || account.active} onClick={async()=>{try{await invoke("activate_account",{id:account.id});await load();}catch(error){setError(String(error));}}}>{account.active?"Active account":"Make active"}</button>{(account.provider === "grok" || account.provider === "nous" || account.provider === "codex") && <button className="fb-button" disabled={busy} onClick={()=>setReauthorize(account)}>Authorize again</button>}<AccountActions key={`${account.id}:${account.generation ?? "legacy"}`} account={account} onChanged={()=>load()} /></div></article>)}</div>{!accounts.length&&<div className="fb-empty"><p>No managed accounts. Existing CLI logins remain available to usage detection.</p></div>}</>}
     {page === "migration" && <MigrationPage />}
     {page === "connections" && <ConnectionsPage accounts={accounts} />}

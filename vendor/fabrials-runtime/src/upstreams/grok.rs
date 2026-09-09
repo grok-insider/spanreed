@@ -3,20 +3,12 @@ use crate::routes::parse_fabric_path;
 use crate::routes::UPSTREAM_XAI_API;
 use fabrials_core::hop::HopClass;
 use fabrials_model::UsageRecord;
+#[derive(Default)]
 pub struct GrokAdapter {
     /// Override CLI upstream (tests / fake).
     pub cli_base: Option<String>,
     /// Override `api.x.ai` (tests / fake).
     pub xai_base: Option<String>,
-}
-
-impl Default for GrokAdapter {
-    fn default() -> Self {
-        Self {
-            cli_base: None,
-            xai_base: None,
-        }
-    }
 }
 
 impl Provider for GrokAdapter {

@@ -2,6 +2,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 pub mod history;
+pub mod local_usage;
 
 pub struct Snapshot<T> {
     state: Mutex<Option<(Instant, T)>>,

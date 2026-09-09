@@ -19,12 +19,12 @@ const SERVICE: &str = "exa.language_server_pb.LanguageServerService";
 
 pub struct Antigravity;
 
-struct Discovered {
-    csrf: String,
-    ports: Vec<u16>,
+pub(crate) struct Discovered {
+    pub(crate) csrf: String,
+    pub(crate) ports: Vec<u16>,
 }
 
-fn discover() -> Option<Discovered> {
+pub(crate) fn discover() -> Option<Discovered> {
     // language_server process carrying an antigravity marker.
     let procs = proc::find_processes(&["language_server", "antigravity"]);
     for p in procs {
