@@ -291,7 +291,7 @@ fn routing_registry_at(directory: &Path) -> Result<Registry, String> {
             }
         }
     }
-    for provider in ["grok", "nous", "openai"] {
+    for provider in ["grok", "codex", "nous", "openai"] {
         let entries = match fs::read_dir(directory.join(provider)) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -509,6 +509,43 @@ pub fn upsert(mut acc: Account) -> Result<Account, String> {
     reg.accounts.push(acc.clone());
     vault.commit(&reg, Vec::new())?;
     Ok(acc)
+}
+
+pub(crate) fn apply_codex_snapshot(
+    account: &Account,
+    expected: &serde_json::Value,
+    output: &crate::model::ProviderOutput,
+    now: i64,
+) -> Result<(), String> {
+    let vault = lock_vault()?;
+    let mut registry = vault.registry()?;
+    let existing = registry
+        .accounts
+        .iter_mut()
+        .find(|candidate| candidate.id == account.id && candidate.generation == account.generation)
+        .ok_or("Account changed during quota refresh")?;
+    if read_secret_document("codex", &account.alias)?.as_ref() != Some(expected) {
+        return Err("Authorization changed during quota refresh".into());
+    }
+    let primary = output
+        .lines
+        .iter()
+        .filter_map(|line| match line {
+            crate::model::MetricLine::Progress {
+                label,
+                used,
+                resets_at,
+                ..
+            } if !label.starts_with("Review ") => Some((*used, resets_at.clone())),
+            _ => None,
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0));
+    existing.used_pct = primary.as_ref().map(|value| value.0);
+    existing.resets_at = primary.and_then(|value| value.1);
+    existing.plan_slug = output.plan.clone();
+    existing.plan_label = output.plan.clone();
+    existing.quota_at = Some(now);
+    vault.commit(&registry, Vec::new())
 }
 
 pub fn apply_snapshot(

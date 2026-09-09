@@ -15,7 +15,7 @@ fn options() -> ParseOptions {
         allow_unary_plus_numbers: false,
     }
 }
-pub(super) fn parse(text: &str) -> Result<Value, String> {
+pub(crate) fn parse(text: &str) -> Result<Value, String> {
     jsonc_parser::parse_to_serde_value(text, &options())
         .map_err(|_| "Invalid JSONC configuration".into())
 }
@@ -34,7 +34,7 @@ fn input(value: &Value) -> CstInputValue {
         ),
     }
 }
-pub(super) fn edit(
+pub(crate) fn edit(
     text: &str,
     provider: &str,
     addition: &Value,

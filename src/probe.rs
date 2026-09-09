@@ -24,6 +24,11 @@ pub fn probe_one(id: &str) -> Option<ProviderOutput> {
                 .into_iter()
                 .find(|o| o.provider_id == id)
         })
+        .or_else(|| {
+            crate::drivers::codex::probe_accounts()
+                .into_iter()
+                .find(|output| output.provider_id == id)
+        })
         .or_else(|| crate::addons::host::probe_extra_one(id));
     if let Some(o) = &out {
         crate::pool_baseline::note_from_output(o);
@@ -50,6 +55,7 @@ where
 
     let mut outs: Vec<_> = handles.into_iter().filter_map(|h| h.join().ok()).collect();
     outs.extend(crate::drivers::grok::probe_accounts());
+    outs.extend(crate::drivers::codex::probe_accounts());
     outs.extend(crate::addons::extra_detected_outputs());
     for o in &outs {
         crate::pool_baseline::note_from_output(o);

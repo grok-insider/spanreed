@@ -6,6 +6,8 @@ pub fn typescript() -> String {
     let declarations = [
         crate::sharing_control::PublicationStatus::decl(&config),
         crate::sync::SyncSettings::decl(&config),
+        crate::codex_session_move::SessionMoveView::decl(&config),
+        crate::hosted_client_configuration::HostedClientReview::decl(&config),
         crate::sync::SyncStatus::decl(&config),
         fabrials_model::private_sync::PrivateEvent::decl(&config),
         fabrials_model::private_sync::PrivateObservation::decl(&config),

@@ -262,3 +262,5 @@ install that CA in the system trust store. On Linux, a PEM bundle can also be
 supplied to the Spanreed process with `SSL_CERT_FILE=/absolute/path/ca.pem`.
 Certificate chain and hostname verification remain required; redirects are not
 followed during migration. This does not configure trust in your web browser.
+
+Codex subscription proxy, synchronized local usage, verified account matching and reviewed client setup: [connected accounts guide](docs/codex-connected-accounts.md).

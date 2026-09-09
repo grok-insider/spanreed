@@ -24,3 +24,9 @@
 
 .fb-reset-warning{border-left:3px solid var(--warning);padding:8px 12px;background:var(--muted);color:var(--foreground);font-size:13px;line-height:1.5}
 .fb-reset-preview{display:flex;align-items:center;gap:8px;margin-top:10px;color:var(--muted-foreground);font-variant-numeric:tabular-nums}.fb-reset-preview>svg{flex:none}.fb-reset-preview ul{display:flex;flex-wrap:wrap;gap:4px 12px;list-style:none;margin:0;padding:0}.fb-reset-preview li{white-space:nowrap}
+
+.fb-provider-icon svg { width: 100%; height: 100%; fill: currentColor; }
+
+.fb-synchronized-accounts{display:grid;gap:20px;width:100%;margin-block:24px}.fb-synchronized-accounts>header h2{font-size:17px;font-weight:500;margin:0 0 6px}.fb-synchronized-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;gap:20px}.fb-synchronized-account{display:grid;align-content:start;gap:12px;min-width:0}.fb-synchronized-account>p{font-size:12px;overflow-wrap:anywhere}.fb-synchronized-account .fb-row{flex-wrap:wrap;gap:8px}.fb-synchronized-account table{width:100%;font-size:12px;text-align:right}.fb-synchronized-account th:first-child,.fb-synchronized-account td:first-child{text-align:left}.fb-synchronized-account td,.fb-synchronized-account th{padding-block:6px}@media(max-width:1100px){.fb-synchronized-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.fb-synchronized-grid{grid-template-columns:minmax(0,1fr)}}
+
+.fb-synchronized-linked{display:grid;gap:16px;min-width:0}.fb-linked-account-usage{min-width:0;font-size:13px}.fb-linked-account-usage>summary{cursor:pointer;padding-block:10px}

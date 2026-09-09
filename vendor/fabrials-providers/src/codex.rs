@@ -1,5 +1,79 @@
 use fabrials_core::{ResetCredit, ResetInventory};
 use serde_json::Value;
+pub mod auth;
+
+pub fn quota_output(usage: &Value, source: &str, now_ms: i64) -> fabrials_model::ProviderOutput {
+    use fabrials_model::MetricLine;
+    let mut lines = Vec::new();
+    for (group, prefix) in [("rate_limit", ""), ("code_review_rate_limit", "Review ")] {
+        let mut windows = vec![
+            ("primary_window", "Session"),
+            ("secondary_window", "Weekly"),
+        ];
+        if let Some(group) = usage[group].as_object() {
+            windows.extend(
+                group
+                    .iter()
+                    .filter(|(key, value)| {
+                        key.as_str() != "primary_window"
+                            && key.as_str() != "secondary_window"
+                            && value.is_object()
+                    })
+                    .map(|(key, _)| (key.as_str(), "Extra")),
+            );
+        }
+        for (key, fallback) in windows {
+            let window = &usage[group][key];
+            let Some(used) = window["used_percent"]
+                .as_f64()
+                .filter(|n| n.is_finite() && *n >= 0.0 && *n <= 100.0)
+            else {
+                continue;
+            };
+            let label = match window["limit_window_seconds"].as_i64() {
+                Some(604800) => "Weekly",
+                Some(18000) => "Session",
+                _ => fallback,
+            };
+            let reset = window["reset_at"].as_i64().or_else(|| {
+                window["reset_after_seconds"]
+                    .as_i64()
+                    .and_then(|s| (now_ms / 1000).checked_add(s))
+            });
+            let iso = reset
+                .and_then(|s| time::OffsetDateTime::from_unix_timestamp(s).ok())
+                .and_then(|d| {
+                    d.format(&time::format_description::well_known::Rfc3339)
+                        .ok()
+                });
+            lines.push(MetricLine::percent(format!("{prefix}{label}"), used, iso));
+        }
+    }
+    let credits = &usage["credits"];
+    let balance = if credits["unlimited"] == true {
+        Some("unlimited".into())
+    } else if credits["has_credits"] == true {
+        credits["balance"]
+            .as_f64()
+            .or_else(|| credits["balance"].as_str().and_then(|s| s.parse().ok()))
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(|v| format!("${v:.2}"))
+    } else {
+        None
+    };
+    if let Some(value) = balance {
+        lines.push(MetricLine::Text {
+            kind: fabrials_model::MetricKind::Plan,
+            label: "Credits".into(),
+            value,
+            color: None,
+            subtitle: None,
+        });
+    }
+    let mut output = fabrials_model::ProviderOutput::new(source, "Codex", lines);
+    output.plan = usage["plan_type"].as_str().map(str::to_owned);
+    output
+}
 
 pub const RESET_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 
@@ -75,6 +149,28 @@ fn expiry_ms(value: Option<&Value>) -> Result<Option<i64>, &'static str> {
             .map(Some)
             .ok_or("invalid reset expiry"),
     }
+}
+
+/// Codex has a subscription catalog keyed by slug, unlike the public API.
+pub fn model_ids(value: &serde_json::Value) -> Result<Vec<String>, String> {
+    let rows = value
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("Invalid Codex catalog")?;
+    if rows.len() > 2048 {
+        return Err("Codex catalog too large".into());
+    }
+    let ids = rows
+        .iter()
+        .map(|row| {
+            row.get("slug")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or("Codex model identifier missing".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::catalog::validate_ids(&ids)?;
+    Ok(ids)
 }
 
 #[cfg(test)]

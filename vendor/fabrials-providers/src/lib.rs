@@ -6,3 +6,5 @@ pub mod nous;
 pub mod device_flow;
 
 pub mod catalog;
+
+pub mod oauth;
