@@ -135,3 +135,8 @@ export type { HostedMigrationApi, MigrationAuthorization } from "./hosted-migrat
 
 export { PrivateHistoryView } from "./private-history";
 export type { PrivateRecentPage, PrivateStoredObservation, PrivateObservation, PrivateEvent } from "./contracts";
+
+export { ConsumptionView } from "./consumption";
+export type { ConsumptionReport, ConsumptionSource, ConsumptionTotal } from "./consumption";
+export { SynchronizedConsumption } from "./synchronized-consumption";
+export type { ConsumptionSnapshot } from "./synchronized-consumption";

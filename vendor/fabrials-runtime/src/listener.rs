@@ -267,6 +267,7 @@ pub enum AdmissionClass {
     Control,
 }
 
+#[allow(clippy::result_unit_err)]
 pub fn reserve_body_bytes(
     budget: Arc<Semaphore>,
     bytes: usize,
@@ -281,6 +282,7 @@ pub fn reserve_body_bytes(
         .map_err(|_| ())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_connection(
     mut stream: tokio::net::TcpStream,
     cfg: Arc<dyn ConnectionHost>,

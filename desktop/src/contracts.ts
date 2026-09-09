@@ -21,7 +21,7 @@ export type PrivatePage = { observations: Array<PrivateStoredObservation>, next_
 
 export type PrivateRecentPage = { observations: Array<PrivateStoredObservation>, before: number | null, has_more: boolean, };
 
-export type RemoteOperation = "importCodexSession" | "codexSessionStatus" | "cancelCodexSession" | "linkCodexSource" | "syncCapabilities" | "putLocalUsage" | "pushSync" | "pullSync" | "recentSync" | "dashboard" | "addAccount" | "probeAccount" | "deleteAccount" | "activateAccount" | "setQuota" | "setAutosteer" | "createKey" | "revokeKey" | "updateKey" | "rotateKey" | "beginGrok" | "pollGrok" | "cancelGrok" | "beginCodex" | "reauthorizeCodex" | "pollCodex" | "cancelCodex" | "beginNous" | "reauthorizeNous" | "pollNous" | "cancelNous" | "migrationSessions" | "migrationCandidates" | "beginMigration" | "migrationStatus" | "approveMigration" | "cancelMigration" | "forgetMigration" | "migrationAuthorizations";
+export type RemoteOperation = "importCodexSession" | "codexSessionStatus" | "cancelCodexSession" | "linkCodexSource" | "syncCapabilities" | "putLocalUsage" | "putLocalUsageV2" | "consumption" | "pushSync" | "pullSync" | "recentSync" | "dashboard" | "addAccount" | "probeAccount" | "deleteAccount" | "activateAccount" | "setQuota" | "setAutosteer" | "createKey" | "revokeKey" | "updateKey" | "rotateKey" | "beginGrok" | "pollGrok" | "cancelGrok" | "beginCodex" | "reauthorizeCodex" | "pollCodex" | "cancelCodex" | "beginNous" | "reauthorizeNous" | "pollNous" | "cancelNous" | "migrationSessions" | "migrationCandidates" | "beginMigration" | "migrationStatus" | "approveMigration" | "cancelMigration" | "forgetMigration" | "migrationAuthorizations";
 
 export type FabrialsIdentity = { id: string, username: string, };
 

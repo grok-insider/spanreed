@@ -4,6 +4,25 @@ Tauri 2 hosts the React interface. The renderer receives usage, account metadata
 and explicit sharing preferences through native commands; provider credentials
 stay in Rust. IBM Plex Sans and the React components come from `@fabrials/ui`.
 
+The desktop shell uses the available window width. Settings switches between
+one, two and three columns; synchronized history spans the full content area.
+Navigation remains reachable while scrolling, and narrow windows use a
+horizontally scrollable navigation strip. Tables scroll inside their own region.
+Desktop-specific layout is in `src/desktop.css`; colors and components still
+come from the shared UI package.
+
+Settings → Appearance updates both the renderer color scheme and Tauri's native
+window theme. On Linux this updates the GTK title bar, including after restarting
+with a saved Light or Dark preference. System resets the native theme override.
+The renderer receives only `core:window:allow-set-theme` in addition to the
+default window permissions.
+
+Linux layout acceptance (2026-09-09): frontend production build, native debug
+build, all ten local views checked for horizontal overflow at 400px, Settings
+checked at 400/1200/1600px, and native GTK title bar verified in light and dark.
+Browser fixtures validate layout only; they do not validate provider commands.
+Existing Rust gates passed (263 unit tests and 19 CLI tests, four ignored).
+
 ```sh
 bun install --frozen-lockfile
 bun run tauri dev

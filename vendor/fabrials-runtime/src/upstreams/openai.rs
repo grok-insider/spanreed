@@ -2,14 +2,9 @@ use crate::provider::{Provider, Upstream};
 use crate::routes::parse_fabric_path;
 use fabrials_core::hop::HopClass;
 use fabrials_model::UsageRecord;
+#[derive(Default)]
 pub struct OpenAiAdapter {
     pub base: Option<String>,
-}
-
-impl Default for OpenAiAdapter {
-    fn default() -> Self {
-        Self { base: None }
-    }
 }
 
 impl Provider for OpenAiAdapter {

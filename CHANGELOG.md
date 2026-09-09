@@ -4,6 +4,10 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-09
+
+- feat: track local consumption across clients and modernize Linux views (#25)
+
 ## [0.5.0] - 2026-09-09
 
 - feat: connect local Codex usage and reviewed hosted flows (#21)

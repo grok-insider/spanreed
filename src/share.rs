@@ -463,6 +463,28 @@ mod tests {
 
     #[test]
     fn snapshot_json_has_no_secret_field_names() {
+        if std::env::var_os("SPANREED_SNAPSHOT_FIXTURE").is_none() {
+            let directory =
+                std::env::temp_dir().join(format!("spanreed-snapshot-test-{}", std::process::id()));
+            std::fs::create_dir_all(&directory).unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "share::tests::snapshot_json_has_no_secret_field_names",
+                ])
+                .env("SPANREED_SNAPSHOT_FIXTURE", "1")
+                .env("HOME", &directory)
+                .env("XDG_CONFIG_HOME", directory.join("config"))
+                .env("XDG_DATA_HOME", directory.join("data"))
+                .env("XDG_CACHE_HOME", directory.join("cache"))
+                .env("CODEX_HOME", directory.join("codex"))
+                .env("SPANREED_OFFLINE", "1")
+                .status()
+                .unwrap();
+            let _ = std::fs::remove_dir_all(directory);
+            assert!(status.success());
+            return;
+        }
         let out = ProviderOutput {
             reset_inventory: None,
             provider_id: "codex".into(),

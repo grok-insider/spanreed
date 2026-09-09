@@ -111,7 +111,7 @@ pub fn is_voice_ws_path(path: &str) -> bool {
     p == "/v1/stt" || p == "/v1/tts" || p == "/v1/realtime" || p.starts_with("/v1/realtime/")
 }
 
-fn header<'a>(headers: &'a HashMap<String, String>, name: &str) -> Option<String> {
+fn header(headers: &HashMap<String, String>, name: &str) -> Option<String> {
     headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(name))
@@ -248,6 +248,7 @@ impl UpstreamEndpoint {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn tunnel_async(
     client: TcpStream,
     method: &str,
@@ -279,6 +280,7 @@ async fn tunnel_async(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn tunnel_async_rw<C>(
     client: C,
     method: &str,
@@ -336,6 +338,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn pump<C, U>(
     mut client: C,
     mut upstream: U,

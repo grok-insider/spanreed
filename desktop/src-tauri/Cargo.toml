@@ -1,6 +1,6 @@
 [package]
 name = "spanreed-desktop"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 [build-dependencies]
@@ -21,3 +21,5 @@ fabrials-metrics = { path = "../../vendor/fabrials-metrics" }
 fabrials-accounts = { path = "../../vendor/fabrials-accounts" }
 fabrials-oauth-grok = { path = "../../vendor/fabrials-oauth-grok" }
 fabrials-share = { path = "../../vendor/fabrials-share" }
+
+[workspace]

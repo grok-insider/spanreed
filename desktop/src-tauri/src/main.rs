@@ -172,6 +172,39 @@ async fn set_routing(provider: String, on: bool, threshold: f64) -> Result<(), S
 }
 
 #[tauri::command]
+async fn disconnect_usage_source(client:String)->Result<(),String> {
+    tauri::async_runtime::spawn_blocking(move ||spanreed::usage::connections::disconnect(&client)).await.map_err(|_|"Usage worker stopped".to_string())?
+}
+#[tauri::command]
+async fn connect_usage_source(connection:spanreed::usage::connections::Connection)->Result<(),String> {
+    tauri::async_runtime::spawn_blocking(move ||spanreed::usage::connections::save(connection)).await.map_err(|_|"Usage worker stopped".to_string())?
+}
+
+#[tauri::command]
+async fn usage_report(filter: fabrials_core::usage::UsageFilter, force: bool) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        serde_json::to_value(spanreed::usage::report(filter,force)?).map_err(|e|e.to_string())
+    }).await.map_err(|_|"Usage worker stopped".to_string())?
+}
+
+#[tauri::command]
+async fn usage_sources() -> Result<serde_json::Value,String> {
+    tauri::async_runtime::spawn_blocking(|| Ok(serde_json::json!({
+        "clients":fabrials_providers_catalog(), "settings":spanreed::usage::discovery::settings()?, "connections":spanreed::usage::connections::status()?
+    }))).await.map_err(|_|"Usage worker stopped".to_string())?
+}
+
+fn fabrials_providers_catalog() -> serde_json::Value {
+    spanreed::usage::catalog_view()
+}
+
+#[tauri::command]
+async fn save_usage_sources(settings: spanreed::usage::discovery::UsageSettings) -> Result<(),String> {
+    tauri::async_runtime::spawn_blocking(move ||spanreed::usage::discovery::save(&settings))
+        .await.map_err(|_|"Usage worker stopped".to_string())?
+}
+
+#[tauri::command]
 async fn snapshot(force: bool) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || serde_json::to_value(spanreed::desktop::snapshot(force)).map_err(|_| "Could not encode usage".into()))
         .await.map_err(|_| "Usage worker stopped".to_string())?
@@ -319,7 +352,7 @@ fn open_url(url: &str) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
+        .invoke_handler(tauri::generate_handler![disconnect_usage_source, connect_usage_source, usage_report, usage_sources, save_usage_sources, preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
         .setup(|app| {
             let show = tauri::menu::MenuItem::with_id(app, "show", "Open Spanreed", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit Spanreed", true, None::<&str>)?;
