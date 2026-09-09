@@ -5,6 +5,10 @@ export type PublicationStatus = { lastSharedDay: string | null, due: boolean, sc
 
 export type SyncSettings = { sources: Array<string>, };
 
+export type SessionMoveView = { id: string, state: string, alias: string, source_path: string, config_path: string, endpoint: string, account_id: string | null, };
+
+export type HostedClientReview = { id: string, client: string, path: string, account_id: string, model: string, endpoint: string, };
+
 export type SyncStatus = { lastSuccessMs: number | null, uploaded: number, downloaded: number, error: string | null, };
 
 export type PrivateEvent = { "kind": "quota", at_ms: number, output: ProviderOutput, } | { "kind": "history", sample: HistorySample, } | { "kind": "request", record: UsageRecord, };
@@ -17,7 +21,7 @@ export type PrivatePage = { observations: Array<PrivateStoredObservation>, next_
 
 export type PrivateRecentPage = { observations: Array<PrivateStoredObservation>, before: number | null, has_more: boolean, };
 
-export type RemoteOperation = "pushSync" | "pullSync" | "recentSync" | "dashboard" | "addAccount" | "probeAccount" | "deleteAccount" | "activateAccount" | "setQuota" | "setAutosteer" | "createKey" | "revokeKey" | "updateKey" | "rotateKey" | "beginGrok" | "pollGrok" | "cancelGrok" | "beginNous" | "reauthorizeNous" | "pollNous" | "cancelNous" | "migrationSessions" | "migrationCandidates" | "beginMigration" | "migrationStatus" | "approveMigration" | "cancelMigration" | "forgetMigration" | "migrationAuthorizations";
+export type RemoteOperation = "importCodexSession" | "codexSessionStatus" | "cancelCodexSession" | "linkCodexSource" | "syncCapabilities" | "putLocalUsage" | "pushSync" | "pullSync" | "recentSync" | "dashboard" | "addAccount" | "probeAccount" | "deleteAccount" | "activateAccount" | "setQuota" | "setAutosteer" | "createKey" | "revokeKey" | "updateKey" | "rotateKey" | "beginGrok" | "pollGrok" | "cancelGrok" | "beginCodex" | "reauthorizeCodex" | "pollCodex" | "cancelCodex" | "beginNous" | "reauthorizeNous" | "pollNous" | "cancelNous" | "migrationSessions" | "migrationCandidates" | "beginMigration" | "migrationStatus" | "approveMigration" | "cancelMigration" | "forgetMigration" | "migrationAuthorizations";
 
 export type FabrialsIdentity = { id: string, username: string, };
 

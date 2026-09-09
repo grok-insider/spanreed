@@ -11,7 +11,7 @@ export interface HostedMigrationApi {
   forget(request: {id: string}): Promise<unknown>;
   cancel(request: {id: string}): Promise<unknown>;
 }
-export type MigrationAuthorization = {provider: "grok" | "nous"; alias: string; migrationId: string; sourceId: string; onConnected: () => Promise<void>};
+export type MigrationAuthorization = {provider: "grok" | "nous" | "codex"; alias: string; migrationId: string; sourceId: string; onConnected: () => Promise<void>};
 
 export function HostedMigration({api: migrationApi, origin, authorize}: {api: HostedMigrationApi; origin: string; authorize: (request: MigrationAuthorization) => React.ReactNode}) {
   const [authorized, setAuthorized] = React.useState<string[]>([]);
@@ -83,7 +83,7 @@ export function HostedMigration({api: migrationApi, origin, authorize}: {api: Ho
       </>}
       {selected.phase === "approved" && <p role="status">Approved. Confirm and execute the transfer in Spanreed.</p>}
       {selected.phase === "completed" && <p role="status">API-key transfer completed. OAuth entries require independent authorization in the destination.</p>}
-      {selected.phase === "completed" && selected.direction === "localToHosted" && selected.review?.items.filter(item=>item.action === "authorizeOAuth" && !authorized.includes(`${item.provider}/${item.targetAlias}`)).map(item=>(item.provider === "grok" || item.provider === "nous") && <div key={`${selected.id}/${item.sourceId}`}>{authorize({provider:item.provider,alias:item.targetAlias,migrationId:selected.id,sourceId:item.sourceId,onConnected:async()=>{setAuthorized(await migrationApi.authorizations({id:selected.id}));}})}</div>)}
+      {selected.phase === "completed" && selected.direction === "localToHosted" && selected.review?.items.filter(item=>item.action === "authorizeOAuth" && !authorized.includes(`${item.provider}/${item.targetAlias}`)).map(item=>(item.provider === "grok" || item.provider === "nous" || item.provider === "codex") && <div key={`${selected.id}/${item.sourceId}`}>{authorize({provider:item.provider,alias:item.targetAlias,migrationId:selected.id,sourceId:item.sourceId,onConnected:async()=>{setAuthorized(await migrationApi.authorizations({id:selected.id}));}})}</div>)}
       {authorized.map(id=><p role="status" key={id}>Connected {id} with a new hosted authorization.</p>)}
       {now >= selected.expiresAtMs && selected.phase !== "completed" && <p role="alert">This session expired.</p>}
       {selected.phase === "completed" && <div className="fb-form">

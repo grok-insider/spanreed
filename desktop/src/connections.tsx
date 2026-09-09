@@ -50,7 +50,7 @@ export function ConnectionsPage({ accounts }: { accounts: Account[] }) {
       {(error || status?.error) && <p className="fb-error" role="alert">{error || status?.error}</p>}</div>
     </section>
     {status?.state === "running" && <section className="fb-card"><header><h2>Configure a client</h2><p className="fb-muted">Choose a provider route and pin an account to configure a client.</p></header><div className="fb-card-body fb-form">
-      <label>Provider<select value={provider} onChange={event=>{setProvider(event.target.value);setAlias("");}}><option value="grok">SuperGrok</option><option value="nous">Nous</option><option value="openai">OpenAI API</option></select></label>
+      <label>Provider<select value={provider} onChange={event=>{setProvider(event.target.value);setAlias("");}}><option value="grok">SuperGrok</option><option value="codex">Codex subscription</option><option value="nous">Nous</option><option value="openai">OpenAI API</option></select></label>
       <label>Account routing<select value={selectedAlias} onChange={event=>setAlias(event.target.value)}><option value="">Active account / autosteer policy</option>{providerAccounts.map(account=><option key={account.id} value={account.alias}>{account.alias} (pinned)</option>)}</select></label>
       <label>OpenAI-compatible base URL<input readOnly value={endpoint} onFocus={event=>event.target.select()} /></label>
       <p className="fb-muted">{providerAccounts.length ? "For clients that require an API key field, use spanreed-local. Managed provider credentials are supplied by Spanreed." : "Connect a managed account in Accounts, or supply your provider key in the client."}</p>

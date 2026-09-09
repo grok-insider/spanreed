@@ -10,7 +10,7 @@
 
 mod detect;
 mod grok_environment;
-mod jsonc;
+pub(crate) mod jsonc;
 mod paths;
 pub mod review;
 mod service;

@@ -53,6 +53,23 @@ pub fn parse_fabric_path(raw: &str) -> FabricRoute {
         None => (raw, None),
     };
 
+    let codex = if let Some(rest) = path_only.strip_prefix("/acct/") {
+        rest.split_once('/').and_then(|(alias, suffix)| {
+            fabrials_accounts::valid_alias(alias).then_some(())?;
+            strip_route_segment(suffix, "codex").map(|path| (Some(alias.to_string()), path))
+        })
+    } else {
+        strip_route_segment(path_only, "/codex").map(|path| (None, path))
+    };
+    if let Some((account_alias, path)) = codex {
+        return FabricRoute {
+            path: with_query(path, query),
+            account_alias,
+            route: "codex",
+            upstream: "https://chatgpt.com",
+        };
+    }
+
     if let Some(rest) = path_only.strip_prefix("/acct/") {
         let (alias, after) = match rest.split_once('/') {
             Some((a, t)) => (a, format!("/{t}")),

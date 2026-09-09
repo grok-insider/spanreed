@@ -2,7 +2,7 @@
 use serde_json::{json, Value};
 use std::sync::Mutex;
 
-pub const PROVIDERS: &[&str] = &["grok", "nous", "openai"];
+pub const PROVIDERS: &[&str] = &["grok", "codex", "nous", "openai"];
 
 fn config() -> Result<Value, String> {
     use std::io::Read;
@@ -190,6 +190,7 @@ pub fn limits_view() -> Result<RoutingLimits, String> {
             provider: (*provider).into(),
             route: match *provider {
                 "grok" => "/v1",
+                "codex" => "/codex/v1",
                 "nous" => "/nous/v1",
                 _ => "/openai/v1",
             }

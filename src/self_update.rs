@@ -634,9 +634,13 @@ mod tests {
         assert!(exe_is_under_nix_store(Some(Path::new(
             "/nix/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-spanreed-0.0.4/bin/spanreed"
         ))));
-        assert!(!exe_is_under_nix_store(Some(Path::new(
-            "/home/friend/.local/bin/spanreed"
-        ))));
+        let fixture = std::env::temp_dir().join(format!(
+            "spanreed-unmanaged-{}",
+            fabrials_runtime::accounting::new_request_id()
+        ));
+        std::fs::write(&fixture, b"fixture").unwrap();
+        assert!(!exe_is_under_nix_store(Some(&fixture)));
+        std::fs::remove_file(fixture).unwrap();
         assert!(!exe_is_under_nix_store(None));
     }
 

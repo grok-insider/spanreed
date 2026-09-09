@@ -58,7 +58,7 @@ pub(crate) fn begin_reviewed(
     activate_first: bool,
     before_begin: impl FnOnce(&crate::accounts::Account) -> Result<(), String>,
 ) -> Result<LoginView, String> {
-    if !matches!(provider, "nous" | "grok") {
+    if !matches!(provider, "nous" | "grok" | "codex") {
         return Err("Unsupported authorization provider".into());
     }
     if alias.len() > 128 || !crate::accounts::valid_alias(&alias) {
@@ -94,6 +94,7 @@ pub(crate) fn begin_reviewed(
     before_begin(&account)?;
     let authorization = match provider {
         "grok" => fabrials_providers::grok::device::Client::new()?.begin()?,
+        "codex" => fabrials_providers::codex::auth::Client::new()?.begin()?,
         _ => fabrials_providers::nous::Client::new(None)?.begin()?,
     };
     let flow = DeviceFlow::new(authorization, crate::util::now_ms());
@@ -138,6 +139,7 @@ pub fn poll(id: &str) -> Result<Progress, String> {
                 )),
                 result => Ok(result),
             },
+            "codex" => fabrials_providers::codex::auth::Client::new()?.poll(code, now),
             _ => fabrials_providers::nous::Client::new(None)?.poll(code, now),
         },
         |document| {

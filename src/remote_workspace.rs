@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RemoteOperation {
+    #[serde(skip_deserializing)]
+    ImportCodexSession,
+    CodexSessionStatus,
+    CancelCodexSession,
+    LinkCodexSource,
+    SyncCapabilities,
+    PutLocalUsage,
     PushSync,
     PullSync,
     RecentSync,
@@ -22,6 +29,10 @@ pub enum RemoteOperation {
     BeginGrok,
     PollGrok,
     CancelGrok,
+    BeginCodex,
+    ReauthorizeCodex,
+    PollCodex,
+    CancelCodex,
     BeginNous,
     ReauthorizeNous,
     PollNous,
@@ -38,6 +49,12 @@ pub enum RemoteOperation {
 impl RemoteOperation {
     fn route(&self) -> (&'static str, &'static str) {
         match self {
+            Self::ImportCodexSession => ("POST", "codex/session/import"),
+            Self::CodexSessionStatus => ("POST", "codex/session/status"),
+            Self::CancelCodexSession => ("POST", "codex/session/cancel"),
+            Self::LinkCodexSource => ("POST", "sync/link-codex"),
+            Self::SyncCapabilities => ("GET", "sync/capabilities"),
+            Self::PutLocalUsage => ("POST", "sync/local-usage"),
             Self::PushSync => ("POST", "sync/push"),
             Self::RecentSync => ("POST", "sync/recent"),
             Self::PullSync => ("POST", "sync/pull"),
@@ -55,6 +72,10 @@ impl RemoteOperation {
             Self::BeginGrok => ("POST", "grok/device"),
             Self::PollGrok => ("POST", "grok/device/wait"),
             Self::CancelGrok => ("POST", "grok/device/cancel"),
+            Self::BeginCodex => ("POST", "codex/device"),
+            Self::ReauthorizeCodex => ("POST", "codex/device/reauthorize"),
+            Self::PollCodex => ("POST", "codex/device/wait"),
+            Self::CancelCodex => ("POST", "codex/device/cancel"),
             Self::BeginNous => ("POST", "nous/device"),
             Self::ReauthorizeNous => ("POST", "nous/device/reauthorize"),
             Self::PollNous => ("POST", "nous/device/wait"),
@@ -201,7 +222,7 @@ pub fn verification_url(raw: &str) -> Result<String, String> {
     if url.scheme() != "https"
         || !matches!(
             url.host_str(),
-            Some("auth.x.ai" | "accounts.x.ai" | "portal.nousresearch.com")
+            Some("auth.x.ai" | "accounts.x.ai" | "portal.nousresearch.com" | "auth.openai.com")
         )
         || url.port_or_known_default() != Some(443)
         || !url.username().is_empty()

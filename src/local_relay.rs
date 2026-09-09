@@ -28,6 +28,7 @@ impl LocalRelay {
             ready: None,
             providers: vec![
                 Arc::new(upstreams::grok::GrokAdapter::default()),
+                Arc::new(upstreams::codex::CodexAdapter::default()),
                 Arc::new(upstreams::nous::NousAdapter::default()),
                 Arc::new(upstreams::openai::OpenAiAdapter::default()),
             ],
@@ -337,10 +338,22 @@ pub(crate) fn models_for_account(id: &str) -> Result<Vec<String>, String> {
         .into_iter()
         .find(|account| account.id == id)
         .ok_or("Account no longer exists")?;
+    if account.provider == "codex" {
+        crate::drivers::oauth::token("codex", &account.alias)?;
+        let doc = crate::accounts::read_secret_document("codex", &account.alias)?
+            .ok_or("Codex authorization missing")?;
+        let catalog = fabrials_providers::codex::auth::Client::new()?
+            .get("/backend-api/codex/models?client_version=0.153.4", &doc)?;
+        return fabrials_providers::codex::model_ids(&catalog);
+    }
     let (provider, path): (Box<dyn Provider>, &str) = match account.provider.as_str() {
         "grok" => (
             Box::new(upstreams::grok::GrokAdapter::default()),
             "/v1/models",
+        ),
+        "codex" => (
+            Box::new(upstreams::codex::CodexAdapter::default()),
+            "/codex/v1/models",
         ),
         "nous" => (
             Box::new(upstreams::nous::NousAdapter::default()),
@@ -359,7 +372,9 @@ pub(crate) fn models_for_account(id: &str) -> Result<Vec<String>, String> {
         .ok_or("Account authorization unavailable")?;
     let mut request = crate::http::Request::get(format!("{}{}", upstream.base, upstream.path))
         .header("Accept", "application/json");
-    for (name, value) in provider.inject_for(&token, &upstream) {
+    for (name, value) in
+        provider.credential_headers(&token, &upstream, authorization.document.as_ref())?
+    {
         request = request.header(&name, &value);
     }
     let response = request
@@ -395,6 +410,7 @@ fn credential(provider: &str, requested: Option<&str>) -> Result<Credential, Str
             None if provider == "grok" => {
                 crate::local_tokens::grok(Some(&account.alias))?.ok_or("Grok login required")?
             }
+            None if provider == "codex" => crate::drivers::oauth::token("codex", &account.alias)?,
             None if provider == "nous" => crate::drivers::nous::token(&account.alias)?,
             None => return Err("Provider key missing".into()),
         };
@@ -419,6 +435,25 @@ fn credential(provider: &str, requested: Option<&str>) -> Result<Credential, Str
 
 struct LocalUsage;
 impl forward::HopObserver for LocalUsage {
+    fn authorize_response(
+        &self,
+        _model: &str,
+        provider: &str,
+        alias: Option<&str>,
+        expected: Option<&serde_json::Value>,
+    ) -> Result<(), String> {
+        let alias = alias.ok_or("Managed account required")?;
+        if !crate::accounts::routing_registry()?
+            .accounts
+            .iter()
+            .any(|account| account.provider == provider && account.alias == alias)
+            || crate::accounts::read_secret_document(provider, alias)?.as_ref() != expected
+        {
+            return Err("Account authorization changed; reconnect".into());
+        }
+        Ok(())
+    }
+
     fn models_response(&self, body: Vec<u8>) -> Vec<u8> {
         fabrials_runtime::models::rewrite_grok_models_body(&body).unwrap_or(body)
     }
