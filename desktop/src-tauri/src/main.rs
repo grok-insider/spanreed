@@ -190,7 +190,7 @@ async fn usage_report(filter: fabrials_core::usage::UsageFilter, force: bool) ->
 #[tauri::command]
 async fn usage_sources() -> Result<serde_json::Value,String> {
     tauri::async_runtime::spawn_blocking(|| Ok(serde_json::json!({
-        "clients":fabrials_providers_catalog(), "settings":spanreed::usage::discovery::settings()?
+        "clients":fabrials_providers_catalog(), "settings":spanreed::usage::discovery::settings()?, "connections":spanreed::usage::connections::status()?
     }))).await.map_err(|_|"Usage worker stopped".to_string())?
 }
 
