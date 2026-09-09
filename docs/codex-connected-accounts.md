@@ -26,6 +26,8 @@ Spanreed's hosted Connections page can review and save Codex or OpenCode configu
 
 An optional **Move a local Codex session** flow transfers refresh ownership exclusively. Independent device authorization is the alternative when exclusivity cannot be established. Close Codex, OpenCode and other Spanreed processes first. Only a single known file-backed authorization is supported; system credential stores, multiple discovered files, managed local grants and potentially shared OpenCode OAuth authorizations block relocation. The review identifies the exact source and configuration paths and asks the user to confirm that other copies have been removed.
 
+On Windows, retirement uses a same-directory `MoveFileExW` with `MOVEFILE_WRITE_THROUGH`; the quarantine file is never a discovery source and is removed when the transfer is resolved.
+
 The native host journals private originals, configures Codex for the pinned hosted endpoint, durably retires the local authorization, then uploads the grant. Provider validation before commit is read-only. The server atomically creates the inactive hosted account, a client-generated 256-bit proxy key hash and an idempotent receipt. The plaintext client key stays local. A completed receipt removes retained OAuth from the local recovery journal. The local quota probe observes the retirement marker and cannot fall back to a hidden credential store.
 
 If a response is lost, use **Check hosted receipt**. An absent receipt is not permission to restore. **Cancel and restore safely** must receive a durable server cancellation fence before restoring original files; a delayed import cannot cross that fence. Completed transfers cannot restore local refresh ownership. Changed local files cause recovery to stop instead of overwriting user changes. Do not manually delete an unresolved recovery record.
@@ -39,3 +41,5 @@ Fixtures cover fragmented SSE, Chat tools/images, once-only accounting, WebSocke
 macOS/ARM qualification remains deferred until a contributor with Mac hardware can validate native storage, process checks and UI behavior. Windows signing remains deferred. Build configurations alone do not establish platform qualification; release records track native Linux/Windows checks separately.
 
 Protocol references: [OpenAI Codex device auth](https://github.com/openai/codex/blob/main/codex-rs/login/src/device_code_auth.rs), [Codex provider configuration](https://github.com/openai/codex/blob/main/codex-rs/model-provider-info/src/lib.rs).
+
+Windows durability reference: [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw).

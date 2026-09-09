@@ -251,6 +251,44 @@ pub fn preview(owner: &str, alias: &str) -> Result<SessionMoveView, String> {
     })?;
     Ok(view)
 }
+#[cfg(target_os = "windows")]
+fn quarantine_path(journal: &Journal) -> PathBuf {
+    Path::new(&journal.view.source_path)
+        .with_file_name(format!(".spanreed-retired-{}.json", journal.view.id))
+}
+#[cfg(target_os = "windows")]
+fn retire_source(journal: &Journal) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+    let source: Vec<u16> = Path::new(&journal.view.source_path)
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let target: Vec<u16> = quarantine_path(journal)
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // WRITE_THROUGH retires the discoverable name before the hosted import.
+    // The quarantine file is never a credential source and is removed on resolution.
+    if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), 0x8) } == 0 {
+        return Err("Could not durably retire Codex authorization; recover the saved move".into());
+    }
+    Ok(())
+}
+#[cfg(not(target_os = "windows"))]
+fn retire_source(journal: &Journal) -> Result<(), String> {
+    remove(Path::new(&journal.view.source_path))
+}
+fn clear_quarantine(_journal: &Journal) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    remove(&quarantine_path(_journal))?;
+    Ok(())
+}
 fn retire(storage: &Path, journal: &mut Journal) -> Result<(), String> {
     let source = Path::new(&journal.view.source_path);
     let config = Path::new(&journal.view.config_path);
@@ -266,7 +304,7 @@ fn retire(storage: &Path, journal: &mut Journal) -> Result<(), String> {
         &json!({"id":journal.view.id}).to_string(),
     )?;
     write(config, &journal.replacement_config)?;
-    remove(source)?;
+    retire_source(journal)?;
     journal.view.state = "retired".into();
     save_at(storage, journal)
 }
@@ -281,7 +319,8 @@ fn completed(storage: &Path, journal: &mut Journal, response: &Value) -> Result<
     journal.original_auth = None;
     journal.document = None;
     journal.original_config = None;
-    save_at(storage, journal)
+    save_at(storage, journal)?;
+    clear_quarantine(journal)
 }
 fn restore(storage: &Path, journal: &mut Journal) -> Result<(), String> {
     let source = Path::new(&journal.view.source_path);
@@ -304,6 +343,7 @@ fn restore(storage: &Path, journal: &mut Journal) -> Result<(), String> {
     if let Some(original) = &journal.original_auth {
         write(source, original)?;
     }
+    clear_quarantine(journal)?;
     remove(&storage.join("retired.json"))?;
     journal.view.state = "cancelled".into();
     journal.document = None;
@@ -342,6 +382,7 @@ pub fn recover(owner: &str, id: &str, cancel: bool) -> Result<SessionMoveView, S
     let _lock = probe_lock()?;
     let mut journal = load(owner, Some(id))?;
     if matches!(journal.view.state.as_str(), "completed" | "cancelled") {
+        clear_quarantine(&journal)?;
         return Ok(journal.view);
     }
     let operation = if cancel {
@@ -364,6 +405,7 @@ pub fn dismiss(owner: &str, id: &str) -> Result<(), String> {
     if !matches!(journal.view.state.as_str(), "completed" | "cancelled") {
         return Err("Resolve this session move before dismissing its receipt".into());
     }
+    clear_quarantine(&journal)?;
     remove(&journal_path())
 }
 
