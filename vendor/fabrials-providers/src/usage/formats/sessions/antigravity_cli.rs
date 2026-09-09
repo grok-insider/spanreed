@@ -2154,8 +2154,11 @@ mod tests {
         let path = dir.path().join("session-1118.db");
 
         let session_created_ms = 1_781_502_653_000_i64; // build_trajectory_meta
-        let two_days_ago = recent_epoch_seconds() - 2 * 24 * 60 * 60;
-        let now_ish = recent_epoch_seconds();
+
+        // Fixed payloads have no plausible competing big-endian reading.
+        // Wall-clock-derived bytes can legitimately become ambiguous.
+        let first_turn = 1_781_589_053_i64;
+        let second_turn = 1_781_761_853_i64;
 
         let row = |seconds: i64, id: &str| {
             let mut gen9 = enc_varint(2, u64::MAX); // the unset sentinel
@@ -2170,7 +2173,7 @@ mod tests {
                  CREATE TABLE trajectory_metadata_blob (id text, data blob);",
             )
             .unwrap();
-            for (idx, blob) in [row(two_days_ago, "turn-1"), row(now_ish, "turn-2")]
+            for (idx, blob) in [row(first_turn, "turn-1"), row(second_turn, "turn-2")]
                 .iter()
                 .enumerate()
             {
@@ -2189,8 +2192,8 @@ mod tests {
 
         let messages = parse_antigravity_cli_file(&path);
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].timestamp, two_days_ago * 1_000);
-        assert_eq!(messages[1].timestamp, now_ish * 1_000);
+        assert_eq!(messages[0].timestamp, first_turn * 1_000);
+        assert_eq!(messages[1].timestamp, second_turn * 1_000);
         assert!(
             messages.iter().all(|m| m.timestamp != session_created_ms),
             "no row may keep the session-created stamp once #9.#10 decodes"
