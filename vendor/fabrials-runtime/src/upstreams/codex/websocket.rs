@@ -60,7 +60,8 @@ pub fn forward(adapter: &CodexAdapter, mut hop: WebSocketHop<'_>) -> Result<(), 
         tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.unwrap().as_bytes());
     let result = match tokio::runtime::Handle::try_current() {
         Ok(handle) => handle.block_on(run(adapter, &mut hop, request, &accept)),
-        Err(_) => tokio::runtime::Builder::new_current_thread()
+        Err(_) => tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_all()
             .build()
             .map_err(|_| "WebSocket runtime unavailable")?
@@ -87,7 +88,7 @@ impl Active<'_> {
             }
             record.status = Some(status);
             record.duration_ms = Some(self.started.elapsed().as_millis() as u64);
-            self.observer.record(record);
+            tokio::task::block_in_place(|| self.observer.record(record));
         }
     }
 }
@@ -96,7 +97,7 @@ impl Drop for Active<'_> {
         if let Some(mut record) = self.record.take() {
             record.status = Some(502);
             record.duration_ms = Some(self.started.elapsed().as_millis() as u64);
-            self.observer.record(record);
+            tokio::task::block_in_place(|| self.observer.record(record));
         }
     }
 }
@@ -164,7 +165,7 @@ async fn run(
                         if event["type"]!="response.create" {client.send(error("unsupported_event_type")).await.map_err(|_|"Client disconnected")?;continue;}
                         if active.record.is_some() {client.send(error("response_in_progress")).await.map_err(|_|"Client disconnected")?;continue;}
                         let Some(model)=event["model"].as_str().filter(|model|!model.is_empty() && model.len()<=256 && model.bytes().all(|b|b.is_ascii_graphic())) else {client.send(error("invalid_model")).await.map_err(|_|"Client disconnected")?;continue;};
-                        if hop.observer.authorize_response(model,"codex",hop.alias,hop.secret).is_err(){client.send(error("request_not_authorized")).await.map_err(|_|"Client disconnected")?;continue;}
+                        if tokio::task::block_in_place(|| hop.observer.authorize_response(model,"codex",hop.alias,hop.secret)).is_err(){client.send(error("request_not_authorized")).await.map_err(|_|"Client disconnected")?;continue;}
                         let model=model.to_owned();
                         event["store"]=json!(false);
                         active.bytes=0;active.started=std::time::Instant::now();
@@ -218,6 +219,13 @@ mod tests {
     struct Observer(Mutex<Vec<UsageRecord>>);
     impl HopObserver for Observer {
         fn record(&self, record: UsageRecord) {
+            // The hosted observer uses the synchronous Postgres client, which runs
+            // its own runtime; this must be called outside the async task context.
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {});
             self.0.lock().unwrap().push(record);
         }
         fn log(&self, _: &str) {}
@@ -228,6 +236,11 @@ mod tests {
             _: Option<&str>,
             _: Option<&Value>,
         ) -> Result<(), String> {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {});
             if model == "allowed" && self.0.lock().unwrap().len() < 2 {
                 Ok(())
             } else {

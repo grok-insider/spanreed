@@ -90,7 +90,7 @@ fn opencode(
     if providers.contains_key(&name) {
         return Err("This hosted OpenCode connection exists; edit it in OpenCode".into());
     }
-    let addition = json!({"npm":"@ai-sdk/openai-compatible","name":format!("Fabrials Codex · {alias}"),"options":{"baseURL":endpoint,"apiKey":key},"models":{model:{"name":model}}});
+    let addition = json!({"npm":"@ai-sdk/openai-compatible","name":format!("Fabrials Codex · {alias}"),"options":{"baseURL":endpoint,"apiKey":key},"models":{model:{"name":model,"options":{"max_tokens":null,"max_completion_tokens":null,"max_output_tokens":null}}}});
     providers.insert(name.clone(), addition.clone());
     match before {
         Some(text) => String::from_utf8(crate::setup::jsonc::edit(text, &name, &addition, &doc)?)
@@ -246,6 +246,12 @@ mod tests {
         let doc = crate::setup::jsonc::parse(&after).unwrap();
         assert_eq!(doc["model"], "other/model");
         assert_eq!(doc["provider"]["other"]["name"], "Other");
+        let options = doc["provider"]["fabrials-codex-work"]["models"]["fixture-model"]["options"]
+            .as_object()
+            .unwrap();
+        for name in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
+            assert_eq!(options.get(name), Some(&serde_json::Value::Null));
+        }
         assert!(opencode(Some(&after), "work", "fixture", "fixture", "model").is_err());
     }
 }

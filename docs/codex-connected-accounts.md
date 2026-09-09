@@ -43,3 +43,9 @@ macOS/ARM qualification remains deferred until a contributor with Mac hardware c
 Protocol references: [OpenAI Codex device auth](https://github.com/openai/codex/blob/main/codex-rs/login/src/device_code_auth.rs), [Codex provider configuration](https://github.com/openai/codex/blob/main/codex-rs/model-provider-info/src/lib.rs).
 
 Windows durability reference: [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw).
+
+OpenCode client configuration explicitly sets optional output caps to JSON null,
+overriding the SDK default for this subscription connection. Null optional fields
+are omitted before translation; explicit numeric token caps remain rejected.
+WebSocket authorization and usage persistence run outside the async task context
+so synchronous Postgres transactions can safely use their own runtime.

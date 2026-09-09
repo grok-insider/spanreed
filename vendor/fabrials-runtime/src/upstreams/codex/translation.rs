@@ -12,6 +12,12 @@ pub fn now_ms() -> i64 {
 }
 
 pub fn responses_request(mut value: Value, chat: bool) -> Result<Value, String> {
+    // Optional JSON nulls mean unspecified, including clients overriding an
+    // SDK's default output cap for subscription endpoints.
+    value
+        .as_object_mut()
+        .ok_or("Expected a JSON request object")?
+        .retain(|_, field| !field.is_null());
     let object = value.as_object().ok_or("Expected a JSON request object")?;
     if object
         .get("model")
@@ -465,6 +471,18 @@ pub fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn null_optional_caps_are_unspecified_but_numeric_caps_stay_rejected() {
+        let translated = responses_request(json!({"model":"allowed","messages":[{"role":"user","content":"Hi"}],"max_tokens":null,"max_completion_tokens":null,"max_output_tokens":null,"temperature":null}), true).unwrap();
+        assert_eq!(translated["input"][0]["role"], "user");
+        for key in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
+            assert!(translated.get(key).is_none());
+            let mut request = json!({"model":"allowed","messages":[]});
+            request[key] = json!(4);
+            assert!(responses_request(request, true).is_err());
+        }
+    }
+
     #[test]
     fn subscription_output_caps_are_rejected_before_contacting_provider() {
         for field in ["max_output_tokens", "max_tokens", "max_completion_tokens"] {
