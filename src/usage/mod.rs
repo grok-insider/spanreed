@@ -97,13 +97,19 @@ pub fn report(mut filter: UsageFilter, force: bool) -> Result<UsageReport, Strin
     for record in &records {
         accumulate(&mut total, record);
     }
+    let explicitly_selected = filter.client.is_some();
     total.partial |= sources.iter().any(|source| {
         matches!(
             source.state,
             fabrials_core::usage::ImportState::Error
                 | fabrials_core::usage::ImportState::Partial
                 | fabrials_core::usage::ImportState::UnsupportedFormat
-        )
+        ) || (explicitly_selected
+            && matches!(
+                source.state,
+                fabrials_core::usage::ImportState::NoData
+                    | fabrials_core::usage::ImportState::NeedsConnection
+            ))
     });
     // Session/account summaries cannot be allocated to individual days faithfully.
     let (daily_records, period_records): (Vec<_>, Vec<_>) =
