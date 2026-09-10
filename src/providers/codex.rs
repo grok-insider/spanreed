@@ -1,10 +1,13 @@
 //! Codex (OpenAI Codex CLI / ChatGPT) provider.
 //!
 //! Auth file lookup order:
-//!   1. `$CODEX_HOME/auth.json`
-//!   2. `~/.config/codex/auth.json`
-//!   3. `~/.codex/auth.json`
+//!   1. `$CODEX_HOME/auth.json` (Codex CLI, if set)
+//!   2. `~/.codex/auth.json` (Codex CLI default since 0.2; current 0.153)
+//!   3. `~/.config/codex/auth.json` (leftover XDG path; often stale)
 //!   4. Secret Service item `Codex Auth` (via secret-tool)
+//!
+//! When both 2 and 3 exist, the newest mtime wins so a leftover XDG file
+//! does not shadow a fresh `codex login`.
 //!
 //! Usage: `GET https://chatgpt.com/backend-api/wham/usage`.
 
@@ -36,8 +39,8 @@ fn auth_paths() -> Vec<std::path::PathBuf> {
         return vec![creds::expand(&home).join("auth.json")];
     }
     vec![
-        creds::config_home().join("codex").join("auth.json"),
         creds::expand("~/.codex").join("auth.json"),
+        creds::config_home().join("codex").join("auth.json"),
     ]
 }
 
@@ -54,12 +57,29 @@ fn has_token_like(auth: &serde_json::Value) -> bool {
 }
 
 fn load_auth() -> Option<(serde_json::Value, Source, std::path::PathBuf)> {
+    let mut best: Option<(
+        std::time::SystemTime,
+        serde_json::Value,
+        Source,
+        std::path::PathBuf,
+    )> = None;
     for (i, path) in auth_paths().into_iter().enumerate() {
-        if let Some(value) = creds::read_json(&path) {
-            if has_token_like(&value) {
-                return Some((value, Source::File(i), path));
-            }
+        let Some(value) = creds::read_json(&path) else {
+            continue;
+        };
+        if !has_token_like(&value) {
+            continue;
         }
+        let mtime = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        let newer = best.as_ref().map(|(t, _, _, _)| mtime > *t).unwrap_or(true);
+        if newer {
+            best = Some((mtime, value, Source::File(i), path));
+        }
+    }
+    if let Some((_, value, source, path)) = best {
+        return Some((value, source, path));
     }
     if let Some(text) = secret::lookup(KEYCHAIN_SERVICE) {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim()) {
@@ -587,5 +607,22 @@ mod tests {
         assert_eq!(used(&lines, "5h"), Some(1.0));
         assert_eq!(used(&lines, "Extra"), Some(9.0));
         assert!(lines.iter().any(|l| matches!(l, MetricLine::Text { label, value, .. } if label == "Credits" && value == "unlimited")));
+    }
+
+    #[test]
+    fn default_auth_paths_prefer_dot_codex_over_xdg() {
+        if creds::env("CODEX_HOME").is_some() {
+            return;
+        }
+        let paths = auth_paths();
+        assert!(
+            paths.len() >= 2,
+            "expected ~/.codex then XDG, got {paths:?}"
+        );
+        assert!(
+            paths[0].ends_with(".codex/auth.json"),
+            "first path should be ~/.codex/auth.json, got {:?}",
+            paths[0]
+        );
     }
 }
