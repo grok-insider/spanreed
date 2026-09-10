@@ -31,6 +31,7 @@ impl LocalRelay {
                 Arc::new(upstreams::codex::CodexAdapter::default()),
                 Arc::new(upstreams::nous::NousAdapter::default()),
                 Arc::new(upstreams::openai::OpenAiAdapter::default()),
+                Arc::new(upstreams::opencode_go::OpenCodeGoAdapter::default()),
             ],
             credentials: Arc::new(credential),
             usage: Arc::new(LocalUsage),
@@ -362,6 +363,10 @@ pub(crate) fn models_for_account(id: &str) -> Result<Vec<String>, String> {
         "openai" => (
             Box::new(upstreams::openai::OpenAiAdapter::default()),
             "/openai/v1/models",
+        ),
+        "opencode-go" => (
+            Box::new(upstreams::opencode_go::OpenCodeGoAdapter::default()),
+            "/opencode-go/v1/models",
         ),
         _ => return Err("Model discovery is unavailable for this provider".into()),
     };

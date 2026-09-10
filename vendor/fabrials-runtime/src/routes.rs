@@ -2,6 +2,7 @@
 
 pub const UPSTREAM_GROK_CLI: &str = fabrials_oauth_grok::UPSTREAM_GROK_CLI;
 pub const UPSTREAM_XAI_API: &str = fabrials_oauth_grok::UPSTREAM_XAI_API;
+pub const UPSTREAM_OPENCODE_GO: &str = "https://opencode.ai/zen/go";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FabricRoute {
@@ -108,6 +109,14 @@ pub fn parse_fabric_path(raw: &str) -> FabricRoute {
                     upstream: "https://api.openai.com",
                 };
             }
+            if let Some(p) = strip_route_segment(&after, "/opencode-go") {
+                return FabricRoute {
+                    path: with_query(p, query),
+                    account_alias: Some(alias.into()),
+                    route: "opencode-go",
+                    upstream: UPSTREAM_OPENCODE_GO,
+                };
+            }
             if let Some(p) = strip_route_segment(&after, "/grok-bot") {
                 return FabricRoute {
                     path: with_query(p, query),
@@ -153,6 +162,15 @@ pub fn parse_fabric_path(raw: &str) -> FabricRoute {
             account_alias: None,
             route: "openai",
             upstream: "https://api.openai.com",
+        };
+    }
+
+    if let Some(p) = strip_route_segment(path_only, "/opencode-go") {
+        return FabricRoute {
+            path: with_query(p, query),
+            account_alias: None,
+            route: "opencode-go",
+            upstream: UPSTREAM_OPENCODE_GO,
         };
     }
 
@@ -356,8 +374,22 @@ mod tests {
     }
 
     #[test]
+    fn opencode_go_and_acct() {
+        let r = parse_fabric_path("/opencode-go/v1/chat/completions");
+        assert_eq!(r.route, "opencode-go");
+        assert_eq!(r.path, "/v1/chat/completions");
+        assert_eq!(r.upstream, UPSTREAM_OPENCODE_GO);
+        assert!(r.account_alias.is_none());
+        let r = parse_fabric_path("/acct/work/opencode-go/v1/responses");
+        assert_eq!(r.account_alias.as_deref(), Some("work"));
+        assert_eq!(r.route, "opencode-go");
+        assert_eq!(r.path, "/v1/responses");
+        assert_eq!(r.upstream, UPSTREAM_OPENCODE_GO);
+    }
+
+    #[test]
     fn provider_prefixes_require_a_segment_boundary() {
-        for prefix in ["xai", "cursor", "nous", "openai", "grok-bot"] {
+        for prefix in ["xai", "cursor", "nous", "openai", "opencode-go", "grok-bot"] {
             for suffix in [
                 "@attacker.invalid/v1/models",
                 ".attacker.invalid/v1/models",
