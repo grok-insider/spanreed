@@ -6,6 +6,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.6.1] - 2026-09-14
 
+- fix: match hosted OpenCode Go and Grok Build capture hops (#31)
 - feat: route local capture through OpenCode Go (#29)
 
 ## [0.6.0] - 2026-09-09
