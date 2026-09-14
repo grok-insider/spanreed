@@ -26,6 +26,10 @@ pub trait Provider: Send + Sync {
         let _ = hop;
         self.inject(token)
     }
+    /// Adjust hop origin after the injected credential is known. Default no-op.
+    fn bind_credential(&self, hop: &mut Upstream, token: &str) {
+        let _ = (hop, token);
+    }
     fn credential_headers(
         &self,
         token: &str,

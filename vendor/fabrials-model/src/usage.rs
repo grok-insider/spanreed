@@ -58,6 +58,9 @@ pub struct UsageRecord {
     /// Amount in `unit` (character count, audio ms, image count, video ms).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quantity: Option<u64>,
+    /// Hosted tool types from the request (`x_search`, `web_search`). Not a hop kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosted_tools: Option<Vec<String>>,
 }
 
 pub const UNIT_TOKENS: &str = "tokens";
@@ -67,6 +70,14 @@ pub const UNIT_IMAGES: &str = "images";
 pub const UNIT_VIDEO_MS: &str = "video_ms";
 
 impl UsageRecord {
+    pub fn has_hosted_search(&self) -> bool {
+        self.hosted_tools.as_ref().is_some_and(|tools| {
+            tools
+                .iter()
+                .any(|name| name == "x_search" || name == "web_search")
+        })
+    }
+
     pub fn tokens_for_total(&self) -> u64 {
         if self.total_tokens > 0 {
             self.total_tokens
