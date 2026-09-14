@@ -64,7 +64,7 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
         mut client,
         mut reader,
         prov,
-        routed,
+        mut routed,
         method,
         headers,
         body,
@@ -78,6 +78,9 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
         secret,
         strict_credentials,
     } = hop;
+    if let Some(token) = inject.as_deref() {
+        prov.bind_credential(&mut routed, token);
+    }
     // Revalidate at the credential-injection boundary even when the host already checked the route.
     let upstream_url = validated_upstream_url(&routed.base, &routed.path)
         .map_err(|_| "invalid upstream origin".to_string())?;

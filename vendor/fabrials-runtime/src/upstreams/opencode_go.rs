@@ -34,10 +34,17 @@ impl Provider for OpenCodeGoAdapter {
     }
 
     fn inject(&self, token: &str) -> Vec<(String, String)> {
-        vec![
-            ("Authorization".into(), format!("Bearer {token}")),
-            ("User-Agent".into(), USER_AGENT.into()),
-        ]
+        go_headers(token, "fabric")
+    }
+
+    fn inject_for(&self, token: &str, hop: &Upstream) -> Vec<(String, String)> {
+        let session = hop
+            .account_alias
+            .as_deref()
+            .map(str::trim)
+            .filter(|alias| !alias.is_empty())
+            .unwrap_or("fabric");
+        go_headers(token, session)
     }
 
     fn parse_usage(&self, response_body: &[u8]) -> Option<UsageRecord> {
@@ -49,6 +56,14 @@ impl Provider for OpenCodeGoAdapter {
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
         HopClass::openai_compat(&hop.path, upgrade)
     }
+}
+
+fn go_headers(token: &str, session: &str) -> Vec<(String, String)> {
+    vec![
+        ("Authorization".into(), format!("Bearer {token}")),
+        ("User-Agent".into(), USER_AGENT.into()),
+        ("x-opencode-session".into(), format!("fabrials-{session}")),
+    ]
 }
 
 fn now_ms() -> i64 {

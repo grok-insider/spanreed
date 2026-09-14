@@ -101,6 +101,53 @@ pub fn core_request_allowed(method: &str, raw: &str) -> bool {
         || (method.eq_ignore_ascii_case("GET") && path == "/v1/models")
 }
 
+fn hop_path(raw: &str) -> &str {
+    raw.split('?').next().unwrap_or(raw).trim_end_matches('/')
+}
+
+/// Grok Build cli-chat-proxy auxiliaries (feedback, session signals, login).
+/// Not account-management APIs (`/v1/files`, batches, fine-tunes, `/v1/me`).
+/// `GET /v1/deployment/config` is excluded: grok.com can rewrite client endpoints.
+pub fn cli_aux_request_allowed(method: &str, raw: &str) -> bool {
+    let path = hop_path(raw);
+    let get = method.eq_ignore_ascii_case("GET");
+    let post = method.eq_ignore_ascii_case("POST");
+    match path {
+        "/v1/feedback" if post => true,
+        "/v1/feedback/config" if get => true,
+        "/v1/feedback/requests" if post => true,
+        "/v1/user" if get => true,
+        "/v1/settings" if get => true,
+        "/v1/login-config" if get => true,
+        "/v1/subagents/bundle" if get => true,
+        "/v1/bundle/archive" if get => true,
+        "/v1/consent/accept" if post => true,
+        "/v1/privacy/coding-data-retention" if get || post => true,
+        "/v1/traces" if get || post => true,
+        "/v1/mcp/tools/call" if post => true,
+        "/v1/mcp/tools/list" if get || post => true,
+        _ if path.starts_with("/v1/feedback/requests/") => {
+            (path.ends_with("/complete") || path.ends_with("/dismiss")) && post
+        }
+        _ if path.starts_with("/v1/sessions/") => {
+            let rest = &path["/v1/sessions/".len()..];
+            rest.split_once('/')
+                .is_some_and(|(id, action)| {
+                    !id.is_empty()
+                        && !id.contains('/')
+                        && post
+                        && matches!(action, "signals" | "events" | "turn-deltas")
+                })
+        }
+        _ => false,
+    }
+}
+
+/// grok.com serves this without credentials so device-login can start.
+pub fn cli_aux_public_unauthenticated(method: &str, raw: &str) -> bool {
+    method.eq_ignore_ascii_case("GET") && hop_path(raw) == "/v1/login-config"
+}
+
 pub fn media_request_allowed(method: &str, raw: &str, upgrade: bool) -> bool {
     let path = raw.split('?').next().unwrap_or(raw).trim_end_matches('/');
     match path {
@@ -196,5 +243,41 @@ mod tests {
         ));
         assert!(media_request_allowed("GET", "/v1/stt", true));
         assert!(!media_request_allowed("GET", "/v1/stt", false));
+    }
+
+    #[test]
+    fn cli_aux_allowlist_matches_grok_build_proxy_plane() {
+        assert!(cli_aux_request_allowed("POST", "/v1/feedback"));
+        assert!(cli_aux_request_allowed("GET", "/v1/feedback/config"));
+        assert!(cli_aux_request_allowed(
+            "POST",
+            "/v1/feedback/requests/abc/complete"
+        ));
+        assert!(cli_aux_request_allowed(
+            "POST",
+            "/v1/sessions/01abc/signals"
+        ));
+        assert!(cli_aux_request_allowed("GET", "/v1/user?include=subscription"));
+        assert!(cli_aux_request_allowed("GET", "/v1/login-config"));
+        assert!(cli_aux_public_unauthenticated("GET", "/v1/login-config"));
+        assert!(!cli_aux_public_unauthenticated("POST", "/v1/login-config"));
+        for path in [
+            "/v1/files",
+            "/v1/batches",
+            "/v1/fine_tuning/jobs",
+            "/v1/me",
+            "/v1/deployment/config",
+            "/v1/responses",
+            "/v1/models",
+        ] {
+            assert!(
+                !cli_aux_request_allowed("GET", path),
+                "{path}"
+            );
+            assert!(
+                !cli_aux_request_allowed("POST", path),
+                "{path}"
+            );
+        }
     }
 }
