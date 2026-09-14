@@ -43,6 +43,7 @@ impl UsagePartial {
             status: None,
             unit: None,
             quantity: None,
+            hosted_tools: None,
         }
     }
 }
