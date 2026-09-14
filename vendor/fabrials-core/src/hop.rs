@@ -131,13 +131,12 @@ pub fn cli_aux_request_allowed(method: &str, raw: &str) -> bool {
         }
         _ if path.starts_with("/v1/sessions/") => {
             let rest = &path["/v1/sessions/".len()..];
-            rest.split_once('/')
-                .is_some_and(|(id, action)| {
-                    !id.is_empty()
-                        && !id.contains('/')
-                        && post
-                        && matches!(action, "signals" | "events" | "turn-deltas")
-                })
+            rest.split_once('/').is_some_and(|(id, action)| {
+                !id.is_empty()
+                    && !id.contains('/')
+                    && post
+                    && matches!(action, "signals" | "events" | "turn-deltas")
+            })
         }
         _ => false,
     }
@@ -257,7 +256,10 @@ mod tests {
             "POST",
             "/v1/sessions/01abc/signals"
         ));
-        assert!(cli_aux_request_allowed("GET", "/v1/user?include=subscription"));
+        assert!(cli_aux_request_allowed(
+            "GET",
+            "/v1/user?include=subscription"
+        ));
         assert!(cli_aux_request_allowed("GET", "/v1/login-config"));
         assert!(cli_aux_public_unauthenticated("GET", "/v1/login-config"));
         assert!(!cli_aux_public_unauthenticated("POST", "/v1/login-config"));
@@ -270,14 +272,8 @@ mod tests {
             "/v1/responses",
             "/v1/models",
         ] {
-            assert!(
-                !cli_aux_request_allowed("GET", path),
-                "{path}"
-            );
-            assert!(
-                !cli_aux_request_allowed("POST", path),
-                "{path}"
-            );
+            assert!(!cli_aux_request_allowed("GET", path), "{path}");
+            assert!(!cli_aux_request_allowed("POST", path), "{path}");
         }
     }
 }
