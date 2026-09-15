@@ -5,6 +5,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 import { invoke } from "@tauri-apps/api/core";
 import { ApiKeyForm, ProviderCard, ProviderIcon, WorkspaceShell, type ProviderOutput, type SharingConsent } from "@fabrials/ui";
+import { FabrialBrandMark } from "./brand-mark";
+import { DesktopWindowChrome } from "./window-chrome";
 import { AccountActions } from "./account-actions";
 import { MigrationPage } from "./migration";
 import { ConnectionsPage } from "./connections";
@@ -81,8 +83,9 @@ function App() {
   const [linkIdentity,setLinkIdentity] = React.useState("");
   const [linkConnected,setLinkConnected] = React.useState(false);
   const workspacePicker = <label className="desktop-workspace-picker">Workspace<select aria-label="Workspace" value={mode} onChange={event => changeMode(event.target.value)}><option value="local">On this machine</option><option value="remote">ai-relay · Fabrials</option></select></label>;
-  if (mode === "remote") return <WorkspaceShell title="Spanreed" navigation={remoteNavigation} active={page} onNavigate={navigate} actions={workspacePicker}><RemoteWorkspace page={page}/></WorkspaceShell>;
-  return <WorkspaceShell title="Spanreed" navigation={navigation} active={page} onNavigate={navigate} actions={<div className="fb-row">{workspacePicker}<button className="fb-button" disabled={busy} onClick={()=>void load(true)}>{busy?"Refreshing…":"Refresh"}</button></div>}>
+  const shell = { title: "Spanreed" as const, brandMark: <FabrialBrandMark />, chrome: <DesktopWindowChrome />, onNavigate: navigate };
+  if (mode === "remote") return <WorkspaceShell {...shell} navigation={remoteNavigation} active={page} actions={workspacePicker}><RemoteWorkspace page={page}/></WorkspaceShell>;
+  return <WorkspaceShell {...shell} navigation={navigation} active={page} actions={<div className="fb-row">{workspacePicker}<button className="fb-button" disabled={busy} onClick={()=>void load(true)}>{busy?"Refreshing…":"Refresh"}</button></div>}>
     {error && <p role="alert" className="fb-error">{error}</p>}{notice && <p role="status">{notice}</p>}
     {page === "overview" && <><div className="fb-heading"><h1>Your usage, at a glance</h1><p>Live limits and reset credits across your connected providers.</p></div>{!outputs.length?<div className="fb-empty"><h2>{busy?"Reading your providers…":"No usage available yet"}</h2><p className="fb-muted">Sign in through a supported CLI, then refresh. Open Providers to inspect detection.</p></div>:<div className="fb-grid">{outputs.map(output=><ProviderCard key={output.providerId} provider={output}/>)}</div>}</>}
     {page === "usage" && <LocalUsage />}

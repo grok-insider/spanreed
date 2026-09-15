@@ -78,6 +78,7 @@
           '';
           postInstall = ''
             install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/com.fabrials.spanreed.png"
+            install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/spanreed-desktop.png"
             mkdir -p "$out/share/applications"
             cat > "$out/share/applications/com.fabrials.spanreed.desktop" <<EOF
             [Desktop Entry]
@@ -88,7 +89,7 @@
             Icon=com.fabrials.spanreed
             Categories=Development;Utility;
             Terminal=false
-            StartupWMClass=spanreed-desktop
+            StartupWMClass=com.fabrials.spanreed
             EOF
           '';
           dontWrapGApps = true;
