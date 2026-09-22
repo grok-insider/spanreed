@@ -6,6 +6,14 @@ function usage(record: Hop) {
   if (record.unit && record.unit !== "tokens") return record.quantity == null ? "Unknown" : `${record.quantity.toLocaleString()} ${record.unit}`;
   return `${(record.total_tokens || record.input_tokens + record.output_tokens).toLocaleString()} tokens`;
 }
+function outputTps(record: Hop) {
+  if (record.kind !== "chat" || (record.status ?? 0) >= 400 || !record.output_tokens || !record.duration_ms) return null;
+  return record.output_tokens / (record.duration_ms / 1000);
+}
+function tpsLabel(record: Hop) {
+  const rate = outputTps(record);
+  return rate == null ? "Not recorded" : rate.toFixed(1);
+}
 export function RequestsPage() {
   const [rows, setRows] = React.useState<Hop[]>([]);
   const [pending, setPending] = React.useState(true);
@@ -22,6 +30,6 @@ export function RequestsPage() {
     <button className="fb-button" disabled={pending} onClick={() => void load()}>{pending ? "Reading…" : "Refresh requests"}</button>
     {error && <p className="fb-error" role="alert">{error}</p>}
     {!pending && !error && !rows.length && <div className="fb-empty"><h2>No captured requests yet</h2><p>Requests sent through the local Spanreed proxy appear here after completion.</p></div>}
-    {!!rows.length && <div className="fb-table-scroll" role="region" aria-label="Completed requests" tabIndex={0}><table className="fb-table"><caption>Provider-reported usage and request metadata</caption><thead><tr><th scope="col">Completed</th><th scope="col">Provider / account</th><th scope="col">Model</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Usage</th><th scope="col">Duration</th></tr></thead><tbody>{rows.map((row, index) => <tr key={row.request_id || `${row.ts_ms}:${index}`}><td>{new Date(row.ts_ms).toLocaleString()}</td><td>{row.account_id || row.provider || "grok"}</td><td>{row.model || "Not reported"}</td><td>{row.kind || "chat"}</td><td>{row.status ?? "Not recorded"}</td><td>{usage(row)}</td><td>{row.duration_ms == null ? "Not recorded" : `${(row.duration_ms / 1000).toFixed(2)}s`}</td></tr>)}</tbody></table></div>}
+    {!!rows.length && <div className="fb-table-scroll" role="region" aria-label="Completed requests" tabIndex={0}><table className="fb-table"><caption>Provider-reported usage and request metadata</caption><thead><tr><th scope="col">Completed</th><th scope="col">Provider / account</th><th scope="col">Model</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Usage</th><th scope="col">Duration</th><th scope="col">tok/s</th></tr></thead><tbody>{rows.map((row, index) => <tr key={row.request_id || `${row.ts_ms}:${index}`}><td>{new Date(row.ts_ms).toLocaleString()}</td><td>{row.account_id || row.provider || "grok"}</td><td>{row.model || "Not reported"}</td><td>{row.kind || "chat"}</td><td>{row.status ?? "Not recorded"}</td><td>{usage(row)}</td><td>{row.duration_ms == null ? "Not recorded" : `${(row.duration_ms / 1000).toFixed(2)}s`}</td><td>{tpsLabel(row)}</td></tr>)}</tbody></table></div>}
   </>;
 }
