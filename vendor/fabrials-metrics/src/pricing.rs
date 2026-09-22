@@ -301,6 +301,13 @@ mod tests {
         assert!(t.find("grok-4.5").is_some() || t.find("grok-4").is_some());
         assert!(t.find("grok-4.6").is_some(), "grok-4.6 priced");
         assert!(t.find("grok-4.6-build").is_some(), "grok-4.6-build priced");
+        assert!(t.find("grok-4.7").is_some(), "grok-4.7 priced");
+        assert!(t.find("grok-4.7-build").is_some(), "grok-4.7-build priced");
+        assert!(
+            t.find("grok-4.7-build-fast").is_some(),
+            "grok-4.7-build-fast priced"
+        );
+        assert!(t.find("grok-4.7-fast").is_some(), "grok-4.7-fast priced");
         assert!(
             t.find("claude-fable-5-1").is_some(),
             "claude-fable-5-1 priced"
