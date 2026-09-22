@@ -63,13 +63,21 @@ fn voice_billing_key(record: &UsageRecord) -> Option<&'static str> {
 fn media_cost(record: &UsageRecord, table: &pricing::PricingMap) -> Option<f64> {
     match record.kind.as_deref().map(str::trim).unwrap_or("") {
         "image" => {
-            let model = record.model.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+            let model = record
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?;
             let p = table.get(model)?;
             let n = record.quantity.unwrap_or(1).max(1);
             return Some(n as f64 * p.cost_per_image?);
         }
         "video" => {
-            let model = record.model.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+            let model = record
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?;
             let p = table.get(model)?;
             let ms = match record.unit.as_deref() {
                 Some("video_ms") => record.quantity.unwrap_or(0),
@@ -181,6 +189,66 @@ mod tests {
             ..UsageRecord::default()
         };
         close(list_cost_usd(&four_five_cached), 100_000.0 * 3e-7);
+    }
+
+    #[test]
+    fn grok_47_matches_46_list_price() {
+        fn close(got: Option<f64>, expected: f64) {
+            let got = got.expect("priced");
+            assert!(
+                (got - expected).abs() < 1e-12,
+                "got={got} expected={expected}"
+            );
+        }
+        for model in ["grok-4.7", "grok-4.7-build"] {
+            let inn = UsageRecord {
+                model: Some(model.into()),
+                input_tokens: 100_000,
+                ..UsageRecord::default()
+            };
+            close(list_cost_usd(&inn), 100_000.0 * 2e-6);
+            let cached = UsageRecord {
+                model: Some(model.into()),
+                input_tokens: 100_000,
+                cached_input_tokens: 100_000,
+                ..UsageRecord::default()
+            };
+            close(list_cost_usd(&cached), 100_000.0 * 5e-7);
+        }
+        for model in ["grok-4.7-build-fast", "grok-4.7-fast"] {
+            let fast = UsageRecord {
+                model: Some(model.into()),
+                input_tokens: 100_000,
+                ..UsageRecord::default()
+            };
+            close(list_cost_usd(&fast), 100_000.0 * 4e-6);
+        }
+        let fast_cached = UsageRecord {
+            model: Some("grok-4.7-build-fast".into()),
+            input_tokens: 100_000,
+            cached_input_tokens: 100_000,
+            ..UsageRecord::default()
+        };
+        close(list_cost_usd(&fast_cached), 100_000.0 * 1e-6);
+        // ≥200k reprices every token. Fast long context is $6 / $1.50 / $18,
+        // not another 2× on top of the standard long tier ($4 / $1 / $12).
+        let fast_long = UsageRecord {
+            model: Some("grok-4.7-build-fast".into()),
+            input_tokens: 200_000,
+            output_tokens: 1_000,
+            ..UsageRecord::default()
+        };
+        close(
+            list_cost_usd(&fast_long),
+            200_000.0 * 6e-6 + 1_000.0 * 1.8e-5,
+        );
+        let fast_long_cached = UsageRecord {
+            model: Some("grok-4.7-build-fast".into()),
+            input_tokens: 200_000,
+            cached_input_tokens: 200_000,
+            ..UsageRecord::default()
+        };
+        close(list_cost_usd(&fast_long_cached), 200_000.0 * 1.5e-6);
     }
 
     #[test]
