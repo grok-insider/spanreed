@@ -1,6 +1,6 @@
 # Fabrials design system
 
-Version: 0.3.0. AI Relay and enterprise Open Mail consume the generated 0.3 distributions. Spanreed still vendors 0.1. Radiant, the fabrials.com product routes, and admin.fabrials.com do not import the package yet. ui.fabrials.com shares these tokens and does not replace its WebMCP catalogue with mail or AI components. Distribution is a verified vendor copy, not an npm release.
+Version: 0.3.0. AI Relay, enterprise Open Mail, the Spanreed desktop, Radiant, the fabrials.com product routes, and admin.fabrials.com consume generated 0.3 distributions. ui.fabrials.com imports the shared IBM Plex font and semantic tokens and keeps its WebMCP catalogue. Distribution is a verified vendor copy, not an npm release.
 
 ## Identity
 

@@ -9,12 +9,14 @@ const SelectGroup = Select$1.Group;
 function SelectTrigger({
   className,
   children,
+  size,
   ...props
 }) {
   return /* @__PURE__ */ jsxs(
     Select$1.Trigger,
     {
       className: classes("fui-input", "fui-select-trigger", className),
+      "data-size": size,
       ...props,
       children: [
         children,
@@ -26,6 +28,7 @@ function SelectTrigger({
 function SelectContent({
   className,
   children,
+  align = "center",
   ...props
 }) {
   return /* @__PURE__ */ jsx(Select$1.Portal, { children: /* @__PURE__ */ jsx(
@@ -33,6 +36,7 @@ function SelectContent({
     {
       className: "fui-positioner",
       sideOffset: 6,
+      align,
       alignItemWithTrigger: false,
       children: /* @__PURE__ */ jsx(Select$1.Popup, { className: classes("fui-menu", className), ...props, children: /* @__PURE__ */ jsx(Select$1.List, { children }) })
     }
