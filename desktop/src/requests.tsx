@@ -13,6 +13,16 @@ function usage(record: UsageRecord) {
   return `${formatCount(record.total_tokens || record.input_tokens + record.output_tokens)} tokens`;
 }
 
+function outputTps(record: UsageRecord) {
+  if ((record.kind ?? "chat") !== "chat" || (record.status ?? 0) >= 400 || !record.output_tokens || !record.duration_ms) return null;
+  return record.output_tokens / (record.duration_ms / 1000);
+}
+
+function tpsLabel(record: UsageRecord) {
+  const rate = outputTps(record);
+  return rate == null ? "Not recorded" : rate.toFixed(1);
+}
+
 export function RequestsTab() {
   const { signal, proxy } = useLocalData();
   const now = useClock() ?? Date.now();
@@ -32,7 +42,7 @@ export function RequestsTab() {
       description={proxy?.state === "running" ? "The proxy is running. Requests appear here once a connected tool sends one." : "Requests are recorded when your tools send them through Connect. Start the proxy and point a tool at it."}
       actions={proxy?.state === "running" ? undefined : <LinkButton href={routeHref({ workspace: "local", page: "connect" })}>Open Connect</LinkButton>} />}
     {rows && rows.length > 0 && <Table aria-label="Requests" regionLabel="Requests">
-      <thead><tr><th scope="col">Completed</th><th scope="col">Account</th><th scope="col">Model</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Usage</th><th scope="col">Duration</th></tr></thead>
+      <thead><tr><th scope="col">Completed</th><th scope="col">Account</th><th scope="col">Model</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Usage</th><th scope="col">Duration</th><th scope="col">tok/s</th></tr></thead>
       <tbody>{rows.map((row, index) => <tr key={row.request_id || `${row.ts_ms}:${index}`}>
         <td><time dateTime={new Date(row.ts_ms).toISOString()} title={absoluteTime(row.ts_ms)}>{ago(row.ts_ms, now)}</time></td>
         <td>{row.account_id || row.provider || "grok"}</td>
@@ -41,6 +51,7 @@ export function RequestsTab() {
         <td>{row.status == null ? "Not recorded" : <Badge tone={row.status >= 400 ? "danger" : "neutral"}>{row.status}</Badge>}</td>
         <td className="sr-numeric">{usage(row)}</td>
         <td className="sr-numeric">{row.duration_ms == null ? "Not recorded" : `${(row.duration_ms / 1000).toFixed(1)} s`}</td>
+        <td className="sr-numeric">{tpsLabel(row)}</td>
       </tr>)}</tbody>
     </Table>}
   </div>;
