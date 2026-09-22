@@ -4,22 +4,33 @@
 //! 1. An embedded, filtered snapshot of LiteLLM's
 //!    `model_prices_and_context_window.json` (compile-time, offline fallback —
 //!    Nix-sandbox friendly).
-//! 2. A runtime-refreshed copy of the same upstream data, filtered to the
+//! 2. A runtime-refreshed copy of the same upstream data plus the channels
+//!    that upstream does not price (models.dev: OpenCode Go), filtered to the
 //!    relevant model families and cached at
 //!    `~/.cache/spanreed/pricing-remote.json` with a 7-day TTL, so newly
-//!    released models get priced without a new binary. Set `SPANREED_OFFLINE`
-//!    to disable the refresh entirely.
+//!    released models get priced without a new binary. The same refresh writes
+//!    context windows to `~/.cache/spanreed/limits-remote.json`. Set
+//!    `SPANREED_OFFLINE` to disable the refresh entirely.
 //! 3. The user's `~/.config/spanreed/pricing.json` override
 //!    (same shape: `{ "<model>": { input_cost_per_token, ... } }`).
 //!
 //! Prices are USD per token. Cache-write/read and a >200k-context tier are
-//! supported, mirroring how the upstream pricing data is structured.
+//! supported, mirroring how the upstream pricing data is structured. The two
+//! upstream filters live in `fabrials-metrics`: they are the same table shape
+//! the alojado relay reads, so both products price a model identically.
+//! This module keeps its own strict resolver (see [`PricingMap::exact_cost`])
+//! because local logs must stay unpriced when a cache rate is unknown.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
+
+use fabrials_metrics::{
+    build_limits, filter_models_dev, filter_upstream, merge_price_tables, models_dev_prices,
+    normalize, LimitsMap,
+};
 
 use crate::creds;
 use crate::http::Request;
@@ -29,14 +40,16 @@ const EMBEDDED: &str = include_str!("pricing-data.json");
 /// Upstream source of truth for model prices.
 const REMOTE_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+/// Upstream source for the channels LiteLLM does not price.
+const CHANNELS_URL: &str = "https://models.dev/api.json";
+/// Channels spanreed routes through but LiteLLM does not carry.
+const CHANNELS: &[&str] = &["opencode-go"];
+/// Local ids that alias a channel model. The relay picker uses the first.
+const ALIASES: &[(&str, &str)] = &[("deepseek-flash", "deepseek-v4.1-flash")];
 /// Refresh the cached remote table at most this often.
 const REMOTE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// After a failed refresh, wait this long before trying again.
 const REMOTE_RETRY: Duration = Duration::from_secs(6 * 60 * 60);
-
-/// Model families we price (the providers whose local logs we cost-estimate,
-/// plus families those CLIs can route to). Matched against normalized names.
-const FAMILIES: &[&str] = &["claude", "gpt", "codex", "gemini", "grok", "minimax"];
 
 /// Raw LiteLLM-shaped entry (only the fields we use).
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -149,16 +162,6 @@ fn tiered(tokens: u64, base: f64, above_200k: Option<f64>) -> f64 {
     }
 }
 
-/// Normalize a model name for matching: lowercase, drop provider routing
-/// prefix (`azure/`, `openai/`, ...), normalize `@`/`:` to `-`.
-fn normalize(model: &str) -> String {
-    let mut m = model.to_lowercase();
-    if let Some(i) = m.rfind('/') {
-        m = m[i + 1..].to_string();
-    }
-    m.replace([':', '@'], "-")
-}
-
 fn parse_table(json: &str) -> HashMap<String, Pricing> {
     let raw: HashMap<String, RawPricing> = serde_json::from_str(json).unwrap_or_default();
     raw.iter()
@@ -193,54 +196,58 @@ fn remote_cache_path() -> PathBuf {
     crate::app::cache_dir().join("pricing-remote.json")
 }
 
-/// True when the key (after normalization) belongs to a family we price.
-fn relevant_model(key: &str) -> bool {
-    let name = normalize(key);
-    if FAMILIES.iter().any(|f| name.contains(f)) {
-        return true;
-    }
-    // OpenAI o-series: o1, o3-mini, o4-mini-2025-04-16, ...
-    let mut chars = name.chars();
-    chars.next() == Some('o') && chars.next().is_some_and(|c| c.is_ascii_digit())
+fn limits_cache_path() -> PathBuf {
+    crate::app::cache_dir().join("limits-remote.json")
 }
 
-/// Reduce the full upstream pricing JSON to the families and fields we use.
-/// Returns a minified JSON object with deterministic key order, or an error
-/// when the input doesn't look like the upstream table.
-pub fn filter_upstream(json: &str) -> Result<String, String> {
-    let raw: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("invalid pricing JSON: {e}"))?;
-    let obj = raw.as_object().ok_or("pricing JSON is not an object")?;
-
-    let mut filtered = std::collections::BTreeMap::new();
-    for (key, value) in obj {
-        if !relevant_model(key) {
-            continue;
-        }
-        let Ok(entry) = serde_json::from_value::<RawPricing>(value.clone()) else {
-            continue;
-        };
-        if entry.input_cost_per_token.is_none() || entry.output_cost_per_token.is_none() {
-            continue;
-        }
-        filtered.insert(key.clone(), entry);
-    }
-
-    if !filtered.keys().any(|k| normalize(k).contains("claude")) {
-        return Err("filtered pricing table has no claude models; refusing".into());
-    }
-    serde_json::to_string(&filtered).map_err(|e| e.to_string())
+/// Prices and context windows reduced from one pair of upstream documents.
+pub struct UpstreamTables {
+    pub prices: String,
+    pub limits: String,
 }
 
-/// Download and filter the upstream pricing table.
-pub fn fetch_filtered() -> Result<String, String> {
-    let resp = Request::get(REMOTE_URL)
+/// Reduce a LiteLLM price document and a models.dev catalog to the two tables
+/// the cache stores. LiteLLM keeps every id it prices; the channel supplies
+/// the models that document does not carry, plus their context windows.
+pub fn compose_upstream(
+    litellm_json: &str,
+    models_dev_json: &str,
+) -> Result<UpstreamTables, String> {
+    let litellm = filter_upstream(litellm_json)?;
+    let channels = models_dev_prices(models_dev_json, CHANNELS, ALIASES)?;
+    Ok(UpstreamTables {
+        prices: merge_price_tables(&[&channels, &litellm])?,
+        limits: filter_models_dev(models_dev_json, CHANNELS, ALIASES)?,
+    })
+}
+
+/// Fetch one upstream document.
+fn fetch_json(url: &str) -> Result<String, String> {
+    let resp = Request::get(url)
         .header("Accept", "application/json")
         .send()?;
     if !(200..300).contains(&resp.status) {
-        return Err(format!("pricing fetch failed (HTTP {})", resp.status));
+        return Err(format!("{url} fetch failed (HTTP {})", resp.status));
     }
-    filter_upstream(&resp.body)
+    Ok(resp.body)
+}
+
+/// Download both upstreams. A source that fails aborts the refresh, so the
+/// cached tables are never replaced by a partial pair.
+pub fn fetch_filtered() -> Result<String, String> {
+    Ok(fetch_upstream()?.prices)
+}
+
+fn fetch_upstream() -> Result<UpstreamTables, String> {
+    compose_upstream(&fetch_json(REMOTE_URL)?, &fetch_json(CHANNELS_URL)?)
+}
+
+fn write_atomic(path: &std::path::Path, body: &str) -> bool {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, body).is_ok() && std::fs::rename(&tmp, path).is_ok()
 }
 
 fn younger_than(path: &std::path::Path, ttl: Duration) -> bool {
@@ -251,30 +258,38 @@ fn younger_than(path: &std::path::Path, ttl: Duration) -> bool {
         .is_some_and(|age| age < ttl)
 }
 
-/// Refresh the cached remote pricing table when it is missing or older than
-/// the TTL. Failures are silent (logged at debug): the embedded snapshot and
-/// any stale cache keep working offline, and a stamp file backs off retries
+/// Context windows from the cached models.dev refresh, then the user's
+/// `~/.config/spanreed/limits.json`. Empty until the first successful refresh.
+pub fn limits() -> &'static LimitsMap {
+    static LIMITS: OnceLock<LimitsMap> = OnceLock::new();
+    LIMITS.get_or_init(|| {
+        let cached = creds::read_file(&limits_cache_path());
+        let user = creds::read_file(&crate::app::config_dir().join("limits.json"));
+        build_limits("", cached.as_deref(), user.as_deref())
+    })
+}
+
+/// Refresh the cached price and limits tables when either is missing or older
+/// than the TTL. Failures are silent (logged at debug): the embedded snapshot
+/// and any stale cache keep working offline, and a stamp file backs off retries
 /// so an offline machine doesn't pay a connect timeout on every probe.
 /// No-op when `SPANREED_OFFLINE` is set.
 pub fn ensure_fresh() {
     if crate::app::env_offline() {
         return;
     }
-    let path = remote_cache_path();
-    let stamp = path.with_extension("attempt");
-    if younger_than(&path, REMOTE_TTL) || younger_than(&stamp, REMOTE_RETRY) {
+    let prices = remote_cache_path();
+    let limits = limits_cache_path();
+    let stamp = prices.with_extension("attempt");
+    let fresh = younger_than(&prices, REMOTE_TTL) && younger_than(&limits, REMOTE_TTL);
+    if fresh || younger_than(&stamp, REMOTE_RETRY) {
         return;
     }
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    match fetch_filtered() {
-        Ok(json) => {
-            let tmp = path.with_extension("tmp");
-            if std::fs::write(&tmp, &json).is_ok() {
-                let _ = std::fs::rename(&tmp, &path);
+    match fetch_upstream() {
+        Ok(tables) => {
+            if write_atomic(&prices, &tables.prices) && write_atomic(&limits, &tables.limits) {
+                let _ = std::fs::remove_file(&stamp);
             }
-            let _ = std::fs::remove_file(&stamp);
         }
         Err(e) => {
             log::debug!("pricing refresh skipped: {e}");
@@ -299,46 +314,77 @@ mod tests {
     }
 
     #[test]
-    fn filter_upstream_keeps_relevant_families_and_cost_fields() {
-        let upstream = serde_json::json!({
+    fn merged_table_prices_the_channel_litellm_does_not_carry() {
+        let litellm = serde_json::json!({
             "claude-fable-5": {
-                "input_cost_per_token": 6e-6,
-                "output_cost_per_token": 3e-5,
-                "cache_read_input_token_cost": 6e-7,
-                "litellm_provider": "anthropic",
-                "max_tokens": 64000,
-                "supports_vision": true
-            },
-            "anthropic/claude-fable-5": {
                 "input_cost_per_token": 6e-6,
                 "output_cost_per_token": 3e-5
             },
-            "mistral-large": {
-                "input_cost_per_token": 2e-6,
-                "output_cost_per_token": 6e-6
-            },
-            "o4-mini": {
-                "input_cost_per_token": 1e-6,
-                "output_cost_per_token": 4e-6
-            },
-            "claude-no-prices": { "max_tokens": 64000 },
-            "sample_spec": { "comment": "not a model" }
+            "xai/grok-4.6": {
+                "input_cost_per_token": 3e-6,
+                "output_cost_per_token": 9e-6
+            }
         })
         .to_string();
+        let models_dev = serde_json::json!({
+            "opencode-go": {"models": {
+                "deepseek-v4.1-flash": {
+                    "limit": {"context": 1000000, "output": 384000},
+                    "cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003}
+                },
+                "grok-4.6": {
+                    "limit": {"context": 500000},
+                    "cost": {"input": 2, "output": 6, "cache_read": 0.5}
+                },
+                "ox-alpha-free": {"limit": {"context": 1000000}, "cost": {}}
+            }},
+            "openrouter": {"models": {"claude-fable-5": {"cost": {"input": 9, "output": 9}}}}
+        })
+        .to_string();
+        let tables = compose_upstream(&litellm, &models_dev).expect("compose");
+        let t = build_table(EMBEDDED, Some(&tables.prices), None);
 
-        let filtered = filter_upstream(&upstream).expect("filter ok");
-        let map: HashMap<String, serde_json::Value> = serde_json::from_str(&filtered).unwrap();
-        assert!(map.contains_key("claude-fable-5"));
-        assert!(map.contains_key("anthropic/claude-fable-5"));
-        assert!(map.contains_key("o4-mini"), "o-series kept");
-        assert!(!map.contains_key("mistral-large"), "other families dropped");
-        assert!(!map.contains_key("claude-no-prices"), "priceless dropped");
-        assert!(!map.contains_key("sample_spec"));
-        // Non-cost fields are stripped.
-        let fable = map["claude-fable-5"].as_object().unwrap();
-        assert!(!fable.contains_key("litellm_provider"));
-        assert!(!fable.contains_key("max_tokens"));
-        assert!(fable.contains_key("input_cost_per_token"));
+        let flash = t.exact("deepseek-v4.1-flash").expect("channel row priced");
+        assert!(
+            (flash.input - 1.5e-7).abs() < 1e-15,
+            "per million to per token"
+        );
+        assert!(flash.cache_read_known);
+        assert!(
+            !flash.cache_create_known,
+            "a rate the source omits stays unknown"
+        );
+        assert_eq!(
+            t.exact("deepseek-flash").map(|p| p.input),
+            Some(flash.input),
+            "the relay picker id copies the canonical rate"
+        );
+        assert!(
+            t.exact("ox-alpha-free").is_none(),
+            "a row without rates is dropped"
+        );
+        assert_eq!(t.exact("xai/grok-4.6").expect("litellm row").input, 3e-6);
+        assert_eq!(
+            t.exact("grok-4.6").expect("channel spelling").input,
+            2e-6,
+            "the id a routed session reports keeps its own rate"
+        );
+        let windows = build_limits("", Some(&tables.limits), None);
+        assert_eq!(
+            windows.get("deepseek-flash").map(|l| l.context_window),
+            Some(1_000_000)
+        );
+        assert_eq!(
+            windows
+                .get("deepseek-v4.1-flash")
+                .and_then(|l| l.max_output),
+            Some(384_000)
+        );
+        assert_eq!(
+            windows.get("grok-4.6").map(|l| l.context_window),
+            Some(500_000)
+        );
+        assert!(windows.get("ox-alpha-free").is_some());
     }
 
     #[test]
