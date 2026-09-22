@@ -1,6 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ConsumptionView, type ConsumptionReport } from "@fabrials/ui";
+import { ConsumptionView, type ConsumptionReport } from "@fabrials/ai-ui";
 
 interface Settings { additional_roots: Record<string, string[]>; disabled_clients: string[] }
 interface Catalog { clients: {id: string; name: string; remote_collection: boolean}[]; settings: Settings; connections: string[] }

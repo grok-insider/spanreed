@@ -1,6 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { RoutingExplanation, RoutingPolicyForm } from "@fabrials/ui";
+import { RoutingExplanation, RoutingPolicyForm } from "@fabrials/ai-ui";
 
 import type { RoutingSnapshot } from "./contracts";
 

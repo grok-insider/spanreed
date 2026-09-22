@@ -1,4 +1,4 @@
-import { ProviderIcon } from "@fabrials/ui";
+import { ProviderIcon } from "@fabrials/ai-ui";
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 

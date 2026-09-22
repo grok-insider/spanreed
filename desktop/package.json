@@ -10,10 +10,14 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@fabrials/ui": "file:vendor/fabrials-ui",
+    "@fabrials/ai-ui": "file:vendor/fabrials-ai-ui-0.3.0",
+    "@fabrials/ui": "file:vendor/fabrials-ui-0.3.0",
     "@tauri-apps/api": "^2",
     "react": "19.2.8",
     "react-dom": "19.2.8"
+  },
+  "overrides": {
+    "@fabrials/ui": "file:vendor/fabrials-ui-0.3.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

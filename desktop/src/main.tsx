@@ -4,7 +4,8 @@ import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 import { invoke } from "@tauri-apps/api/core";
-import { ApiKeyForm, ProviderCard, ProviderIcon, WorkspaceShell, type ProviderOutput, type SharingConsent } from "@fabrials/ui";
+import { ApiKeyForm, ProviderCard, ProviderIcon, type ProviderOutput, type SharingConsent } from "@fabrials/ai-ui";
+import { DesktopShell } from "./desktop-shell";
 import { FabrialBrandMark } from "./brand-mark";
 import { DesktopWindowChrome } from "./window-chrome";
 import { AccountActions } from "./account-actions";
@@ -19,8 +20,10 @@ import { RemoteWorkspace, remoteNavigation } from "./remote-workspace";
 import { SharingControls } from "./sharing-controls";
 import { FabrialsLink } from "./fabrials-link";
 import { DeviceLogin } from "./device-login";
+import "@fabrials/ui/fonts.css";
 import "@fabrials/ui/tokens.css";
 import "@fabrials/ui/styles.css";
+import "@fabrials/ai-ui/styles.css";
 import "./desktop.css";
 
 type Consent = SharingConsent;
@@ -84,8 +87,8 @@ function App() {
   const [linkConnected,setLinkConnected] = React.useState(false);
   const workspacePicker = <label className="desktop-workspace-picker">Workspace<select aria-label="Workspace" value={mode} onChange={event => changeMode(event.target.value)}><option value="local">On this machine</option><option value="remote">ai-relay · Fabrials</option></select></label>;
   const shell = { title: "Spanreed" as const, brandMark: <FabrialBrandMark />, chrome: <DesktopWindowChrome />, onNavigate: navigate };
-  if (mode === "remote") return <WorkspaceShell {...shell} navigation={remoteNavigation} active={page} actions={workspacePicker}><RemoteWorkspace page={page}/></WorkspaceShell>;
-  return <WorkspaceShell {...shell} navigation={navigation} active={page} actions={<div className="fb-row">{workspacePicker}<button className="fb-button" disabled={busy} onClick={()=>void load(true)}>{busy?"Refreshing…":"Refresh"}</button></div>}>
+  if (mode === "remote") return <DesktopShell {...shell} navigation={remoteNavigation} active={page} actions={workspacePicker}><RemoteWorkspace page={page}/></DesktopShell>;
+  return <DesktopShell {...shell} navigation={navigation} active={page} actions={<div className="fb-row">{workspacePicker}<button className="fb-button" disabled={busy} onClick={()=>void load(true)}>{busy?"Refreshing…":"Refresh"}</button></div>}>
     {error && <p role="alert" className="fb-error">{error}</p>}{notice && <p role="status">{notice}</p>}
     {page === "overview" && <><div className="fb-heading"><h1>Your usage, at a glance</h1><p>Live limits and reset credits across your connected providers.</p></div>{!outputs.length?<div className="fb-empty"><h2>{busy?"Reading your providers…":"No usage available yet"}</h2><p className="fb-muted">Sign in through a supported CLI, then refresh. Open Providers to inspect detection.</p></div>:<div className="fb-grid">{outputs.map(output=><ProviderCard key={output.providerId} provider={output}/>)}</div>}</>}
     {page === "usage" && <LocalUsage />}
@@ -107,6 +110,6 @@ function App() {
       <SharingControls key={linkIdentity} enabled={savedConsent?.syncHistory ?? false} connected={linkConnected} sources={[...outputs.map(output=>output.providerId),...accounts.map(account=>account.id)]}/>
       <div className="desktop-settings-footer"><button className="fb-button" onClick={openHosted}>Open hosted ai-relay</button></div>
     </div></>}
-  </WorkspaceShell>;
+  </DesktopShell>;
 }
 createRoot(document.getElementById("root")!).render(<App/>);

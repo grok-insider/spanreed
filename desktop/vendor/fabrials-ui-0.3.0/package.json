@@ -1,0 +1,38 @@
+{
+  "name": "@fabrials/ui",
+  "version": "0.3.0",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./button-variants": {
+      "types": "./dist/button-variants.d.ts",
+      "import": "./dist/button-variants.js"
+    },
+    "./tokens.css": "./dist/tokens.css",
+    "./styles.css": "./dist/styles.css",
+    "./fonts.css": "./dist/fonts.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "DESIGN.md",
+    "verify.mjs",
+    "integrity.mjs"
+  ],
+  "dependencies": {
+    "@base-ui/react": "1.7.0",
+    "lucide-react": "1.40.0"
+  },
+  "peerDependencies": {
+    "react": "^19",
+    "react-dom": "^19"
+  }
+}

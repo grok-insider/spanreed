@@ -1,7 +1,7 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import type { UsageRecord as Hop } from "@fabrials/ui";
+import type { UsageRecord as Hop } from "@fabrials/ai-ui";
 function usage(record: Hop) {
   if (record.unit && record.unit !== "tokens") return record.quantity == null ? "Unknown" : `${record.quantity.toLocaleString()} ${record.unit}`;
   return `${(record.total_tokens || record.input_tokens + record.output_tokens).toLocaleString()} tokens`;

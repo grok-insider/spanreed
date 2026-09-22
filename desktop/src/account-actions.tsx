@@ -1,6 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ApiKeyFields } from "@fabrials/ui";
+import { ApiKeyFields } from "@fabrials/ai-ui";
 
 import type { AccountSummary as Account } from "./contracts";
 export function AccountActions({ account, onChanged }: { account: Account; onChanged: () => Promise<void> }) {

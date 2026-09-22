@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WorkspaceShell } from "@fabrials/ui";
+import { DesktopShell } from "../src/desktop-shell";
 import { FABRIAL_MARK_DARK, FABRIAL_MARK_LIGHT, FabrialBrandMark } from "../src/brand-mark";
 import { WindowChrome, runWindowChromeAction, type WindowChromeHost } from "../src/window-chrome";
 
@@ -16,7 +16,7 @@ function fakeHost(): WindowChromeHost & { calls: string[] } {
 
 test("brand mark is the Spanreed fabrial image, not the letter F", () => {
   const html = renderToStaticMarkup(
-    <WorkspaceShell
+    <DesktopShell
       title="Spanreed"
       navigation={[{ id: "providers", label: "Providers" }]}
       active="providers"
@@ -26,7 +26,7 @@ test("brand mark is the Spanreed fabrial image, not the letter F", () => {
       actions={<button type="button">Refresh</button>}
     >
       <p>body</p>
-    </WorkspaceShell>,
+    </DesktopShell>,
   );
   expect(html).not.toContain(">F<");
   expect(html).toContain("<img");

@@ -1,7 +1,7 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import type { HistorySample as Sample } from "@fabrials/ui";
+import type { HistorySample as Sample } from "@fabrials/ai-ui";
 
 export function HistoryPage() {
   const [rows, setRows] = React.useState<Sample[]>([]);

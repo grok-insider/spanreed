@@ -3,7 +3,7 @@ import { CodexSessionMove } from "./codex-session-move";
 import { PrivateHistory } from "./private-history";
 import { RemoteMigration } from "./remote-migration";
 import * as React from "react";
-import { SynchronizedConsumption, type ConsumptionSnapshot, ApiKeyForm, ProviderIcon, ProviderCard, SynchronizedAccounts, LinkedAccountUsage, type SynchronizedAccount, BalanceCard, ResetInventory, RoutingExplanation } from "@fabrials/ui";
+import { SynchronizedConsumption, type ConsumptionSnapshot, ApiKeyForm, ProviderIcon, ProviderCard, SynchronizedAccounts, LinkedAccountUsage, type SynchronizedAccount, BalanceCard, ResetInventory, RoutingExplanation } from "@fabrials/ai-ui";
 import { RemoteDeviceLogin } from "./remote-device-login";
 import { FabrialsLink } from "./fabrials-link";
 import { loadDashboard, boundRemote, RemoteContext, useRemote } from "./remote-api";

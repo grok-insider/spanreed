@@ -1,7 +1,7 @@
 import * as React from "react";
 import { DeviceLogin } from "./device-login";
 import { invoke } from "@tauri-apps/api/core";
-import { MigrationReviewDetails, type MigrationCandidate, type MigrationSessionView } from "@fabrials/ui";
+import { MigrationReviewDetails, type MigrationCandidate, type MigrationSessionView } from "@fabrials/ai-ui";
 
 import type { SavedSession } from "./contracts";
 
