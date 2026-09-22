@@ -96,6 +96,12 @@ export type LocalUsageSnapshot = {
     partial: boolean;
     days: Array<LocalUsageDay>;
 };
+export type LocalUsageModel = {
+    model: string;
+    requests: number;
+    tokens: number;
+    estimated_usd: number;
+};
 export type LocalUsageSnapshotV2 = {
     device: string;
     source: string;
@@ -104,6 +110,7 @@ export type LocalUsageSnapshotV2 = {
     partial: boolean;
     days: Array<LocalUsageDay>;
     period_totals: LocalUsageAggregate | null;
+    models?: Array<LocalUsageModel>;
 };
 export type LocalUsageAggregate = {
     tokens: number | null;

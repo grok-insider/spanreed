@@ -39,11 +39,17 @@ export type SynchronizedAccount = { linked_account_id: string | null, device: st
 
 export type LocalUsageSnapshot = { device: string, source: string, observed_at_ms: number, partial: boolean, days: Array<LocalUsageDay>, };
 
-export type LocalUsageSnapshotV2 = { device: string, source: string, revision: number, observed_at_ms: number, partial: boolean, days: Array<LocalUsageDay>, period_totals: LocalUsageAggregate | null, };
+export type LocalUsageSnapshotV2 = { device: string, source: string, revision: number, observed_at_ms: number, partial: boolean, days: Array<LocalUsageDay>, period_totals: LocalUsageAggregate | null,
+/**
+ * Absent on snapshots written before model totals existed.
+ */
+models?: Array<LocalUsageModel>, };
 
 export type LocalUsageAggregate = { tokens: number | null, known_usd: number, partial: boolean, };
 
 export type LocalUsageDay = { date: string, tokens: number, estimated_usd: number, };
+
+export type LocalUsageModel = { model: string, requests: number, tokens: number, estimated_usd: number, };
 
 export type PrivateEvent = { "kind": "quota", at_ms: number, output: ProviderOutput, } | { "kind": "history", sample: HistorySample, } | { "kind": "request", record: UsageRecord, };
 
@@ -95,7 +101,11 @@ unit?: string | null,
 /**
  * Amount in `unit` (character count, audio ms, image count, video ms).
  */
-quantity?: number | null, };
+quantity?: number | null,
+/**
+ * Hosted tool types from the request (`x_search`, `web_search`). Not a hop kind.
+ */
+hosted_tools?: Array<string> | null, };
 
 export type AccountScope = { environment: string, owner: string, provider: string, account: string, };
 

@@ -66,7 +66,7 @@ declare it in `src/lib.rs`.
 | `src/forecast.rs`       | Week/month Expected lines from pool-% density samples. |
 | `src/epoch.rs`          | Early weekly reset detection (gift/outage) vs scheduled rollover. |
 | `src/pool_baseline.rs`  | First-seen Weekly % per provider/week for span scaling. |
-| `src/pricing.rs`        | Model price table: embedded LiteLLM snapshot (`pricing-data.json`) + runtime-refreshed remote cache (7-day TTL) + user override; model-name matching and tiered cost math. |
+| `src/pricing.rs`        | Model price table: embedded LiteLLM snapshot (`pricing-data.json`) + runtime refresh (LiteLLM families, then models.dev for the OpenCode Go channel) cached 7 days + user override. The same refresh stores context windows in `limits-remote.json`. |
 
 ## The `Provider` trait
 
@@ -172,18 +172,22 @@ Logic is split so it's testable without network or real credentials:
   `json` / `waybar` / `help`, and asserts the SIGPIPE fix (no panic on a closed
   pipe). Keep it std-only (no extra dev-deps).
 - Pricing layers (later wins): embedded `src/pricing-data.json` → remote cache
-  `~/.cache/spanreed/pricing-remote.json` (refreshed from LiteLLM's
-  `model_prices_and_context_window.json` at most weekly by
+  `~/.cache/spanreed/pricing-remote.json` (refreshed at most weekly by
   `pricing::ensure_fresh()`, silent on failure, disabled by
-  `SPANREED_OFFLINE`) → user `~/.config/spanreed/pricing.json`. New models
-  are priced without a new binary.
+  `SPANREED_OFFLINE`) → user `~/.config/spanreed/pricing.json`. The refresh
+  merges LiteLLM's `model_prices_and_context_window.json` with the OpenCode Go
+  channel from `https://models.dev/api.json` (LiteLLM wins ids it already
+  prices). The same fetch writes context windows to
+  `~/.cache/spanreed/limits-remote.json`, overridable with
+  `~/.config/spanreed/limits.json`. New models are priced without a new binary.
 - Grok capture costs use that table (public API list: grok-4.5 $2/$0.30
   cached/$6 per MTok, ×2 above 200k prompt — same as xAI docs and OpenRouter
   `x-ai/grok-4.5`). SuperGrok `cost_in_usd_ticks` are stored but not shown.
 - The embedded snapshot is the offline fallback; refresh it occasionally with
-  `spanreed update-pricing src/pricing-data.json` (same Rust filter as the
-  runtime refresh) and commit the result (no build-time network — Nix-sandbox
-  safe). `tests/cli.rs` sets `SPANREED_OFFLINE=1` so tests/CI never fetch.
+  `spanreed update-pricing src/pricing-data.json` (same compose as the runtime
+  refresh, so the snapshot picks up the OpenCode Go channel) and commit the
+  result (no build-time network — Nix-sandbox safe). `tests/cli.rs` sets
+  `SPANREED_OFFLINE=1` so tests/CI never fetch.
 
 ## Conventions
 

@@ -90,6 +90,18 @@ pub struct LocalUsageDay {
     pub estimated_usd: f64,
 }
 
+/// One model's local-log total. Kept beside the daily rows so a dashboard can
+/// show which model the logs used without mixing those logs into relay hops.
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalUsageModel {
+    pub model: String,
+    pub requests: u64,
+    pub tokens: u64,
+    pub estimated_usd: f64,
+}
+
 /// Full replacement of one device/client projection. Empty days clear old usage.
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +115,9 @@ pub struct LocalUsageSnapshotV2 {
     pub days: Vec<LocalUsageDay>,
     #[serde(default)]
     pub period_totals: Option<LocalUsageAggregate>,
+    /// Absent on snapshots written before model totals existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<LocalUsageModel>,
 }
 
 /// Unallocated session/account totals; never assigned to invented daily requests.

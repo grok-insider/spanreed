@@ -55,8 +55,8 @@ function ConsumptionView({
                 /* @__PURE__ */ jsx("option", { value: "daily", children: "Day" }),
                 /* @__PURE__ */ jsx("option", { value: "period_totals", children: "Session / account totals" }),
                 /* @__PURE__ */ jsx("option", { value: "clients", children: "Client" }),
+                (!synchronized || report.models.length > 0) && /* @__PURE__ */ jsx("option", { value: "models", children: "Model" }),
                 !synchronized && /* @__PURE__ */ jsxs(Fragment, { children: [
-                  /* @__PURE__ */ jsx("option", { value: "models", children: "Model" }),
                   /* @__PURE__ */ jsx("option", { value: "sessions", children: "Session" }),
                   /* @__PURE__ */ jsx("option", { value: "projects", children: "Project" })
                 ] })
@@ -69,11 +69,13 @@ function ConsumptionView({
       /* @__PURE__ */ jsx("div", { className: "fb-table-wrap", children: /* @__PURE__ */ jsxs(Table, { className: "fb-table-layout", children: [
         /* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { scope: "col", children: group }),
+          group === "models" && /* @__PURE__ */ jsx("th", { scope: "col", children: "Requests" }),
           /* @__PURE__ */ jsx("th", { scope: "col", children: "Tokens" }),
           /* @__PURE__ */ jsx("th", { scope: "col", children: "Known cost" })
         ] }) }),
         /* @__PURE__ */ jsx("tbody", { children: report[group].map((row) => /* @__PURE__ */ jsxs("tr", { children: [
           /* @__PURE__ */ jsx("th", { scope: "row", style: { overflowWrap: "anywhere" }, children: row.key }),
+          group === "models" && /* @__PURE__ */ jsx("td", { children: number.format(row.records) }),
           /* @__PURE__ */ jsx("td", { children: number.format(row.tokens) }),
           /* @__PURE__ */ jsxs("td", { children: [
             money.format(row.known_usd),

@@ -8,9 +8,9 @@
     "dist/api-key-form.d.ts": "cdb7bb5f07b5f07f7fd8830ec833ebb08083cf2db92527c023d02d2fe5ce07aa",
     "dist/api-key-form.js": "4e8ed422bcdd38f400ee584b91efb4cf582d9c9968bd6ed37405ea67afb2b4bf",
     "dist/consumption.d.ts": "1ec5fa857e94c818017d7e18b0f89c0f184757e4e5c4a90156aed92f24660b32",
-    "dist/consumption.js": "ef1ab50a451cda5ad9df5ab6b081177aef861364f25717d6e54113cf9c46713c",
-    "dist/contracts.d.ts": "fd6525aec7ac9bd9ec3797553f1bfd8cb29ffcdb94f0af6d5ef2b063806e7d80",
-    "dist/contracts.source.ts": "2ec16aff7ac4c4d9208016abb7170c0c0e024113cff1f60e7354de38ff62f813",
+    "dist/consumption.js": "901165696bd245d0c614754064065e18ad480253887340dbc5fd224bf2c36e59",
+    "dist/contracts.d.ts": "346605c9072e243ff6ffbd1bd7b41934ffce2984b9a3aa22e20df5e89b1ce5ce",
+    "dist/contracts.source.ts": "2b04ce36720e9fdc23665aaf8592afc0cc027b7d66c80f85ff34f42966f84226",
     "dist/hosted-migration.d.ts": "88eab4265d6571d702609dd81a36b8fc653bc3f71b2800f532e4e46566b95015",
     "dist/hosted-migration.js": "5ce98e8b4178d4542c8196a5bb527a173138cfaebf5578845312db84280028d3",
     "dist/index.d.ts": "e54054896bff3d22d24a1e685d1b0fbbc57e40ae055d2f6fe4b5f9ae3cd6c926",
@@ -31,7 +31,7 @@
     "dist/synchronized-accounts.d.ts": "a7c485429560a4667d6bfb383306519434962adf3b4e1b2a2e4aafa8f84ff272",
     "dist/synchronized-accounts.js": "e0b22bbd7d52107cd5fb740b2d06914ef386966d3ddf2e03a9a09b0e39ff70e6",
     "dist/synchronized-consumption.d.ts": "5c2996b15d75547b8199ad30e3ed0db44eaafb681bea3db5220a92c54232b30b",
-    "dist/synchronized-consumption.js": "6f567e6c0e7ea8972507ca7e56d2b37ab05e887ccda3c5b47aac9cb69716566b",
+    "dist/synchronized-consumption.js": "a4f6c12ab880b33e64ca86b013063c85538ed76f7f8d908b6a3d57218e819024",
     "package.json": "1890c3ddd146e4b47b84eeb9f54def8dfc8062ee1eb3897f762d7ebc801b3509"
   }
 }
