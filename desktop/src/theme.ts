@@ -17,6 +17,7 @@ export function useThemePreference(onError: (message: string) => void) {
     const apply = () => {
       const dark = theme === "dark" || (theme === "system" && media.matches);
       document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.dataset.gem = "ruby";
       document.documentElement.style.colorScheme = dark ? "dark" : "light";
       if (isTauri()) void getCurrentWindow().setTheme(theme === "system" ? null : dark ? "dark" : "light")
         .catch((error) => reportError.current(`Could not update window appearance: ${String(error)}`));

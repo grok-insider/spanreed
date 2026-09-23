@@ -1,7 +1,7 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ExternalLink } from "lucide-react";
-import { Button, Card, PageHeader, SectionHeader, Tabs, TabsContent, TabsList, TabsTrigger } from "@fabrials/ui";
+import { Button, Card, PageHeader, SectionHeader, Tabs, TabsContent, TabsList, TabsTrigger, ThemeSwitcher } from "@fabrials/ui";
 import { FabrialsLink } from "./fabrials-link";
 import { MigrationPage } from "./migration";
 import { NotificationSettings } from "./notifications";
@@ -17,7 +17,6 @@ const sections = [
   { id: "sharing", label: "Sharing & sync" },
   { id: "transfer", label: "Transfer accounts" },
 ] as const;
-const themes: { id: ThemePreference; label: string }[] = [{ id: "system", label: "System" }, { id: "light", label: "Light" }, { id: "dark", label: "Dark" }];
 
 export function SettingsPage({ tab, theme, onThemeChange }: { tab: string | null; theme: ThemePreference; onThemeChange: (theme: ThemePreference) => void }) {
   const current = sections.some((section) => section.id === tab) ? tab! : "general";
@@ -33,13 +32,7 @@ export function SettingsPage({ tab, theme, onThemeChange }: { tab: string | null
       <TabsContent value="general" className="sr-stack">
         <Card className="sr-setting-card">
           <SectionHeader title="Appearance" description="Follow your system, or keep Spanreed light or dark. The window title bar follows too." />
-          <fieldset className="sr-segmented">
-            <legend className="fui-sr-only">Theme</legend>
-            {themes.map((option) => <label key={option.id}>
-              <input type="radio" name="theme" value={option.id} checked={theme === option.id} onChange={() => onThemeChange(option.id)} />
-              <span>{option.label}</span>
-            </label>)}
-          </fieldset>
+          <ThemeSwitcher value={theme} onValueChange={onThemeChange} showLabels label="Theme" />
         </Card>
         <Card className="sr-setting-card">
           <SectionHeader title="Notifications" />

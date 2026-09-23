@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Boxes, ChartColumn, CircleGauge, Plug, RefreshCw, Route as RouteIcon } from "lucide-react";
-import { Button } from "@fabrials/ui";
+import { Button, StatusDot } from "@fabrials/ui";
 import { useClock } from "@fabrials/ai-ui";
 import { DesktopShell, settingsItem, type NavGroup } from "./desktop-shell";
 import { LocalDataProvider, useLocalData } from "./local-data";
@@ -28,7 +28,7 @@ function useHashRoute() {
   const first = React.useRef(true);
   React.useEffect(() => {
     if (first.current) { first.current = false; return; }
-    document.querySelector(".fui-workspace-body")?.scrollTo(0, 0);
+    document.querySelector(".sr-main")?.scrollTo(0, 0);
     document.getElementById("main-content")?.focus({ preventScroll: true });
   }, [route.workspace, route.page]);
   return route;
@@ -50,14 +50,14 @@ function LocalWorkspace({ route, theme, onThemeChange, appError }: { route: Rout
       { page: "connect", label: "Connect", icon: Plug, badge: running ? <span className="sr-nav-dot"><span className="fui-sr-only">, proxy running</span></span> : undefined },
     ] },
   ];
-  const status = <span className="sr-status-line"><span className="sr-status-dot" data-on={running || undefined} aria-hidden />{running ? `Proxy on ${data.proxy!.bind}` : "Proxy off"}</span>;
+  const status = <StatusDot tone={running ? "success" : "neutral"} label={running ? `Proxy on ${data.proxy!.bind}` : "Proxy off"} />;
   const actions = <>
     {data.updatedAt && <span className="sr-updated">Updated {ago(data.updatedAt, now)}</span>}
     <Button variant="outline" size="sm" disabled={data.loading} onClick={() => void data.refresh()}>
       <RefreshCw aria-hidden size={14} className={data.loading ? "fui-spin" : undefined} />{data.loading ? "Refreshing…" : "Refresh"}
     </Button>
   </>;
-  return <DesktopShell route={route} groups={groups} footer={[settingsItem]} status={status} actions={actions}>
+  return <DesktopShell route={route} groups={groups} footer={[settingsItem]} status={status} actions={actions} theme={theme} onThemeChange={onThemeChange}>
     <ErrorAlert title="Couldn't update the window theme" error={appError} />
     {route.page === "overview" && <OverviewPage />}
     {route.page === "usage" && <UsagePage tab={route.tab} />}
@@ -72,6 +72,6 @@ export function App() {
   const [appError, setAppError] = React.useState<string | null>(null);
   const [theme, setTheme] = useThemePreference(setAppError);
   const route = useHashRoute();
-  if (route.workspace === "hosted") return <HostedWorkspace route={route} />;
+  if (route.workspace === "hosted") return <HostedWorkspace route={route} theme={theme} onThemeChange={setTheme} />;
   return <LocalDataProvider><LocalWorkspace route={route} theme={theme} onThemeChange={setTheme} appError={appError} /></LocalDataProvider>;
 }

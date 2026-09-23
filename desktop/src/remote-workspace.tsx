@@ -4,7 +4,7 @@ import { Boxes, ChartColumn, ChevronDown, CircleGauge, KeyRound, Plug, Plus, Ref
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
-  Input, Label, NativeSelect, PageHeader, SectionHeader, Skeleton, StatePanel, Table, Tabs, TabsContent, TabsList, TabsTrigger,
+  Input, Label, NativeSelect, PageHeader, SectionHeader, Skeleton, Stat, StatGroup, StatePanel, StatusDot, Table, Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@fabrials/ui";
 import {
   ApiKeyFields, BalanceCard, LinkedAccountUsage, ProviderCard, ProviderIcon, ResetInventory, SynchronizedAccounts, SynchronizedConsumption,
@@ -21,6 +21,7 @@ import { Done, ErrorAlert } from "./feedback";
 import { absoluteTime, ago, formatCount, providerName } from "./format";
 import { loadDashboard, boundRemote, RemoteContext, useRemote } from "./remote-api";
 import { routeHref, type Route } from "./routes";
+import type { ThemePreference } from "./theme";
 import type { AccountView, DashboardPayload, IssuedKey, KeyView, KeyPolicyRequest } from "./relay-contracts";
 import type { LinkView, RemoteOperation } from "./contracts";
 
@@ -44,7 +45,7 @@ const pageText: Record<string, [string, string]> = {
   settings: ["Settings", "Your Fabrials connection and account transfers."],
 };
 
-export function HostedWorkspace({ route }: { route: Route }) {
+export function HostedWorkspace({ route, theme, onThemeChange }: { route: Route; theme: ThemePreference; onThemeChange: (theme: ThemePreference) => void }) {
   const [data, setData] = React.useState<DashboardPayload | null>(null);
   const [linked, setLinked] = React.useState<boolean | null>(null);
   const [days, setDays] = React.useState(7);
@@ -73,13 +74,13 @@ export function HostedWorkspace({ route }: { route: Route }) {
   const onLink = (view: LinkView) => { const next = view.state === "linked"; setLinked(next); if (!next) { setData(null); setIssuedKey(null); } };
   async function mutate(operation: RemoteOperation, body: object) { await api(operation, body); await load(); }
   const [title, description] = pageText[route.page] ?? pageText.overview;
-  const status = <span className="sr-status-line"><span className="sr-status-dot" data-on={linked || undefined} aria-hidden />{linked ? `Signed in${data?.session.username ? ` as @${data.session.username}` : ""}` : "Not connected"}</span>;
+  const status = <StatusDot tone={linked ? "success" : "neutral"} label={linked ? `Signed in${data?.session.username ? ` as @${data.session.username}` : ""}` : "Not connected"} />;
   const actions = linked ? <>
     <Label className="sr-inline-label">Period<NativeSelect value={days} onChange={(event) => setDays(Number(event.target.value))}><option value={1}>Today</option><option value={7}>7 days</option><option value={30}>30 days</option></NativeSelect></Label>
     <Button variant="outline" size="sm" disabled={busy} onClick={() => void load()}><RefreshCw aria-hidden size={14} className={busy ? "fui-spin" : undefined} />{busy ? "Refreshing…" : "Refresh"}</Button>
   </> : undefined;
   const gate = linked === false && route.page !== "settings";
-  return <DesktopShell route={route} groups={groups} footer={[settingsItem]} status={status} actions={actions}>
+  return <DesktopShell route={route} groups={groups} footer={[settingsItem]} status={status} actions={actions} theme={theme} onThemeChange={onThemeChange}>
     <RemoteContext.Provider key={data?.session.owner} value={api}>
       {gate ? <PageHeader title="Hosted relay" description="Manage the accounts, keys and routing of your relay at ai.fabrials.com." /> : <PageHeader title={title} description={description} />}
       {gate ? <Card className="sr-gate">
@@ -109,7 +110,7 @@ function HostedOverview({ data }: { data: DashboardPayload }) {
     { label: "Recorded cost", value: money(data.summary.window.usd) },
   ];
   return <>
-    <div className="sr-stats">{metrics.map((metric) => <div key={metric.label} className="sr-stat"><span className="sr-stat-label">{metric.label}</span><strong className="sr-stat-value">{metric.value}</strong></div>)}</div>
+    <StatGroup>{metrics.map((metric) => <Stat key={metric.label} label={metric.label} value={metric.value} />)}</StatGroup>
     {data.accounts.length ? <section className="sr-stack"><SectionHeader title="Accounts" />
       <div className="sr-grid">{data.accounts.map((account) => <AccountCard key={account.id} account={account} sources={(data.synchronized_accounts ?? []).filter((source) => source.linked_account_id === account.id)} />)}</div>
     </section> : <StatePanel state="empty" title="No hosted accounts yet" description="Add a provider account to the hosted relay under Accounts." />}

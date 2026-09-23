@@ -75,8 +75,8 @@
             # Local UI packages must not come from the fixed-output dependency cache.
             rm -rf desktop/node_modules/@fabrials
             mkdir -p desktop/node_modules/@fabrials
-            ln -s ../../vendor/fabrials-ui-0.3.0 desktop/node_modules/@fabrials/ui
-            ln -s ../../vendor/fabrials-ai-ui-0.3.0 desktop/node_modules/@fabrials/ai-ui
+            ln -s ../../vendor/fabrials-ui-0.4.0 desktop/node_modules/@fabrials/ui
+            ln -s ../../vendor/fabrials-ai-ui-0.4.0 desktop/node_modules/@fabrials/ai-ui
             patchShebangs desktop/node_modules
             (cd desktop && bun run build)
           '';

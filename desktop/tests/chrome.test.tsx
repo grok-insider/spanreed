@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Boxes, CircleGauge } from "lucide-react";
 import { DesktopShell, settingsItem } from "../src/desktop-shell";
-import { FABRIAL_MARK_DARK, FABRIAL_MARK_LIGHT } from "../src/brand-mark";
 import { WindowChrome, runWindowChromeAction, type WindowChromeHost } from "../src/window-chrome";
 
 function fakeHost(): WindowChromeHost & { calls: string[] } {
@@ -29,11 +28,11 @@ function render(workspace: "local" | "hosted" = "local", page = "accounts") {
   );
 }
 
-test("brand mark is the Spanreed fabrial image, not the letter F", () => {
+test("brand mark is the ruby gem, not the letter F", () => {
   const html = render();
   expect(html).not.toContain(">F<");
-  expect(html).toContain(FABRIAL_MARK_DARK);
-  expect(html).toContain(FABRIAL_MARK_LIGHT);
+  expect(html).toContain("fui-gem");
+  expect(html).toContain('data-gem="ruby"');
   expect(html).toContain("Spanreed");
 });
 
@@ -48,7 +47,7 @@ test("navigation is grouped, linkable and marks the current page", () => {
   const html = render("local", "accounts");
   expect(html).toContain(">Monitor<");
   expect(html).toContain(">Set up<");
-  expect(html).toContain('href="#/local/accounts" aria-current="page"');
+  expect(html).toMatch(/href="#\/local\/accounts"[^>]*aria-current="page"|aria-current="page"[^>]*href="#\/local\/accounts"/);
   expect(html).toContain('href="#/local/overview"');
   expect(html).toContain('href="#/local/settings"');
 });
@@ -60,7 +59,7 @@ test("workspace switcher names places and keeps the page inside the chosen works
   expect(local).toMatch(/href="#\/local\/overview" aria-current="true"/);
   const hosted = render("hosted", "accounts");
   expect(hosted).toMatch(/href="#\/hosted\/overview" aria-current="true"/);
-  expect(hosted).toContain('href="#/hosted/accounts" aria-current="page"');
+  expect(hosted).toMatch(/href="#\/hosted\/accounts"[^>]*aria-current="page"/);
 });
 
 test("window chrome actions invoke minimize, maximize, and close on the host", async () => {

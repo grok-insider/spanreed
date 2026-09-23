@@ -1,6 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Badge, Button, Card, Input, Label, PageHeader, Progress, Skeleton, StatePanel, Switch } from "@fabrials/ui";
+import { Badge, Button, Card, Input, Label, Meter, PageHeader, Skeleton, StatePanel, Switch } from "@fabrials/ui";
 import { ProviderIcon } from "@fabrials/ai-ui";
 import { useLocalData } from "./local-data";
 import { Done, ErrorAlert } from "./feedback";
@@ -40,12 +40,7 @@ function RoutingCard({ policy, pool, pending, onSave }: { policy: RoutingPolicy;
           <span className="sr-account-alias">{account.alias}</span>
           <span className="fui-description">{account.plan || "Plan not reported"}</span>
         </div>
-        <div className="sr-usage-meter">
-          {account.used_pct == null ? <span className="fui-description">Limit not reported</span> : <>
-            <Progress aria-label={`${account.alias} limit used`} max={100} value={account.used_pct} />
-            <span className="sr-numeric">{Math.round(account.used_pct)}%</span>
-          </>}
-        </div>
+        {account.used_pct == null ? <span className="fui-description">Limit not reported</span> : <Meter aria-label={`${account.alias} limit used`} value={account.used_pct} max={100} format={{ style: "unit", unit: "percent", maximumFractionDigits: 0 }} />}
         <div className="sr-account-badges">
           {account.role === "next" && <Badge tone="success">Next</Badge>}
           {account.role === "active" && <Badge tone="success">Active</Badge>}

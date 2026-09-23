@@ -1,7 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Copy } from "lucide-react";
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label, NativeSelect, PageHeader, StatePanel } from "@fabrials/ui";
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label, NativeSelect, PageHeader, Snippet, StatePanel } from "@fabrials/ui";
 import { useLocalData } from "./local-data";
 import { ClientConfiguration } from "./client-configuration";
 import { ErrorAlert } from "./feedback";
@@ -11,20 +10,6 @@ import { routeHref } from "./routes";
 import type { Status } from "./contracts";
 
 const routeProviders = ["grok", "codex", "nous", "openai"];
-
-function CopyField({ label, value }: { label: string; value: string }) {
-  const input = React.useRef<HTMLInputElement>(null);
-  const [copied, setCopied] = React.useState<string | null>(null);
-  async function copy() {
-    try { await navigator.clipboard.writeText(value); setCopied("Copied"); }
-    catch { input.current?.select(); setCopied("Press Ctrl+C to copy"); }
-  }
-  return <div className="sr-copy-field">
-    <Label>{label}<Input ref={input} readOnly value={value} onFocus={(event) => event.target.select()} /></Label>
-    <Button variant="outline" onClick={() => void copy()} aria-label={`Copy ${label.toLowerCase()}`}><Copy aria-hidden size={16} />Copy</Button>
-    <span className="sr-copy-status" role="status">{copied}</span>
-  </div>;
-}
 
 export function ConnectPage() {
   const { accounts, setProxy } = useLocalData();
@@ -97,11 +82,11 @@ export function ConnectPage() {
               {providerAccounts.map((account) => <option key={account.id} value={account.alias}>Always {account.alias}</option>)}
             </NativeSelect></Label>
           </div>
-          <CopyField label="Base URL" value={endpoint} />
+          <Snippet prompt={false} label="Base URL" copyLabel="Copy base URL">{endpoint}</Snippet>
           <p className="fui-description">{providerAccounts.length
             ? "If the tool asks for an API key, enter spanreed-local. Spanreed supplies the real credentials."
             : <>No {providerName(provider)} account is added yet. <a href={routeHref({ workspace: "local", page: "accounts", tab: "add" })}>Add one</a>, or enter your own provider key in the tool.</>}</p>
-          {providerAccounts.length > 0 && <CopyField label="Check the model list" value={`curl --fail '${endpoint}/models'`} />}
+          {providerAccounts.length > 0 && <Snippet label="Check the model list" copyLabel="Copy command">{`curl --fail '${endpoint}/models'`}</Snippet>}
           {pinned ? <ClientConfiguration key={`${provider}/${pinned.alias}/${status!.bind}`} provider={provider} alias={pinned.alias} accountId={pinned.id} />
             : providerAccounts.length > 0 && <p className="fui-description">To have Spanreed write OpenCode or Grok Build settings, choose a specific account above.</p>}
         </CardContent>

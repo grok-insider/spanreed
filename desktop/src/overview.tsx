@@ -1,10 +1,10 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowRight, Check, CircleAlert, TriangleAlert } from "lucide-react";
-import { Badge, Button, Card, PageHeader, SectionHeader, Skeleton, StatePanel } from "@fabrials/ui";
-import { ProviderCard, ProviderIcon, useClock, type ConsumptionReport, type UsageRecord } from "@fabrials/ai-ui";
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Meter, PageHeader, SectionHeader, Skeleton, Stat, StatGroup, StatePanel } from "@fabrials/ui";
+import { ProviderIcon, ResetInventory, useClock, type ConsumptionReport, type MetricLine, type ProviderOutput, type UsageRecord } from "@fabrials/ai-ui";
 import { useLocalData } from "./local-data";
-import { attentionItems, formatCompact, formatCount, formatUsd, sortByUtilization } from "./format";
+import { absoluteTime, attentionItems, formatCompact, formatCount, formatUsd, relativeTime, sortByUtilization } from "./format";
 import { ErrorAlert } from "./feedback";
 import { LinkButton } from "./link-button";
 import { routeHref } from "./routes";
@@ -71,6 +71,38 @@ function NeedsAttention({ now }: { now: number }) {
   </section>;
 }
 
+function meterFormat(line: Extract<MetricLine, { type: "progress" }>): Intl.NumberFormatOptions {
+  if (line.format.kind === "dollars") return { style: "currency", currency: "USD", maximumFractionDigits: 2 };
+  if (line.format.kind === "percent") return { style: "unit", unit: "percent", maximumFractionDigits: 0 };
+  return { maximumFractionDigits: 0 };
+}
+
+function LimitCard({ provider, now }: { provider: ProviderOutput; now: number }) {
+  const lines = provider.lines.filter((line) => line.type !== "barChart" && !(provider.resetInventory && (line.label.startsWith("Reset") || line.label === "Limit reset credits")));
+  return <Card>
+    <CardHeader className="sr-card-header-row">
+      <div>
+        <CardTitle>{provider.displayName}</CardTitle>
+        <Badge>{provider.plan || "Connected"}</Badge>
+      </div>
+      <ProviderIcon provider={provider.providerId} />
+    </CardHeader>
+    <CardContent className="sr-stack">
+      {lines.map((line, index) => {
+        if (line.type === "progress") {
+          const resets = line.resetsAt ? Date.parse(line.resetsAt) : NaN;
+          return <Meter key={index} label={line.label} value={line.used} min={0} max={Math.max(line.limit, 1)} format={meterFormat(line)}
+            hint={Number.isFinite(resets) ? <time dateTime={line.resetsAt} title={absoluteTime(resets)}>Resets {relativeTime(resets, now)}</time> : undefined} />;
+        }
+        if (line.kind === "error") return <p role="status" className="sr-warning" key={index}>{line.type === "text" ? line.value : line.type === "badge" ? line.text : line.label}</p>;
+        return <div className="sr-list-row" key={index}><span className="fui-description">{line.label}</span><span>{line.type === "text" ? line.value : line.type === "badge" ? line.text : ""}</span></div>;
+      })}
+      {!lines.length && <p className="fui-description">No quota reported by this provider.</p>}
+      <ResetInventory observation={provider.resetInventory} />
+    </CardContent>
+  </Card>;
+}
+
 function RecentTotals() {
   const { signal, proxy } = useLocalData();
   const [report, setReport] = React.useState<ConsumptionReport | null>(null);
@@ -91,13 +123,9 @@ function RecentTotals() {
   ];
   return <section aria-labelledby="totals-title">
     <SectionHeader title={<span id="totals-title">Last 7 days</span>} actions={<LinkButton variant="ghost" href={routeHref({ workspace: "local", page: "usage" })}>Open Usage <ArrowRight aria-hidden size={14} /></LinkButton>} />
-    <div className="sr-stats">
-      {tiles.map((tile) => <a key={tile.label} className="sr-stat" href={routeHref({ workspace: "local", page: "usage", tab: tile.tab })}>
-        <span className="sr-stat-label">{tile.label}</span>
-        <strong className="sr-stat-value">{tile.value}</strong>
-        <span className="fui-description">{tile.note}</span>
-      </a>)}
-    </div>
+    <StatGroup>
+      {tiles.map((tile) => <Stat key={tile.label} label={tile.label} value={tile.value} hint={<a href={routeHref({ workspace: "local", page: "usage", tab: tile.tab })}>{tile.note}</a>} />)}
+    </StatGroup>
   </section>;
 }
 
@@ -114,7 +142,7 @@ export function OverviewPage() {
     {!loaded && <div className="sr-grid" aria-busy="true" aria-label="Loading limits">{[0, 1, 2].map((index) => <Skeleton key={index} className="sr-card-skeleton" />)}</div>}
     {loaded && limits.length > 0 && <section aria-labelledby="limits-title">
       <SectionHeader title={<span id="limits-title">Plan limits</span>} actions={<Badge>{limits.length} provider{limits.length === 1 ? "" : "s"}</Badge>} />
-      <div className="sr-grid">{limits.map((output) => <ProviderCard key={output.providerId} provider={output} />)}</div>
+      <div className="sr-grid">{limits.map((output) => <LimitCard key={output.providerId} provider={output} now={now} />)}</div>
     </section>}
     {loaded && !firstRun && !limits.length && !error && <StatePanel state="empty" title="No limits reported yet"
       description="Your accounts are connected, but no provider has reported a limit. Refresh after using one of your tools."
