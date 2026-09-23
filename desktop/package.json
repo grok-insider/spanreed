@@ -6,14 +6,20 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test": "bun test tests/chrome.test.tsx tests/tauri-window-config.test.ts tests/linux-app-id.test.ts",
+    "test": "bun test ./tests",
+    "check:vendor": "node vendor/fabrials-ui-0.3.0/verify.mjs vendor/fabrials-ui-0.3.0 vendor/fabrials-ai-ui-0.3.0",
     "tauri": "tauri"
   },
   "dependencies": {
-    "@fabrials/ui": "file:vendor/fabrials-ui",
+    "@fabrials/ai-ui": "file:vendor/fabrials-ai-ui-0.3.0",
+    "@fabrials/ui": "file:vendor/fabrials-ui-0.3.0",
     "@tauri-apps/api": "^2",
+    "lucide-react": "1.40.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
+  },
+  "overrides": {
+    "@fabrials/ui": "file:vendor/fabrials-ui-0.3.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

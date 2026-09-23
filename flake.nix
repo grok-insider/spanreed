@@ -32,8 +32,10 @@
           # Keep source builds independent from local node_modules, target and dist.
           source = lib.cleanSourceWith {
             src = ./.;
+            # Vendored UI packages ship their own dist; only the renderer build output is excluded.
             filter = path: type:
-              !(builtins.elem (builtins.baseNameOf path) [ "target" "node_modules" "dist" ".git" ]);
+              !(builtins.elem (builtins.baseNameOf path) [ "target" "node_modules" ".git" ])
+              && lib.removePrefix "${toString ./.}/" (toString path) != "desktop/dist";
           };
           nodeModules = pkgs.stdenvNoCC.mkDerivation {
             pname = "spanreed-desktop-node-modules";
@@ -50,7 +52,7 @@
               bun install --frozen-lockfile --ignore-scripts --no-progress --cpu '*' --os linux
             '';
             installPhase = ''
-              rm -rf node_modules/@fabrials/ui
+              rm -rf node_modules/@fabrials
               cp -R node_modules "$out"
             '';
             outputHashMode = "recursive";
@@ -70,9 +72,11 @@
           preBuild = ''
             cp -R ${nodeModules} desktop/node_modules
             chmod -R u+w desktop/node_modules
-            # Local UI source must not come from the fixed-output dependency cache.
-            rm -rf desktop/node_modules/@fabrials/ui
-            ln -s ../../vendor/fabrials-ui desktop/node_modules/@fabrials/ui
+            # Local UI packages must not come from the fixed-output dependency cache.
+            rm -rf desktop/node_modules/@fabrials
+            mkdir -p desktop/node_modules/@fabrials
+            ln -s ../../vendor/fabrials-ui-0.3.0 desktop/node_modules/@fabrials/ui
+            ln -s ../../vendor/fabrials-ai-ui-0.3.0 desktop/node_modules/@fabrials/ai-ui
             patchShebangs desktop/node_modules
             (cd desktop && bun run build)
           '';

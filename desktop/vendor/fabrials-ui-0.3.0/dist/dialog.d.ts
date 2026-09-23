@@ -1,0 +1,37 @@
+import type { ComponentProps } from "react";
+import { Dialog as BaseDialog } from "@base-ui/react/dialog";
+import { AlertDialog as BaseAlertDialog } from "@base-ui/react/alert-dialog";
+import { Button } from "./controls";
+import { type StyledProps } from "./shared";
+export declare const Dialog: typeof BaseDialog.Root;
+export declare const DialogTrigger: BaseDialog.Trigger;
+export declare const DialogClose: import("react").ForwardRefExoticComponent<Omit<import("@base-ui/react").AlertDialogCloseProps, "ref"> & import("react").RefAttributes<HTMLButtonElement>>;
+export type DialogContentProps = StyledProps<BaseDialog.Popup.Props> & {
+    closeLabel?: string;
+    showCloseButton?: boolean;
+    placement?: "center" | "start" | "end";
+};
+export declare function DialogContent({ className, children, closeLabel, showCloseButton, placement, ...props }: DialogContentProps): import("react").JSX.Element;
+export declare function DialogTitle({ className, ...props }: StyledProps<BaseDialog.Title.Props>): import("react").JSX.Element;
+export declare function DialogDescription({ className, ...props }: StyledProps<BaseDialog.Description.Props>): import("react").JSX.Element;
+export declare function DialogHeader({ className, ...props }: ComponentProps<"div">): import("react").JSX.Element;
+export declare function DialogFooter({ className, ...props }: ComponentProps<"div">): import("react").JSX.Element;
+export declare const Sheet: typeof BaseDialog.Root;
+export declare const SheetTrigger: BaseDialog.Trigger;
+export declare const SheetClose: import("react").ForwardRefExoticComponent<Omit<import("@base-ui/react").AlertDialogCloseProps, "ref"> & import("react").RefAttributes<HTMLButtonElement>>;
+export declare const SheetHeader: typeof DialogHeader;
+export declare const SheetTitle: typeof DialogTitle;
+export declare const SheetDescription: typeof DialogDescription;
+export declare function SheetContent({ side, ...props }: Omit<DialogContentProps, "placement"> & {
+    side?: "left" | "right";
+}): import("react").JSX.Element;
+export declare const AlertDialog: typeof BaseAlertDialog.Root;
+export declare const AlertDialogTrigger: BaseAlertDialog.Trigger;
+export declare const AlertDialogClose: import("react").ForwardRefExoticComponent<Omit<import("@base-ui/react").AlertDialogCloseProps, "ref"> & import("react").RefAttributes<HTMLButtonElement>>;
+export declare const AlertDialogHeader: typeof DialogHeader;
+export declare const AlertDialogFooter: typeof DialogFooter;
+export declare const AlertDialogAction: typeof Button;
+export declare function AlertDialogCancel({ variant, size, ...props }: StyledProps<BaseAlertDialog.Close.Props> & Pick<ComponentProps<typeof Button>, "variant" | "size">): import("react").JSX.Element;
+export declare function AlertDialogContent({ className, ...props }: StyledProps<BaseAlertDialog.Popup.Props>): import("react").JSX.Element;
+export declare function AlertDialogTitle({ className, ...props }: StyledProps<BaseAlertDialog.Title.Props>): import("react").JSX.Element;
+export declare function AlertDialogDescription({ className, ...props }: StyledProps<BaseAlertDialog.Description.Props>): import("react").JSX.Element;
