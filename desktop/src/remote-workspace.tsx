@@ -22,7 +22,7 @@ import { absoluteTime, ago, formatCount, providerName } from "./format";
 import { loadDashboard, boundRemote, RemoteContext, useRemote } from "./remote-api";
 import { routeHref, type Route } from "./routes";
 import type { ThemePreference } from "./theme";
-import type { AccountView, DashboardPayload, IssuedKey, KeyView, KeyPolicyRequest } from "./relay-contracts";
+import type { AccountView, DashboardPayload, IssuedKey, KeyPolicyRequest, KeyView, SteerProviderView } from "./relay-contracts";
 import type { LinkView, RemoteOperation } from "./contracts";
 
 const money = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(value);
@@ -238,20 +238,33 @@ function HostedAccounts({ data, mutate, reload }: { data: DashboardPayload; muta
   </>;
 }
 
-function HostedRouting({ data, mutate }: { data: DashboardPayload; mutate: Mutate }) {
-  if (!data.steering.length) return <StatePanel state="empty" title="Nothing to route yet" description="Add accounts to the hosted relay first." />;
-  return <>{data.steering.map((pool) => <Card key={pool.provider} className="sr-flush">
+function HostedRoutingCard({ pool, mutate }: { pool: SteerProviderView; mutate: Mutate }) {
+  const name = providerName(pool.provider);
+  return <Card className="sr-flush">
     <header className="sr-provider-header">
-      <ProviderIcon provider={pool.provider} size={20} /><h2>{providerName(pool.provider)}</h2>
-      <Badge tone={pool.enabled ? "success" : "neutral"}>{pool.enabled ? `Routing on · skips at ${pool.exhausted_pct}%` : "Routing off"}</Badge>
+      <ProviderIcon provider={pool.provider} size={20} /><h2>{name}</h2>
+      <Badge tone={pool.enabled ? "success" : "neutral"}>{pool.enabled ? "Routing on" : "Routing off"}</Badge>
       <Action label={pool.enabled ? "Turn off" : "Turn on"} run={() => mutate("setAutosteer", { provider: pool.provider, on: !pool.enabled })} />
     </header>
+    <div className="sr-routing-body">
+      <p className="fui-description">{pool.enabled
+        ? `The next request that doesn't name an account goes to the best ${name} account that is below the threshold.`
+        : `Requests that don't name an account use the active ${name} account.`}</p>
+      <Label>Skip an account at (% of its limit)
+        <Input type="number" min="1" max="100" step="any" readOnly value={String(pool.exhausted_pct)} />
+      </Label>
+    </div>
     <ol className="sr-account-list">{pool.queue.map((account) => <li key={account.id} className="sr-account-row">
       <div className="sr-account-main"><span className="sr-account-alias">{account.alias}</span><span className="fui-description">{account.plan ?? "Plan not reported"}</span></div>
       <span className="sr-numeric">{account.used_pct == null ? "—" : `${account.used_pct}%`}</span>
       <div className="sr-account-badges">{account.active && <Badge tone="success">Active</Badge>}{account.exhausted && <Badge tone="warning">Skipped</Badge>}</div>
     </li>)}</ol>
-  </Card>)}</>;
+  </Card>;
+}
+
+function HostedRouting({ data, mutate }: { data: DashboardPayload; mutate: Mutate }) {
+  if (!data.steering.length) return <StatePanel state="empty" title="Nothing to route yet" description="Add accounts to the hosted relay first." />;
+  return <>{data.steering.map((pool) => <HostedRoutingCard key={`${pool.provider}:${pool.exhausted_pct}`} pool={pool} mutate={mutate} />)}</>;
 }
 
 function HostedKeys({ data, issuedKey, onIssued, reload }: { data: DashboardPayload; issuedKey: string | null; onIssued: (key: string | null) => void; reload: () => Promise<void> }) {

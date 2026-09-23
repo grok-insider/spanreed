@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ProviderOutput } from "@fabrials/ai-ui";
-import { ago, attentionItems, duration, relativeTime, sortByUtilization, utilization } from "../src/format";
+import { ago, attentionItems, duration, publicationSchedule, relativeTime, sortByUtilization, utilization } from "../src/format";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -49,6 +49,20 @@ test("needs attention lists errors first, then high limits and expiring reset cr
   ]);
   expect(items[0].detail).toBe("Run `gh auth login` to sign in again.");
   expect(items[1].detail).toBe("Resets in 1 d 14 h");
+});
+
+test("publication status does not treat an inactive timer as active", () => {
+  expect(publicationSchedule(undefined)).toBe("loading");
+  expect(publicationSchedule("systemd-user (spanreed-share.timer: inactive); last shared: never")).toBe("off");
+  expect(publicationSchedule("systemd-user (spanreed-share.timer: active, daily 23:00 Europe/Madrid + login catch-up); last shared 2026-09-22")).toBe("on");
+  expect(publicationSchedule("systemd-user (spanreed-share.timer: activating, daily 23:00 Europe/Madrid + login catch-up); last shared: never")).toBe("on");
+  expect(publicationSchedule("launchd (net.grokinsider.spanreed-share: not installed); last shared: never")).toBe("off");
+  expect(publicationSchedule("launchd (net.grokinsider.spanreed-share: plist present, not loaded); last shared: never")).toBe("off");
+  expect(publicationSchedule("launchd (net.grokinsider.spanreed-share: loaded, daily 23:00 local + RunAtLoad ≈ Europe/Madrid); last shared: never")).toBe("on");
+  expect(publicationSchedule("windows-task (SpanreedShare: missing); last shared: never")).toBe("off");
+  expect(publicationSchedule("windows-task (SpanreedShare: Status: Ready, daily 23:00 local + logon catch-up ≈ Europe/Madrid); last shared: never")).toBe("on");
+  expect(publicationSchedule("systemd-user (systemctl missing; spanreed-share.timer); last shared: never")).toBe("unknown");
+  expect(publicationSchedule("share schedule unsupported on this OS; last shared: never")).toBe("unknown");
 });
 
 test("stale reset credit readings are not reported as expiring", () => {

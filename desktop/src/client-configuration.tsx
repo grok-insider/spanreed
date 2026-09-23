@@ -1,6 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Button, Input, Label, NativeSelect } from "@fabrials/ui";
+import { Button, Label, NativeSelect } from "@fabrials/ui";
 import { Done, ErrorAlert } from "./feedback";
 import { useModelCatalog } from "./models";
 import type { Preview } from "./contracts";
@@ -16,13 +16,14 @@ export function ClientConfiguration({ provider, alias, accountId }: { provider: 
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
-  const { catalog } = useModelCatalog(client === "opencode" ? accountId : null);
-  const needsModel = client === "opencode" && operation !== "remove";
+  const needsModel = client === "grok" || operation !== "remove";
+  const { catalog, error: catalogError } = useModelCatalog(needsModel ? accountId : null);
+  React.useEffect(() => { setModel(""); setReview(null); }, [accountId, client]);
   async function preview() {
     setBusy(true); setError(null); setNotice(null); setReview(null);
     try {
       const command = client === "grok" ? "preview_grok_configuration" : operation === "remove" ? "preview_opencode_remove" : operation === "update" ? "preview_opencode_update" : "preview_opencode_configuration";
-      setReview(await invoke<Preview>(command, client === "grok" ? { alias } : { provider, alias, model: model.trim() }));
+      setReview(await invoke<Preview>(command, client === "grok" ? { alias, model: model.trim() } : { provider, alias, model: model.trim() }));
     } catch (error) { setError(String(error)); }
     finally { setBusy(false); }
   }
@@ -32,7 +33,7 @@ export function ClientConfiguration({ provider, alias, accountId }: { provider: 
     try {
       const backup = await invoke<string | null>("apply_client_configuration", { id: review.id });
       const instruction = review.operation === "remove" ? "Connection removed. Restart OpenCode to refresh its providers."
-        : review.client === "grok" ? "Grok Build endpoint saved. Start a new Grok session to use this account. Other endpoint overrides may take precedence."
+        : review.client === "grok" ? `Grok Build now uses this account${model.trim() ? ` and ${model.trim()}` : ""}. Start a new Grok session. Other endpoint overrides may take precedence.`
         : `Connection ${review.operation === "update" ? "updated" : "added"}. Restart OpenCode and pick ${review.providerId}/${model.trim()} in /models.`;
       setNotice([...review.warnings, instruction, backup ? `Your previous file was backed up to ${backup}.` : ""].filter(Boolean).join(" "));
       setReview(null);
@@ -50,15 +51,16 @@ export function ClientConfiguration({ provider, alias, accountId }: { provider: 
         <option value="create">Add a connection</option><option value="update">Update the existing connection</option><option value="remove">Remove the connection</option>
       </NativeSelect></Label>}
     </div>
-    <p className="fui-description">{client === "grok" ? "Points Grok Build's chat endpoint at this account. Model settings and TOML comments are kept."
+    <p className="fui-description">{client === "grok" ? "Points Grok Build's chat endpoint at this account and sets the model you choose as its default. Other settings and TOML comments are kept."
       : operation === "remove" ? "Removes the connection Spanreed added. Change any default model that uses it first."
-      : operation === "update" ? "Refreshes the address and model list of the connection Spanreed added. Your default model stays as it is."
+      : operation === "update" ? "Refreshes the address and model of the connection Spanreed added. Your default model stays as it is."
       : "Adds a separate provider for this account. Your default model stays as it is."}</p>
     {needsModel && (catalog?.models.length
-      ? <Label>Model<NativeSelect value={model} disabled={busy || !!review} onChange={(event) => { setModel(event.target.value); setNotice(null); }}>
+      ? <Label>Model<NativeSelect value={catalog.models.includes(model) ? model : ""} disabled={busy || !!review} onChange={(event) => { setModel(event.target.value); setNotice(null); }}>
           <option value="">Choose a model</option>{catalog.models.map((id) => <option key={id} value={id}>{id}</option>)}
         </NativeSelect></Label>
-      : <Label>Model ID<Input value={model} disabled={busy || !!review} maxLength={256} placeholder="For example grok-4.5" onChange={(event) => { setModel(event.target.value); setNotice(null); }} /></Label>)}
+      : !catalogError && <p className="fui-description">{catalog ? "This account hasn't reported any models yet. Check it under Accounts, then come back and choose one." : "Reading this account's models…"}</p>)}
+    {catalogError && <ErrorAlert title="Couldn't read the model list" error={catalogError} />}
     <ErrorAlert title="Couldn't prepare the change" error={error} />
     <Done>{notice}</Done>
     {!review ? <div className="fui-actions"><Button variant="outline" disabled={busy || (needsModel && !model.trim())} onClick={() => void preview()}>{busy ? "Preparing…" : "Review change"}</Button></div>

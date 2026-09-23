@@ -43,6 +43,16 @@ const providerNames: Record<string, string> = {
   grok: "SuperGrok", codex: "Codex", nous: "Nous", openai: "OpenAI API", claude: "Claude", copilot: "Copilot",
   "opencode-go": "OpenCode Go", "jetbrains-ai-assistant": "JetBrains AI", zai: "Z.ai",
 };
+/** Whether the publication timer is installed, without the raw scheduler string. */
+export function publicationSchedule(schedule: string | null | undefined): "loading" | "on" | "off" | "unknown" {
+  if (schedule == null) return "loading";
+  const text = schedule.split(";")[0]?.toLowerCase() ?? "";
+  if (text.includes("unsupported") || text.includes("not supported") || text.includes("systemctl missing")) return "unknown";
+  if (/:\s*(inactive|deactivating|failed)\b/.test(text) || text.includes("not installed") || text.includes("not loaded") || /:\s*missing\b/.test(text)) return "off";
+  if (/:\s*(active|activating)\b/.test(text) || text.includes(": loaded") || (text.includes("windows-task") && !text.includes("missing"))) return "on";
+  return "unknown";
+}
+
 export function providerName(id: string) {
   return providerNames[id] ?? (id ? id[0].toUpperCase() + id.slice(1) : id);
 }

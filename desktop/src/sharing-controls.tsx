@@ -6,7 +6,7 @@ import { PrivateHistory } from "./private-history";
 import { useLocalData } from "./local-data";
 import { Done, ErrorAlert } from "./feedback";
 import { LinkButton } from "./link-button";
-import { absoluteTime, providerName } from "./format";
+import { absoluteTime, providerName, publicationSchedule } from "./format";
 import { routeHref } from "./routes";
 import type { PublicationStatus, SyncSettings, SyncStatus } from "./contracts";
 
@@ -29,15 +29,20 @@ function Publication({ linked }: { linked: boolean }) {
   const load = React.useCallback(() => invoke<PublicationStatus>("publication_status").then(setStatus), []);
   React.useEffect(() => { void load().catch(() => setStatus(null)); }, [load]);
   const perform = (command: string, args?: Record<string, unknown>) => run(async () => { const message = await invoke<string>(command, args); await load(); return typeof message === "string" ? message : "Saved."; });
+  const publishing = publicationSchedule(status?.schedule);
+  const daily = publishing === "on"
+    ? "On. Publishes once a day at 23:00 Europe/Madrid, and catches up if this computer was off."
+    : publishing === "off" ? "Off." : publishing === "unknown" ? "Not available on this computer." : "Checking…";
   return <div className="sr-subpanel">
     <dl className="sr-facts">
       <dt>Last published</dt><dd>{status?.lastSharedDay ?? "Never"}</dd>
-      <dt>Schedule</dt><dd className="sr-muted-code">{status?.schedule ?? "Unknown"}</dd>
+      <dt>Daily publishing</dt><dd>{daily}</dd>
     </dl>
     <div className="fui-actions">
       <Button size="sm" disabled={busy || !linked} onClick={() => void perform("publish_metrics")}>Publish now</Button>
-      <Button size="sm" variant="outline" disabled={busy} onClick={() => void perform("set_publication_schedule", { enabled: true })}>Publish daily</Button>
-      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void perform("set_publication_schedule", { enabled: false })}>Stop daily publishing</Button>
+      {publishing === "on"
+        ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => void perform("set_publication_schedule", { enabled: false })}>Stop daily publishing</Button>
+        : <Button size="sm" variant="outline" disabled={busy || publishing === "loading"} onClick={() => void perform("set_publication_schedule", { enabled: true })}>Publish daily</Button>}
     </div>
     <ErrorAlert title="Publishing didn't work" error={error} />
     <Done>{notice}</Done>

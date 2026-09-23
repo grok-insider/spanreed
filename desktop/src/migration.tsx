@@ -62,7 +62,7 @@ export function MigrationPage() {
     <ErrorAlert title="Transfer didn't work" error={error} />
     {!session ? <>
       <Card>
-        <CardHeader><CardTitle>Pair with a hosted relay</CardTitle><CardDescription>In the hosted relay, open <strong>Migration</strong> and create an invitation. Paste its session ID and secret here.</CardDescription></CardHeader>
+        <CardHeader><CardTitle>Pair with a hosted relay</CardTitle><CardDescription>In the hosted relay, open Spanreed and choose the <strong>Account migration</strong> tab, then create an invitation. Paste its session ID and secret here.</CardDescription></CardHeader>
         <CardContent>
           <form className="sr-form" onSubmit={(event) => {
             event.preventDefault();

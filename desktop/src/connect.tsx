@@ -48,6 +48,7 @@ export function ConnectPage() {
   const running = status?.state === "running";
   const providerAccounts = accounts.filter((account) => account.provider === provider);
   const pinned = providerAccounts.find((account) => account.alias === alias);
+  const setupAccount = pinned ?? providerAccounts.find((account) => account.active);
   const suffix = `${pinned ? `/acct/${pinned.alias}` : ""}${provider === "grok" ? "" : `/${provider}`}/v1`;
   const endpoint = status ? `http://${status.bind}${suffix}` : "";
   const state = !status ? <Badge>Checking…</Badge> : running ? <Badge tone="success">Running</Badge> : status.state === "stopping" ? <Badge tone="warning">Stopping</Badge> : <Badge>Stopped</Badge>;
@@ -87,8 +88,8 @@ export function ConnectPage() {
             ? "If the tool asks for an API key, enter spanreed-local. Spanreed supplies the real credentials."
             : <>No {providerName(provider)} account is added yet. <a href={routeHref({ workspace: "local", page: "accounts", tab: "add" })}>Add one</a>, or enter your own provider key in the tool.</>}</p>
           {providerAccounts.length > 0 && <Snippet label="Check the model list" copyLabel="Copy command">{`curl --fail '${endpoint}/models'`}</Snippet>}
-          {pinned ? <ClientConfiguration key={`${provider}/${pinned.alias}/${status!.bind}`} provider={provider} alias={pinned.alias} accountId={pinned.id} />
-            : providerAccounts.length > 0 && <p className="fui-description">To have Spanreed write OpenCode or Grok Build settings, choose a specific account above.</p>}
+          {setupAccount ? <ClientConfiguration key={`${provider}/${setupAccount.alias}/${status!.bind}`} provider={provider} alias={setupAccount.alias} accountId={setupAccount.id} />
+            : providerAccounts.length > 0 && <p className="fui-description">No active {providerName(provider)} account yet. Choose <strong>Always</strong> for an account above, or make one active under Accounts, to write OpenCode or Grok Build settings.</p>}
         </CardContent>
       </Card>}
     {!accounts.length && <p className="fui-description">Tip: routing and pinning need accounts added in Spanreed. <LinkButton variant="link" size="sm" href={routeHref({ workspace: "local", page: "accounts", tab: "add" })}>Add account</LinkButton></p>}
