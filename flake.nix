@@ -57,7 +57,7 @@
             '';
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-PwGNtq0k/gx+xCs8YudQdlBgAYdVGnKJgwjZFL7xZ24=";
+            outputHash = "sha256-1nYRYZo2YPP0/A78GFlPFWDtSHKNBrgWG2lY0+j58nk=";
           };
         in pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed-desktop";
