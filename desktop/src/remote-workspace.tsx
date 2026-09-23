@@ -4,11 +4,11 @@ import { Boxes, ChartColumn, ChevronDown, CircleGauge, KeyRound, Plug, Plus, Ref
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
-  Input, Label, NativeSelect, PageHeader, SectionHeader, Skeleton, Stat, StatGroup, StatePanel, StatusDot, Table, Tabs, TabsContent, TabsList, TabsTrigger,
+  Input, Label, Meter, NativeSelect, PageHeader, SectionHeader, Skeleton, Stat, StatGroup, StatePanel, StatusDot, Table, Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@fabrials/ui";
 import {
-  ApiKeyFields, BalanceCard, LinkedAccountUsage, ProviderCard, ProviderIcon, ResetInventory, SynchronizedAccounts, SynchronizedConsumption,
-  useClock, type ConsumptionSnapshot, type SynchronizedAccount,
+  ApiKeyFields, BalanceCard, LinkedAccountUsage, ProviderIcon, ResetInventory, SynchronizedAccounts, SynchronizedConsumption,
+  useClock, type ConsumptionSnapshot, type MetricLine, type ProviderOutput, type SynchronizedAccount,
 } from "@fabrials/ai-ui";
 import { HostedClientConfiguration } from "./hosted-client-configuration";
 import { CodexSessionMove } from "./codex-session-move";
@@ -18,7 +18,7 @@ import { RemoteDeviceLogin } from "./remote-device-login";
 import { FabrialsLink } from "./fabrials-link";
 import { DesktopShell, settingsItem, type NavGroup } from "./desktop-shell";
 import { Done, ErrorAlert } from "./feedback";
-import { absoluteTime, ago, formatCount, providerName } from "./format";
+import { absoluteTime, ago, formatCount, providerName, relativeTime } from "./format";
 import { loadDashboard, boundRemote, RemoteContext, useRemote } from "./remote-api";
 import { routeHref, type Route } from "./routes";
 import type { ThemePreference } from "./theme";
@@ -138,7 +138,32 @@ function HostedUsage({ tab, data }: { tab: string | null; data: DashboardPayload
   </Tabs>;
 }
 
+function meterFormat(line: Extract<MetricLine, { type: "progress" }>): Intl.NumberFormatOptions {
+  if (line.format.kind === "dollars") return { style: "currency", currency: "USD", maximumFractionDigits: 2 };
+  if (line.format.kind === "percent") return { style: "unit", unit: "percent", maximumFractionDigits: 0 };
+  return { maximumFractionDigits: 0 };
+}
+
+function HostedQuota({ provider, now }: { provider: ProviderOutput; now: number }) {
+  const lines = provider.lines.filter((line) => line.type !== "barChart" && !(provider.resetInventory && (line.label.startsWith("Reset") || line.label === "Limit reset credits")));
+  return <div className="sr-stack">
+    {lines.map((line, index) => {
+      if (line.type === "progress") {
+        const resets = line.resetsAt ? Date.parse(line.resetsAt) : NaN;
+        return <Meter key={index} label={line.label} value={line.used} min={0} max={Math.max(line.limit, 1)} format={meterFormat(line)}
+          hint={Number.isFinite(resets) ? <time dateTime={line.resetsAt} title={absoluteTime(resets)}>Resets {relativeTime(resets, now)}</time> : undefined} />;
+      }
+      if (line.kind === "error") return <p role="status" className="sr-warning" key={index}>{line.type === "text" ? line.value : line.type === "badge" ? line.text : line.label}</p>;
+      return <div className="sr-list-row" key={index}><span className="fui-description">{line.label}</span><span>{line.type === "text" ? line.value : line.type === "badge" ? line.text : ""}</span></div>;
+    })}
+    {!lines.length && <p className="fui-description">No quota reported by this provider.</p>}
+  </div>;
+}
+
 function AccountCard({ account, sources, children }: { account: AccountView; sources: SynchronizedAccount[]; children?: React.ReactNode }) {
+  const now = useClock() ?? Date.now();
+  const resetsAt = account.resets_at;
+  const resets = resetsAt ? Date.parse(resetsAt) : NaN;
   return <Card className="sr-flush">
     <header className="sr-provider-header">
       <ProviderIcon provider={account.provider || account.id.split("/")[0]} size={20} />
@@ -148,7 +173,7 @@ function AccountCard({ account, sources, children }: { account: AccountView; sou
       {account.needs_reauth && <Badge tone="danger">Sign in again</Badge>}
     </header>
     <div className="sr-hosted-account">
-      {account.usage_output ? <ProviderCard provider={account.usage_output} /> : <p className="fui-description">{account.used_pct == null ? "Limit not reported." : `${account.used_pct}% used.`}{account.resets_at ? ` Resets ${absoluteTime(Date.parse(account.resets_at))}.` : ""}</p>}
+      {account.usage_output ? <HostedQuota provider={account.usage_output} now={now} /> : <p className="fui-description">{account.used_pct == null ? "Limit not reported." : `${account.used_pct}% used.`}{Number.isFinite(resets) ? <> <time dateTime={resetsAt ?? undefined} title={absoluteTime(resets)}>Resets {relativeTime(resets, now)}</time></> : null}</p>}
       <LinkedAccountUsage accounts={sources} />
       <ResetInventory observation={account.reset_inventory} />
       <BalanceCard observation={account.balance} />
