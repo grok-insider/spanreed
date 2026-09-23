@@ -279,9 +279,6 @@ fn validate_managed_connection(value: &Value, provider: &str, alias: &str) -> Re
     }
     Ok(())
 }
-fn prepare_grok(path: PathBuf, bind: &str, alias: &str) -> Result<Pending, String> {
-    prepare_grok_change(path, bind, alias, None)
-}
 fn prepare_grok_change(
     path: PathBuf,
     bind: &str,
@@ -778,7 +775,7 @@ mod tests {
         let path = root.join("config.toml");
         let original = "# user configuration\n[models]\ndefault = \"keep-model\" # keep model\n[endpoints]\n# endpoint comment\ncli_chat_proxy_base_url = \"https://example.invalid/v1\" # preserve this\ndeployment_key = \"synthetic-secret\"\n";
         std::fs::write(&path, original).unwrap();
-        let plan = prepare_grok(path.clone(), "[::1]:18736", "work").unwrap();
+        let plan = prepare_grok_change(path.clone(), "[::1]:18736", "work", None).unwrap();
         assert_eq!(plan.view.client, ConfigurationClient::Grok);
         assert!(!serde_json::to_string(&plan.view)
             .unwrap()
@@ -807,7 +804,7 @@ mod tests {
             document["endpoints"]["cli_chat_proxy_base_url"].as_str(),
             Some("http://[::1]:18736/acct/work/v1")
         );
-        assert!(prepare_grok(path.clone(), "[::1]:18736", "work").is_err());
+        assert!(prepare_grok_change(path.clone(), "[::1]:18736", "work", None).is_err());
         let with_model =
             prepare_grok_change(path.clone(), "[::1]:18736", "work", Some("grok-4.5")).unwrap();
         assert_eq!(with_model.view.addition["models"]["default"], "grok-4.5");
@@ -825,9 +822,9 @@ mod tests {
         );
         assert!(prepare_grok_change(path.clone(), "[::1]:18736", "work", Some(" bad")).is_err());
         std::fs::write(&path, "endpoints = 42").unwrap();
-        assert!(prepare_grok(path.clone(), "127.0.0.1:18736", "work").is_err());
+        assert!(prepare_grok_change(path.clone(), "127.0.0.1:18736", "work", None).is_err());
         std::fs::write(&path, "[invalid").unwrap();
-        assert!(prepare_grok(path, "127.0.0.1:18736", "work").is_err());
+        assert!(prepare_grok_change(path, "127.0.0.1:18736", "work", None).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
