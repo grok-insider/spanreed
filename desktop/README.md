@@ -2,26 +2,45 @@
 
 Tauri 2 hosts the React interface. The renderer receives usage, account metadata
 and explicit sharing preferences through native commands; provider credentials
-stay in Rust. IBM Plex Sans and the React components come from `@fabrials/ui`.
+stay in Rust. Controls, tokens and IBM Plex Sans come from `@fabrials/ui`;
+provider, quota, consumption and migration views come from `@fabrials/ai-ui`.
+Both are generated distributions under `vendor/fabrials-ui-<version>` and
+`vendor/fabrials-ai-ui-<version>`. Regenerate them from the fabrials-ui
+repository with `bun run vendor spanreed --write`; never edit them by hand.
+`bun run check:vendor` verifies their manifests. The unversioned
+`vendor/fabrials-ui` copy is kept only for the Rust contract drift tests.
 
-The desktop shell uses the available window width. Settings switches between
-one, two and three columns; synchronized history spans the full content area.
-Navigation remains reachable while scrolling, and narrow windows use a
-horizontally scrollable navigation strip. Tables scroll inside their own region.
-Desktop-specific layout is in `src/desktop.css`; colors and components still
-come from the shared UI package.
+The app has two workspaces, picked at the top of the sidebar: **This computer**
+and **Hosted relay** (ai-relay at ai.fabrials.com). Both use the same sections:
 
-Settings → Appearance updates both the renderer color scheme and Tauri's native
-window theme. On Linux this updates the GTK title bar, including after restarting
-with a saved Light or Dark preference. System resets the native theme override.
-The renderer receives only `core:window:allow-set-theme` in addition to the
+| Section | What it answers |
+| --- | --- |
+| Overview | Which limit runs out first, what needs attention, first-run checklist |
+| Usage | Consumption from local tool logs, limit history, proxied requests and usage sources (tabs) |
+| Accounts | Added accounts by provider, one Add account menu, models per account, tools detected on this computer |
+| Routing | Automatic account switching per provider and the skip threshold |
+| Connect | The local proxy, the address to paste into tools, and reviewed client configuration |
+| Settings | Appearance and reminders, Fabrials account, sharing and sync, account transfers |
+
+The hosted workspace adds Proxy keys and shows one connect screen until this
+computer is linked to Fabrials. Every page and tab has a hash route such as
+`#/local/usage/requests`, so links can open an exact view and reloads keep it.
+Layout lives in `src/desktop.css`; it styles only the sidebar, title bar and
+page grids, and the content pane scrolls independently. Narrow windows move
+navigation into a drawer.
+
+The window uses in-app chrome instead of the system title bar: the top bar is a
+drag region with minimize, maximize and close. Settings → General → Appearance
+updates the renderer color scheme and Tauri's native window theme; System resets
+the native theme override. The renderer receives `core:window:allow-set-theme`
+and the window move/minimize/maximize/close permissions in addition to the
 default window permissions.
 
-Linux layout acceptance (2026-09-09): frontend production build, native debug
-build, all ten local views checked for horizontal overflow at 400px, Settings
-checked at 400/1200/1600px, and native GTK title bar verified in light and dark.
-Browser fixtures validate layout only; they do not validate provider commands.
-Existing Rust gates passed (263 unit tests and 19 CLI tests, four ignored).
+To review layouts in a browser, run `bun run dev` and open
+`http://127.0.0.1:1420/fixtures.html`. The fixture page mocks the native
+commands with synthetic data (`fixtures/data.ts`); add `?scenario=fresh` for a
+first run, `&theme=dark`, or a hash route. Fixtures validate layout only; they do
+not validate provider commands, and they are not part of the production build.
 
 ```sh
 bun install --frozen-lockfile
@@ -105,14 +124,14 @@ WebView2 bootstrapper when the runtime is absent. See the official
 [Windows installer guide](https://v2.tauri.app/distribute/windows-installer/)
 and [macOS bundle guide](https://v2.tauri.app/distribute/macos-application-bundle/).
 
-The screens include overview, accounts, provider detection, autosteer, history,
-requests, models, client connections, migration and settings. Accounts support
-API-key management and native Grok/Nous device authorization. The GUI can start
-its own local proxy and review OpenCode JSON/JSONC or Grok Build TOML edits.
-Metrics publication and history synchronization are independent, default-off
-choices. Choosing hosted mode opens ai-relay in a browser; transferring selected
-API-key accounts requires a separate paired migration and hosted approval.
-OAuth accounts require a new authorization in the destination environment.
+Accounts support API-key management and native Grok, Codex and Nous device
+authorization. The GUI can start its own local proxy and review OpenCode
+JSON/JSONC or Grok Build TOML edits. Metrics publication and history
+synchronization are independent, default-off choices. The hosted workspace
+reaches ai-relay through native commands, and Settings can open ai.fabrials.com
+in a browser. Transferring selected API-key accounts requires a separate paired
+migration and hosted approval. OAuth accounts require a new authorization in the
+destination environment.
 
 Spanreed respects absolute `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and
 `XDG_CACHE_HOME` overrides on every platform, including Windows. Explicit
