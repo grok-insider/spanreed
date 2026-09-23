@@ -539,6 +539,12 @@ mod tests {
 
     fn check_forward(provider_id: &'static str, xai_compat: bool) {
         let forward_wait = std::time::Duration::from_secs(5);
+        let upstream_token = if xai_compat {
+            "xai-fixture-upstream"
+        } else {
+            "fixture-upstream"
+        };
+        let expected_bearer = format!("Bearer {upstream_token}");
         let upstream = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let upstream_address = upstream.local_addr().unwrap();
         let upstream_worker = std::thread::spawn(move || {
@@ -552,7 +558,7 @@ mod tests {
             assert_eq!(head.path, "/v1/responses");
             assert_eq!(
                 head.headers.get("authorization").map(String::as_str),
-                Some("Bearer fixture-upstream")
+                Some(expected_bearer.as_str())
             );
             assert!(!head.headers.contains_key("cookie"));
             assert!(!head.headers.contains_key("x-forwarded-for"));
@@ -581,7 +587,7 @@ mod tests {
             assert_eq!(alias, if xai_compat { None } else { Some("work") });
             Ok(Credential {
                 alias: Some("canonical".into()),
-                token: Some("fixture-upstream".into()),
+                token: Some(upstream_token.to_string()),
                 document: None,
             })
         });
