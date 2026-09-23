@@ -19,8 +19,9 @@ test("both shared UI packages come from generated vendor distributions", () => {
 });
 
 test("the Nix desktop build links the same vendor directories", () => {
-  for (const [name, spec] of vendored) expect(flake).toContain(`ln -s ../../${spec.slice(5)} desktop/node_modules/${name}`);
-  expect(flake).toContain("rm -rf node_modules/@fabrials\n");
+  const nix = flake.replace(/\r\n/g, "\n");
+  for (const [name, spec] of vendored) expect(nix).toContain(`ln -s ../../${spec.slice(5)} desktop/node_modules/${name}`);
+  expect(nix).toContain("rm -rf node_modules/@fabrials\n");
 });
 
 test("CI verifies the vendored copies and runs these tests", () => {
