@@ -492,8 +492,9 @@ button.reset {{
 .agent {{ padding: 8px 0 10px; border-top: 1px solid var(--line); }}
 .agent-main {{
   display: grid;
-  grid-template-columns: 28px 1fr auto;
-  gap: 8px;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  align-items: start;
   width: 100%;
   padding: 0;
   border: 0;
@@ -513,7 +514,8 @@ button.reset {{
   font-size: 12px;
   font-weight: 650;
 }}
-.who {{ min-width: 0; }}
+.stack {{ min-width: 0; display: flex; flex-direction: column; gap: 6px; }}
+.topline, .subline {{ display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }}
 .name {{ font-size: 13px; font-weight: 600; }}
 .pill {{
   margin-left: 6px;
@@ -523,17 +525,28 @@ button.reset {{
   font-size: 10px;
   font-weight: 550;
 }}
-.pace {{ display: block; margin-top: 2px; font-size: 11px; }}
+.pace {{ font-size: 11px; }}
+.dot {{
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: var(--ok);
+  vertical-align: 1px;
+}}
 .pace.warn {{ color: var(--danger); }}
-.right {{ text-align: right; }}
-.right b {{ display: block; font-size: 13px; font-weight: 650; }}
-.when {{ display: block; margin-top: 2px; font-size: 11px; }}
-.agent .track {{ margin-top: 8px; height: 4px; overflow: visible; }}
+.pace.warn .dot {{ background: var(--danger); }}
+.topline b {{ font-size: 13px; font-weight: 650; }}
+.when {{ font-size: 11px; white-space: nowrap; }}
+.stack .track {{ height: 4px; overflow: visible; }}
+.stack .fill {{ display: block; }}
 .agent .fill {{ background: var(--brand); }}
-.agent.attention .fill {{ background: var(--danger); }}
 .mark {{ background: var(--fg); width: 2px; height: 8px; top: -2px; }}
-.detail {{ display: none; margin-top: 10px; padding-top: 4px; }}
-.agent.open .detail {{ display: block; }}
+.detail {{ display: none; }}
+.agent.open .detail {{ display: block; margin: 8px 0 2px 38px; }}
+.detail h2 {{ font-size: 12px; margin: 8px 0 4px; }}
+.actions button.act {{ color: var(--muted); }}
 .returns {{ margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }}
 .returns h2 {{ margin: 0; font-size: 13px; }}
 .range {{ display: flex; gap: 4px; }}
@@ -1053,17 +1066,24 @@ fn card_html(card: &TrayCard, index: usize) -> String {
         .filter(|ch| ch.is_ascii_alphanumeric())
         .map(|ch| ch.to_string())
         .unwrap_or_else(|| "•".into());
+    let account = if card.account.is_empty() {
+        String::new()
+    } else {
+        format!("<p class=\"note\">{}</p>", esc(&card.account))
+    };
     format!(
         r#"<article class="agent{attention}" data-card="{index}">
 <button type="button" class="agent-main" data-open="{index}">
   <span class="glyph">{initial}</span>
-  <span class="who"><span class="name">{name} {plan}</span><span class="pace{warn}">{pace}</span></span>
-  <span class="right"><b>{value}</b><span class="when">{when}</span></span>
+  <span class="stack">
+    <span class="topline"><span class="name">{name} {plan}</span><b>{value}</b></span>
+    <span class="track"><span class="fill" style="width:{fill:.1}%"></span>{mark}</span>
+    <span class="subline"><span class="pace{warn}"><i class="dot"></i>{pace}</span><span class="when">{when}</span></span>
+  </span>
 </button>
-<div class="track"><div class="fill" style="width:{fill:.1}%"></div>{mark}</div>
 <div class="detail">
 {error}
-<p class="note">{account}</p>
+{account}
 {meters}{credits_block}{stats}{bars}{notes}{credits}
 </div>
 </article>"#,
@@ -1075,7 +1095,7 @@ fn card_html(card: &TrayCard, index: usize) -> String {
         value = esc(value),
         when = esc(&when),
         fill = fill,
-        account = esc(&card.account),
+        account = account,
     )
 }
 
@@ -1105,17 +1125,23 @@ fn menu_summary(cards: &[TrayCard]) -> (String, String) {
     } else {
         format!("{attention} need attention")
     };
-    let most = cards
+    let mut room: Vec<_> = cards
         .iter()
         .filter_map(|card| {
             primary_meter(card)
                 .filter(|meter| meter.shows_left)
                 .map(|meter| (card, meter))
         })
-        .max_by(|left, right| left.1.fill.total_cmp(&right.1.fill));
-    let subtitle = match most {
-        Some((card, meter)) => format!("Most room: {} {}", card.name, meter.left),
-        None => String::new(),
+        .collect();
+    room.sort_by(|left, right| right.1.fill.total_cmp(&left.1.fill));
+    room.dedup_by(|left, right| left.0.name == right.0.name);
+    let subtitle = match room.as_slice() {
+        [(first, first_meter), (second, second_meter), ..] => format!(
+            "Most room: {} {} · {} {}",
+            first.name, first_meter.left, second.name, second_meter.left
+        ),
+        [(first, first_meter), ..] => format!("Most room: {} {}", first.name, first_meter.left),
+        [] => String::new(),
     };
     (title, subtitle)
 }
@@ -1213,9 +1239,21 @@ fn meter_html(meter: &Meter) -> String {
 fn duration_text(ms: i64) -> String {
     let minutes = (ms.max(0) / 60_000).max(0);
     if minutes >= 1_440 {
-        format!("{}d {}h", minutes / 1_440, (minutes / 60) % 24)
+        let days = minutes / 1_440;
+        let hours = (minutes / 60) % 24;
+        if hours == 0 {
+            format!("{days}d")
+        } else {
+            format!("{days}d {hours}h")
+        }
     } else if minutes >= 60 {
-        format!("{}h {}m", minutes / 60, minutes % 60)
+        let hours = minutes / 60;
+        let rest = minutes % 60;
+        if rest == 0 {
+            format!("{hours}h")
+        } else {
+            format!("{hours}h {rest}m")
+        }
     } else if minutes == 0 {
         "now".into()
     } else {
@@ -1496,6 +1534,8 @@ mod tests {
         assert!(html.contains("Plenty of room"));
         assert!(html.contains("Limits come back"));
         assert!(html.contains("Most room:"));
+        assert!(html.contains("in deficit") || html.contains("in reserve"));
+        assert!(html.contains("class=\"dot\""));
         if let Ok(path) = std::env::var("SPANREED_TRAY_MENU") {
             std::fs::write(path, &html).expect("menu preview");
         }
