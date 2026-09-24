@@ -124,6 +124,21 @@ fn desktop_alive() -> bool {
     pid == std::process::id() || process_alive(pid)
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
+fn spanreed_install_dir(root: impl Into<PathBuf>) -> PathBuf {
+    root.into().join("Spanreed")
+}
+
+#[cfg(windows)]
+fn windows_install_dirs() -> Vec<PathBuf> {
+    ["LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .filter(|value| !value.is_empty())
+        .map(spanreed_install_dir)
+        .collect()
+}
+
 fn desktop_binary_names() -> &'static [&'static str] {
     if cfg!(windows) {
         &["spanreed-desktop.exe", "Spanreed.exe"]
@@ -159,6 +174,10 @@ fn spawn_desktop() -> Result<(), String> {
             }
         }
         candidates.push(PathBuf::from(name));
+        #[cfg(windows)]
+        for dir in windows_install_dirs() {
+            candidates.push(dir.join(name));
+        }
     }
     let mut last = "Install the desktop package.".to_string();
     for path in candidates {
@@ -263,6 +282,10 @@ mod tests {
             .iter()
             .any(|name| name.starts_with("spanreed-desktop")));
         assert!(names.iter().any(|name| name.starts_with("Spanreed")));
+        assert_eq!(
+            spanreed_install_dir("/tmp/local").join("Spanreed.exe"),
+            PathBuf::from("/tmp/local/Spanreed/Spanreed.exe")
+        );
     }
 
     #[test]
