@@ -1,0 +1,141 @@
+//! Hand a page to the desktop window, starting it when it is not already running.
+
+use std::path::PathBuf;
+use std::process::Command;
+
+const LOCK: &str = "desktop.lock";
+const ROUTE: &str = "desktop-route";
+
+/// Queue a local desktop page and make sure the window process is up.
+pub fn request(page: &str) -> Result<(), String> {
+    let href = href(page)?;
+    let dir = crate::app::data_dir();
+    std::fs::create_dir_all(&dir).map_err(|error| format!("mkdir desktop route: {error}"))?;
+    std::fs::write(dir.join(ROUTE), href)
+        .map_err(|error| format!("write desktop route: {error}"))?;
+    if desktop_alive() {
+        return Ok(());
+    }
+    spawn_desktop()
+}
+
+/// Read and clear a queued route. The desktop window applies it once.
+pub fn take() -> Option<String> {
+    let path = crate::app::data_dir().join(ROUTE);
+    let text = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let text = text.trim();
+    text.starts_with("#/local/").then(|| text.to_string())
+}
+
+pub fn mark_running() {
+    let dir = crate::app::data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join(LOCK), format!("{}\n", std::process::id()));
+}
+
+pub fn unmark_running() {
+    let path = crate::app::data_dir().join(LOCK);
+    if std::fs::read_to_string(&path)
+        .ok()
+        .is_some_and(|text| text.trim() == std::process::id().to_string())
+    {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+fn href(page: &str) -> Result<String, String> {
+    match page {
+        "overview" | "usage" | "accounts" | "routing" | "connect" | "settings" => {
+            Ok(format!("#/local/{page}"))
+        }
+        _ => Err("Unknown desktop page".into()),
+    }
+}
+
+fn desktop_alive() -> bool {
+    let path = crate::app::data_dir().join(LOCK);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(pid) = text.trim().parse::<u32>() else {
+        return false;
+    };
+    pid == std::process::id() || process_alive(pid)
+}
+
+fn spawn_desktop() -> Result<(), String> {
+    let name = if cfg!(windows) {
+        "spanreed-desktop.exe"
+    } else {
+        "spanreed-desktop"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(name));
+        }
+    }
+    candidates.push(PathBuf::from(name));
+    let mut last = "Install the desktop package.".to_string();
+    for path in candidates {
+        match Command::new(&path).spawn() {
+            Ok(_) => return Ok(()),
+            Err(error) => last = error.to_string(),
+        }
+    }
+    Err(format!("Could not open Spanreed Desktop: {last}"))
+}
+
+fn process_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
+            .unwrap_or(false)
+    }
+    #[cfg(unix)]
+    {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_queues_a_local_overview_route() {
+        let dir =
+            std::env::temp_dir().join(format!("spanreed-desktop-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let previous = std::env::var_os("XDG_DATA_HOME");
+        std::env::set_var("XDG_DATA_HOME", &dir);
+        let error = request("overview").unwrap_err();
+        assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
+        let queued = std::fs::read_to_string(dir.join("spanreed").join(ROUTE)).unwrap();
+        assert_eq!(queued, "#/local/overview");
+        assert_eq!(take().as_deref(), Some("#/local/overview"));
+        assert!(take().is_none());
+        assert!(request("nope").is_err());
+        match previous {
+            Some(value) => std::env::set_var("XDG_DATA_HOME", value),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -32,6 +32,7 @@ pub mod codex_session_move;
 mod cost;
 mod creds;
 pub mod desktop;
+pub mod desktop_open;
 mod drivers;
 mod epoch;
 pub mod fabrials_login;

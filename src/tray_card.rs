@@ -667,6 +667,8 @@ button.reset {{
   <button type="button" data-act="refresh">Refresh</button>
   <button type="button" data-act="ensure">Ensure capture</button>
   <button type="button" data-act="log">Open log</button>
+  <button type="button" data-act="dashboard">Open dashboard</button>
+  <button type="button" data-act="settings">Settings</button>
   <button type="button" data-act="quit">Quit</button>
 </nav>
 <div class="dialog" hidden>

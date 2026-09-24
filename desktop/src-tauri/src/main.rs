@@ -340,6 +340,11 @@ fn open_device_login(id: String) -> Result<(), String> {
     open_url(&spanreed::account_login::verification_url(&id)?)
 }
 
+#[tauri::command]
+fn take_desktop_route() -> Option<String> {
+    spanreed::desktop_open::take()
+}
+
 fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let result = std::process::Command::new("xdg-open").arg(url).spawn();
@@ -353,8 +358,9 @@ fn open_url(url: &str) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![disconnect_usage_source, connect_usage_source, usage_report, usage_sources, save_usage_sources, preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
+        .invoke_handler(tauri::generate_handler![take_desktop_route, disconnect_usage_source, connect_usage_source, usage_report, usage_sources, save_usage_sources, preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
         .setup(|app| {
+            spanreed::desktop_open::mark_running();
             let show = tauri::menu::MenuItem::with_id(app, "show", "Open Spanreed", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit Spanreed", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(app, &[&show, &quit])?;
@@ -366,5 +372,11 @@ fn main() {
                 }).build(app)?;
             Ok(())
         })
-        .run(tauri::generate_context!()).expect("could not start Spanreed desktop");
+        .build(tauri::generate_context!())
+        .expect("could not start Spanreed desktop")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                spanreed::desktop_open::unmark_running();
+            }
+        });
 }

@@ -49,6 +49,8 @@ pub const MENU_UPDATE: &str = "Install update…";
 pub const MENU_LINK_SHARE: &str = "Link share (X)…";
 pub const MENU_SHARE_NOW: &str = "Share now";
 pub const MENU_UNLINK_SHARE: &str = "Unlink share";
+pub const MENU_DASHBOARD: &str = "Open dashboard";
+pub const MENU_SETTINGS: &str = "Settings";
 pub const MENU_QUIT: &str = "Quit tray";
 
 struct TrayState {
@@ -60,6 +62,7 @@ struct TrayState {
     share_line: String,
     /// Short status line shown at the top of the tooltip (action feedback).
     status_note: Option<String>,
+    status_at: Option<Instant>,
     last_notify_proxy: Option<Instant>,
     last_notify_quota: Option<Instant>,
     /// Background thread sets this; UI thread clears after repaint.
@@ -79,6 +82,7 @@ impl Default for TrayState {
             share_logged_in: false,
             share_line: tray_format::format_share_line(false, None, ""),
             status_note: None,
+            status_at: None,
             last_notify_proxy: None,
             last_notify_quota: None,
             dirty: true,
@@ -117,7 +121,8 @@ pub fn cmd(args: &[String]) -> ExitCode {
                     "spanreed tray — system tray status (Spanreed icon)\n\n\
                      \t--interval S   Refresh every S seconds (default {DEFAULT_INTERVAL_SECS})\n\
                      Left click opens the usage card. Right click keeps the menu:\n\
-                     \tRefresh, Ensure, Open log, Link/Share/Unlink, Check/Install update, Quit tray"
+                     \tOpen dashboard, Settings, Refresh, Ensure, Open log,\n\
+                     \tLink/Share/Unlink, Check/Install update, Quit tray"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -150,7 +155,15 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     let item_update = MenuItem::new(MENU_UPDATE, false, None);
     let item_share_primary = MenuItem::new(MENU_LINK_SHARE, true, None);
     let item_unlink = MenuItem::new(MENU_UNLINK_SHARE, false, None);
+    let item_dashboard = MenuItem::new(MENU_DASHBOARD, true, None);
+    let item_settings = MenuItem::new(MENU_SETTINGS, true, None);
     let item_quit = MenuItem::new(MENU_QUIT, true, None);
+    menu.append(&item_dashboard)
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_settings)
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&PredefinedMenuItem::separator())
+        .map_err(|e| format!("menu: {e}"))?;
     menu.append(&item_refresh)
         .map_err(|e| format!("menu: {e}"))?;
     menu.append(&item_ensure)
@@ -178,6 +191,8 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     let id_unlink = item_unlink.id().clone();
     let id_check = item_check.id().clone();
     let id_update = item_update.id().clone();
+    let id_dashboard = item_dashboard.id().clone();
+    let id_settings = item_settings.id().clone();
     let id_quit = item_quit.id().clone();
 
     let state = Arc::new(Mutex::new(TrayState::default()));
@@ -223,6 +238,17 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
+        {
+            let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+            let stale = guard
+                .status_at
+                .is_some_and(|at| at.elapsed() > Duration::from_secs(8));
+            if stale && !guard.reset_in_flight {
+                guard.status_note = None;
+                guard.status_at = None;
+                guard.dirty = true;
+            }
+        }
 
         if let Event::WindowEvent {
             event: WindowEvent::Focused(false),
@@ -274,6 +300,12 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     Ok(()) => set_status(&state, "Opened capture log"),
                     Err(e) => set_status(&state, &format!("Could not open log: {e}")),
                 }
+            } else if message == "dashboard" || message == "settings" {
+                let page = if message == "settings" { "settings" } else { "overview" };
+                match crate::desktop_open::request(page) {
+                    Ok(()) => set_status(&state, "Opened Spanreed"),
+                    Err(error) => set_status(&state, &format!("Could not open Spanreed: {error}")),
+                }
             } else if message == "quit" {
                 stop.store(true, Ordering::Relaxed);
                 *control_flow = ControlFlow::Exit;
@@ -305,7 +337,13 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
 
         while let Ok(ev) = menu_channel.try_recv() {
             let id = ev.id;
-            if id == id_quit {
+            if id == id_dashboard || id == id_settings {
+                let page = if id == id_settings { "settings" } else { "overview" };
+                match crate::desktop_open::request(page) {
+                    Ok(()) => set_status(&state, "Opened Spanreed"),
+                    Err(error) => set_status(&state, &format!("Could not open Spanreed: {error}")),
+                }
+            } else if id == id_quit {
                 stop.store(true, Ordering::Relaxed);
                 *control_flow = ControlFlow::Exit;
             } else if id == id_refresh {
@@ -614,6 +652,7 @@ fn new_redeem_request_id() -> Result<String, &'static str> {
 fn set_status(state: &Arc<Mutex<TrayState>>, note: &str) {
     let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
     g.status_note = Some(note.to_string());
+    g.status_at = Some(Instant::now());
     g.dirty = true;
 }
 
@@ -1009,48 +1048,38 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
 
 /// User-visible notification.
 ///
-/// `modal`: Windows MessageBox for long copy (update check). Refresh/ensure use
-/// tooltip + Linux `notify-send` only — do not spawn WPF for every click.
+/// `modal`: Windows MessageBox for long copy (update check). Other alerts use
+/// the platform notification: notify-send, a Windows toast, or macOS Notification Center.
 fn user_notify(title: &str, body: &str, modal: bool) {
     log::info!("tray notify: {title}: {body}");
     #[cfg(windows)]
     {
-        if !modal {
+        if modal {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let t = title.replace('\'', "''");
+            let b = body.replace('\'', "''");
+            let script = format!(
+                "Add-Type -AssemblyName PresentationFramework; \
+             [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
+            );
+            let _ = Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    &script,
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn();
             return;
         }
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let t = title.replace('\'', "''");
-        let b = body.replace('\'', "''");
-        let script = format!(
-            "Add-Type -AssemblyName PresentationFramework; \
-             [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
-        );
-        let _ = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                &script,
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
     }
-    #[cfg(not(windows))]
-    {
-        let short = if body.len() > 280 {
-            format!("{}…", body.chars().take(277).collect::<String>())
-        } else {
-            body.to_string()
-        };
-        let _ = Command::new("notify-send")
-            .args(["-a", "spanreed", "--", title, &short])
-            .spawn();
-        if modal {
-            eprintln!("spanreed tray: {title}: {body}");
-        }
+    let _ = crate::notifications::deliver_os(title, body);
+    if modal {
+        eprintln!("spanreed tray: {title}: {body}");
     }
 }
 

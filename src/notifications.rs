@@ -119,10 +119,10 @@ pub fn deliver_outputs(
 }
 
 pub fn deliver_background(outputs: &[crate::model::ProviderOutput]) -> Result<u32, String> {
-    deliver_outputs(outputs, system_notification)
+    deliver_outputs(outputs, deliver_os)
 }
 
-fn system_notification(title: &str, body: &str) -> Result<(), String> {
+pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
     #[cfg(target_os = "linux")]
@@ -156,16 +156,30 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($document)
         .env("SPANREED_NOTIFICATION_TITLE", title).env("SPANREED_NOTIFICATION_BODY", body)
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null()).status();
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    return match status {
-        Ok(status) if status.success() => Ok(()),
-        _ => Err("Could not deliver the reset notification through the operating system".into()),
-    };
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            &format!(
+                "display notification \"{}\" with title \"{}\"",
+                body.replace('\\', "\\\\").replace('"', "\\\""),
+                title.replace('\\', "\\\\").replace('"', "\\\"")
+            ),
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
         let _ = (title, body);
-        Err("Background notifications have not been qualified on this platform".into())
+        return Err("Background notifications have not been qualified on this platform".into());
     }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    return match status {
+        Ok(status) if status.success() => Ok(()),
+        _ => Err("Could not deliver the notification through the operating system".into()),
+    };
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Boxes, ChartColumn, CircleGauge, Plug, RefreshCw, Route as RouteIcon } from "lucide-react";
 import { Button, StatusDot } from "@fabrials/ui";
 import { useClock } from "@fabrials/ai-ui";
@@ -72,6 +73,17 @@ export function App() {
   const [appError, setAppError] = React.useState<string | null>(null);
   const [theme, setTheme] = useThemePreference(setAppError);
   const route = useHashRoute();
+  React.useEffect(() => {
+    let active = true;
+    const pull = () => {
+      void invoke<string | null>("take_desktop_route").then((href) => {
+        if (active && href && location.hash !== href) location.hash = href;
+      }).catch(() => undefined);
+    };
+    pull();
+    const timer = window.setInterval(pull, 1000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
   if (route.workspace === "hosted") return <HostedWorkspace route={route} theme={theme} onThemeChange={setTheme} />;
   return <LocalDataProvider><LocalWorkspace route={route} theme={theme} onThemeChange={setTheme} appError={appError} /></LocalDataProvider>;
 }
