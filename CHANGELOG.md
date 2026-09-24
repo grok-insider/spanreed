@@ -6,6 +6,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.6.1] - 2026-09-24
 
+- feat: cover every CodexBar provider
 - fix: use the ruby gem as the app icon
 - fix: release the account file lock on drop
 - fix: send the xAI compat fixture to the mock upstream
