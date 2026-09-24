@@ -734,6 +734,13 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
         if cool {
             log::warn!("spanreed tray: quota entered {band} band");
             g.last_notify_quota = Some(now);
+            drop(g);
+            let body = if band == "critical" {
+                "Usage is at or above 95%."
+            } else {
+                "Usage is at or above 80%."
+            };
+            user_notify("spanreed — usage", body, false);
         }
     }
 }
