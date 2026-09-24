@@ -1066,41 +1066,48 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
 
 /// User-visible notification.
 ///
-/// `modal`: Windows MessageBox for long copy (update check). Other alerts use
-/// the platform notification: notify-send, a Windows toast, or macOS Notification Center.
+/// Every alert goes through the platform path: notify-send, a Windows toast,
+/// or macOS Notification Center. A Windows dialog is only the fallback when
+/// that delivery fails for a long message.
 fn user_notify(title: &str, body: &str, modal: bool) {
     log::info!("tray notify: {title}: {body}");
-    #[cfg(windows)]
-    {
-        if modal {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            let t = title.replace('\'', "''");
-            let b = body.replace('\'', "''");
-            let script = format!(
-                "Add-Type -AssemblyName PresentationFramework; \
-             [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
-            );
-            let _ = Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-WindowStyle",
-                    "Hidden",
-                    "-Command",
-                    &script,
-                ])
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn();
-            return;
-        }
-    }
-    if let Err(error) = crate::notifications::deliver_os(title, body) {
-        log::warn!("tray notify failed: {error}");
-    }
     if modal {
         eprintln!("spanreed tray: {title}: {body}");
     }
+    let title = title.to_string();
+    let body = body.to_string();
+    thread::spawn(move || {
+        if let Err(error) = crate::notifications::deliver_os(&title, &body) {
+            log::warn!("tray notify failed: {error}");
+            #[cfg(windows)]
+            if modal {
+                show_windows_message(&title, &body);
+            }
+        }
+    });
+}
+
+#[cfg(windows)]
+fn show_windows_message(title: &str, body: &str) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let t = title.replace('\'', "''");
+    let b = body.replace('\'', "''");
+    let script = format!(
+        "Add-Type -AssemblyName PresentationFramework; \
+         [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
+    );
+    let _ = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
 }
 
 #[cfg(test)]
