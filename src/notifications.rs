@@ -346,6 +346,87 @@ mod tests {
         assert!(!WINDOWS_NOTIFY.contains("CreateToastNotifier('com.fabrials.spanreed')"));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn capture_alert_reaches_a_linux_notification_service() {
+        use std::io::{BufRead, BufReader};
+        use std::sync::Mutex;
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let dir = std::env::temp_dir().join(format!("spanreed-notify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("received.txt");
+        let script = dir.join("service.py");
+        std::fs::write(
+            &script,
+            r#"import sys
+from dbus.mainloop.glib import DBusGMainLoop
+DBusGMainLoop(set_as_default=True)
+import dbus
+import dbus.service
+from gi.repository import GLib
+class Notifications(dbus.service.Object):
+    @dbus.service.method("org.freedesktop.Notifications", in_signature="susssasa{sv}i", out_signature="u")
+    def Notify(self, app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout):
+        with open(sys.argv[1], "w", encoding="utf-8") as handle:
+            handle.write(summary + "\n" + body)
+        GLib.idle_add(loop.quit)
+        return dbus.UInt32(1)
+loop = GLib.MainLoop()
+bus = dbus.SessionBus()
+name = dbus.service.BusName("org.freedesktop.Notifications", bus)
+Notifications(bus, "/org/freedesktop/Notifications")
+loop.run()
+"#,
+        )
+        .unwrap();
+        let mut daemon = std::process::Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("dbus-daemon");
+        let mut address = String::new();
+        BufReader::new(daemon.stdout.take().expect("address"))
+            .read_line(&mut address)
+            .unwrap();
+        let address = address.trim().to_string();
+        let mut service = std::process::Command::new("python3")
+            .arg(&script)
+            .arg(&log)
+            .env("DBUS_SESSION_BUS_ADDRESS", &address)
+            .spawn()
+            .expect("notification service");
+        let previous = std::env::var_os("DBUS_SESSION_BUS_ADDRESS");
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
+        let mut text = String::new();
+        for _ in 0..40 {
+            let _ = deliver_os("Capture proxy is DOWN", "Ensure capture before new hops.");
+            if let Ok(body) = std::fs::read_to_string(&log) {
+                text = body;
+                if text.contains("Capture proxy is DOWN") {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = service.kill();
+        let _ = service.wait();
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+        match previous {
+            Some(value) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", value),
+            None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            text.contains("Capture proxy is DOWN"),
+            "notification service did not receive the alert: {text}"
+        );
+        assert!(text.contains("Ensure capture before new hops."));
+    }
+
     #[test]
     fn macos_notification_script_stays_one_statement() {
         let script = osascript_notification("Capture \"down\"", "Line one\nLine two");
