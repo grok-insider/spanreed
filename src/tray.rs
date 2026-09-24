@@ -761,21 +761,11 @@ fn usage_card(state: &Arc<Mutex<TrayState>>) -> String {
 
 fn tooltip_from(state: &Arc<Mutex<TrayState>>) -> String {
     let g = state.lock().unwrap_or_else(|e| e.into_inner());
-    let mut parts = Vec::new();
-    if let Some(s) = g.status_note.as_deref() {
-        if !s.is_empty() {
-            parts.push(s.to_string());
-        }
-    }
-    if !g.share_line.is_empty() {
-        parts.push(g.share_line.clone());
-    }
-    parts.push(tray_format::format_tooltip(
-        &g.outputs,
-        g.capture_up,
-        g.update_note.as_deref(),
-    ));
-    parts.join("\n")
+    tray_format::compose_tooltip(
+        g.status_note.as_deref(),
+        &g.share_line,
+        &tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref()),
+    )
 }
 
 fn apply_visual(
@@ -790,21 +780,11 @@ fn apply_visual(
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.dirty = false;
         let sev = tray_format::severity(g.capture_up, g.max_used);
-        let mut tip_parts = Vec::new();
-        if let Some(s) = g.status_note.as_deref() {
-            if !s.is_empty() {
-                tip_parts.push(s.to_string());
-            }
-        }
-        if !g.share_line.is_empty() {
-            tip_parts.push(g.share_line.clone());
-        }
-        tip_parts.push(tray_format::format_tooltip(
-            &g.outputs,
-            g.capture_up,
-            g.update_note.as_deref(),
-        ));
-        let tip = tip_parts.join("\n");
+        let tip = tray_format::compose_tooltip(
+            g.status_note.as_deref(),
+            &g.share_line,
+            &tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref()),
+        );
         let update_enabled = self_update::can_apply_self_update()
             && g.update_note
                 .as_deref()

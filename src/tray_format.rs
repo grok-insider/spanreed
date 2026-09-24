@@ -132,6 +132,21 @@ pub fn format_tooltip(
     lines.join("\n")
 }
 
+/// Status lines such as "Reset used" sit above the capture summary, and only while set.
+pub fn compose_tooltip(status: Option<&str>, share_line: &str, body: &str) -> String {
+    let mut parts = Vec::new();
+    if let Some(status) = status.map(str::trim).filter(|text| !text.is_empty()) {
+        parts.push(status.to_string());
+    }
+    if !share_line.is_empty() {
+        parts.push(share_line.to_string());
+    }
+    if !body.is_empty() {
+        parts.push(body.to_string());
+    }
+    parts.join("\n")
+}
+
 fn format_quota_bit(line: &MetricLine) -> Option<String> {
     match line {
         MetricLine::Progress {
@@ -178,6 +193,16 @@ pub fn crossed_threshold(prev: Option<f64>, next: Option<f64>) -> Option<&'stati
 mod tests {
     use super::*;
     use crate::model::MetricLine;
+
+    #[test]
+    fn tooltip_drops_a_cleared_status_line() {
+        let body = "Capture: UP";
+        let shown = compose_tooltip(Some("Refreshing usage…"), "", body);
+        assert!(shown.starts_with("Refreshing usage…\n"));
+        let cleared = compose_tooltip(None, "", body);
+        assert_eq!(cleared, body);
+        assert!(!cleared.contains("Reset used"));
+    }
 
     #[test]
     fn status_lines_expire_without_another_action() {
