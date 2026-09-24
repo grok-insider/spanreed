@@ -131,31 +131,93 @@ fn process_alive(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    #[test]
-    fn request_queues_a_local_overview_route() {
-        let dir =
-            std::env::temp_dir().join(format!("spanreed-desktop-open-{}", std::process::id()));
+    fn with_data_home(f: impl FnOnce(&std::path::Path)) {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "spanreed-desktop-open-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         let previous = std::env::var_os("XDG_DATA_HOME");
         std::env::set_var("XDG_DATA_HOME", &dir);
-        let error = request("overview").unwrap_err();
-        assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
-        let queued = std::fs::read_to_string(dir.join("spanreed").join(ROUTE)).unwrap();
-        assert_eq!(queued, "#/local/overview");
-        assert_eq!(take().as_deref(), Some("#/local/overview"));
-        assert!(take().is_none());
-        let error = request("settings").unwrap_err();
-        assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
-        assert_eq!(
-            std::fs::read_to_string(dir.join("spanreed").join(ROUTE)).unwrap(),
-            "#/local/settings"
-        );
-        assert!(request("nope").is_err());
+        f(&dir);
+        unmark_running();
         match previous {
             Some(value) => std::env::set_var("XDG_DATA_HOME", value),
             None => std::env::remove_var("XDG_DATA_HOME"),
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn request_queues_a_local_overview_route() {
+        with_data_home(|dir| {
+            let error = request("overview").unwrap_err();
+            assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
+            let queued = std::fs::read_to_string(dir.join("spanreed").join(ROUTE)).unwrap();
+            assert_eq!(queued, "#/local/overview");
+            assert_eq!(take().as_deref(), Some("#/local/overview"));
+            assert!(take().is_none());
+            let error = request("settings").unwrap_err();
+            assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
+            assert_eq!(
+                std::fs::read_to_string(dir.join("spanreed").join(ROUTE)).unwrap(),
+                "#/local/settings"
+            );
+            assert!(request("nope").is_err());
+        });
+    }
+
+    #[test]
+    fn request_reuses_a_running_desktop_for_both_pages() {
+        with_data_home(|_| {
+            mark_running();
+            request("overview").expect("running desktop accepts overview");
+            assert_eq!(take().as_deref(), Some("#/local/overview"));
+            request("settings").expect("running desktop accepts settings");
+            assert_eq!(take().as_deref(), Some("#/local/settings"));
+            assert!(take().is_none());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn request_starts_a_desktop_binary_on_path() {
+        with_data_home(|dir| {
+            let bin = dir.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let stub = bin.join("spanreed-desktop");
+            std::fs::copy("/bin/true", &stub).unwrap();
+            let mut permissions = std::fs::metadata(&stub).unwrap().permissions();
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&stub, permissions).unwrap();
+            let previous = std::env::var_os("PATH");
+            let joined = match &previous {
+                Some(value) => {
+                    let mut path = std::ffi::OsString::from(bin.as_os_str());
+                    path.push(":");
+                    path.push(value);
+                    path
+                }
+                None => bin.as_os_str().to_os_string(),
+            };
+            std::env::set_var("PATH", joined);
+            request("settings").expect("stub desktop starts");
+            assert_eq!(take().as_deref(), Some("#/local/settings"));
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = std::fs::remove_dir_all(&bin);
+            match previous {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        });
     }
 }
