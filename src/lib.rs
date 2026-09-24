@@ -44,6 +44,7 @@ mod http;
 mod local_control;
 pub mod local_relay;
 mod local_tokens;
+mod machine_name;
 pub mod migration;
 pub mod model;
 mod output;
