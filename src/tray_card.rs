@@ -254,27 +254,31 @@ fn local_cost(output: &ProviderOutput) -> Option<CostSummary> {
 }
 
 pub fn render(cards: &[TrayCard], capture_up: bool, status: Option<&str>) -> String {
-    let (title, subtitle) = menu_summary(cards);
-    let title = esc(&title);
-    let subtitle = esc(&subtitle);
-    let updated = esc(cards
-        .first()
-        .map(|card| card.updated.as_str())
-        .unwrap_or(""));
-    let (attention, plenty): (Vec<_>, Vec<_>) = cards
-        .iter()
-        .enumerate()
-        .partition(|(_, card)| needs_attention(card));
+    let selected = cards.iter().position(needs_attention).unwrap_or(0);
     let body = if cards.is_empty() {
         "<p class=\"empty\">No locally detected providers</p>".into()
     } else {
-        format!(
-            "{}{}",
-            menu_section("Needs attention", &attention),
-            menu_section("Plenty of room", &plenty)
-        )
+        let tabs = cards
+            .iter()
+            .enumerate()
+            .map(|(index, card)| {
+                let on = if index == selected { " on" } else { "" };
+                format!(
+                    "<button type=\"button\" class=\"switch{on}\" data-tab=\"{index}\"><span class=\"glyph\">{}</span><span>{}</span></button>",
+                    crate::provider_icons::icon(&card.provider_id),
+                    esc(&card.name)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        let panels = cards
+            .iter()
+            .enumerate()
+            .map(|(index, card)| card_html(card, index, index == selected))
+            .collect::<Vec<_>>()
+            .join("");
+        format!("<nav class=\"switcher\" aria-label=\"Providers\">{tabs}</nav>{panels}")
     };
-    let timeline = limits_timeline(cards);
     let banner = if capture_up {
         String::new()
     } else {
@@ -303,6 +307,7 @@ pub fn render(cards: &[TrayCard], capture_up: bool, status: Option<&str>) -> Str
   --track: oklch(0.94 0.004 85);
   --brand: oklch(0.54 0.16 250);
   --danger: oklch(0.55 0.2 27);
+  --warn: oklch(0.62 0.16 55);
   --ok: oklch(0.52 0.11 162);
   --shadow: 0 12px 32px oklch(0.2 0.01 85 / 18%);
 }}
@@ -317,6 +322,7 @@ pub fn render(cards: &[TrayCard], capture_up: bool, status: Option<&str>) -> Str
     --track: oklch(0.32 0.006 85);
     --brand: oklch(0.72 0.13 240);
     --danger: oklch(0.7 0.16 22);
+    --warn: oklch(0.78 0.14 70);
     --ok: oklch(0.74 0.12 162);
     --shadow: 0 18px 40px oklch(0 0 0 / 45%);
   }}
@@ -586,23 +592,83 @@ button.reset {{
 }}
 .tick[hidden] {{ display: none; }}
 .none {{ margin: 8px 0 0; font-size: 11px; color: var(--muted); }}
+.switcher {{
+  display: flex;
+  gap: 4px;
+  margin: 0 -4px 14px;
+  overflow-x: auto;
+}}
+.switch {{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 2px solid var(--brand);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 10px 10px 0 0;
+  padding: 6px 10px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}}
+.switch .glyph {{ width: 16px; height: 16px; background: transparent; border-radius: 0; }}
+.switch.on {{
+  background: var(--brand);
+  border-bottom-color: transparent;
+  color: white;
+  border-radius: 10px;
+}}
+.panel {{ display: none; }}
+.panel.on {{ display: block; }}
+.panel h1 {{ margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }}
+.panel .plan {{ color: var(--muted); font-size: 13px; }}
+.quota {{ margin-top: 16px; }}
+.quota h2 {{ margin: 0 0 8px; font-size: 15px; font-weight: 650; }}
+.quota .track {{ height: 5px; overflow: visible; }}
+.quota .fill {{ position: relative; min-width: 8px; background: var(--warn); }}
+.quota .dot {{
+  position: absolute;
+  right: -4px;
+  top: -3px;
+  width: 8px;
+  height: 8px;
+  margin: 0;
+  background: var(--warn);
+}}
+.quota .pair {{ color: var(--muted); }}
+.pace-line {{ margin: 8px 0 0; color: var(--muted); font-size: 12px; }}
+.cost {{ margin-top: 8px; border-top: 1px solid var(--line); }}
+.cost summary {{ padding: 12px 0; font-size: 15px; font-weight: 650; cursor: pointer; }}
+.menu {{
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}}
+.menu button {{
+  text-align: left;
+  padding: 11px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}}
 </style>
 </head>
 <body>
 <main class="card">
 {banner}{status}
-<header class="summary">
-  <div><h1>{title}</h1><p>{subtitle}</p></div>
-  <span class="ago">{updated}</span>
-</header>
 {body}
-{timeline}
-<div class="actions">
-  <button type="button" class="act" data-act="refresh">Refresh</button>
-  <button type="button" class="act" data-act="ensure">Ensure capture</button>
-  <button type="button" class="act" data-act="log">Open log</button>
-  <button type="button" class="act" data-act="quit">Quit tray</button>
-</div>
+<nav class="menu">
+  <button type="button" data-act="refresh">Refresh</button>
+  <button type="button" data-act="ensure">Ensure capture</button>
+  <button type="button" data-act="log">Open log</button>
+  <button type="button" data-act="quit">Quit</button>
+</nav>
 <div class="dialog" hidden>
   <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="reset-title">
     <h2 id="reset-title">Use a limit reset?</h2>
@@ -618,9 +684,11 @@ button.reset {{
 const post = (msg) => {{
   try {{ window.ipc.postMessage(msg); }} catch (e) {{}}
 }};
-document.querySelectorAll("[data-open]").forEach((button) => {{
+document.querySelectorAll("[data-tab]").forEach((button) => {{
   button.addEventListener("click", () => {{
-    button.closest(".agent").classList.toggle("open");
+    const id = button.dataset.tab;
+    document.querySelectorAll("[data-tab]").forEach((node) => node.classList.toggle("on", node === button));
+    document.querySelectorAll("[data-panel]").forEach((node) => node.classList.toggle("on", node.dataset.panel === id));
   }});
 }});
 const applyRange = (hours) => {{
@@ -678,7 +746,7 @@ resetConfirm.addEventListener("click", () => {{
 }});
 document.querySelectorAll(".bars i").forEach((bar) => {{
   bar.addEventListener("mouseenter", () => {{
-    const note = bar.closest(".card-body").querySelector(".hover");
+    const note = bar.closest(".panel").querySelector(".hover");
     if (note) note.textContent = bar.dataset.detail || "";
   }});
 }});
@@ -933,7 +1001,7 @@ fn buy_url(provider_id: &str) -> Option<String> {
     }
 }
 
-fn card_html(card: &TrayCard, index: usize) -> String {
+fn card_html(card: &TrayCard, index: usize, selected: bool) -> String {
     let meters = card
         .meters
         .iter()
@@ -1038,104 +1106,32 @@ fn card_html(card: &TrayCard, index: usize) -> String {
     let plan = if card.plan.is_empty() {
         String::new()
     } else {
-        format!("<span class=\"pill\">{}</span>", esc(&card.plan))
-    };
-    let meter = primary_meter(card);
-    let value = meter.map(|item| item.left.as_str()).unwrap_or("—");
-    let pace = meter.map(pace_line).unwrap_or_default();
-    let when = meter
-        .and_then(|item| item.resets_in_ms)
-        .map(duration_text)
-        .unwrap_or_default();
-    let fill = meter.map(|item| item.fill).unwrap_or(0.0);
-    let mark = meter
-        .and_then(|item| item.marker)
-        .map(|percent| format!("<i class=\"mark\" style=\"left:{percent:.1}%\"></i>"))
-        .unwrap_or_default();
-    let warn = if needs_attention(card) { " warn" } else { "" };
-    let attention = if needs_attention(card) {
-        " attention"
-    } else {
-        ""
+        format!("<span class=\"plan\">{}</span>", esc(&card.plan))
     };
     let account = if card.account.is_empty() {
         String::new()
     } else {
         format!("<p class=\"note\">{}</p>", esc(&card.account))
     };
+    let cost = if stats.is_empty() && bars.is_empty() && notes.is_empty() {
+        String::new()
+    } else {
+        format!("<details class=\"cost\"><summary>Cost</summary>{stats}{bars}{notes}</details>")
+    };
+    let on = if selected { " on" } else { "" };
     format!(
-        r#"<article class="agent{attention}" data-card="{index}">
-<button type="button" class="agent-main" data-open="{index}">
-  <span class="glyph">{icon}</span>
-  <span class="stack">
-    <span class="topline"><span class="name">{name} {plan}</span><b>{value}</b></span>
-    <span class="track"><span class="fill" style="width:{fill:.1}%"></span>{mark}</span>
-    <span class="subline"><span class="pace{warn}"><i class="dot"></i>{pace}</span><span class="when">{when}</span></span>
-  </span>
-</button>
-<div class="detail">
+        r#"<section class="panel{on}" data-panel="{index}">
+<header class="head"><div><h1>{name}</h1><p class="meta">{updated}</p></div>{plan}</header>
 {error}
 {account}
-{meters}{credits_block}{stats}{bars}{notes}{credits}
-</div>
-</article>"#,
+{meters}{credits_block}{cost}{credits}
+</section>"#,
         index = index,
-        icon = crate::provider_icons::icon(&card.provider_id),
         name = esc(&card.name),
+        updated = esc(&card.updated),
         plan = plan,
-        pace = esc(&pace),
-        value = esc(value),
-        when = esc(&when),
-        fill = fill,
         account = account,
     )
-}
-
-fn menu_section(label: &str, rows: &[(usize, &TrayCard)]) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let body = rows
-        .iter()
-        .map(|(index, card)| card_html(card, *index))
-        .collect::<Vec<_>>()
-        .join("");
-    format!(
-        "<section><h2 class=\"kicker\"><span>{}</span><span>{}</span></h2>{}</section>",
-        esc(label),
-        rows.len(),
-        body
-    )
-}
-
-fn menu_summary(cards: &[TrayCard]) -> (String, String) {
-    let attention = cards.iter().filter(|card| needs_attention(card)).count();
-    let title = if attention == 0 {
-        "Plenty of room".into()
-    } else if attention == 1 {
-        "1 needs attention".into()
-    } else {
-        format!("{attention} need attention")
-    };
-    let mut room: Vec<_> = cards
-        .iter()
-        .filter_map(|card| {
-            primary_meter(card)
-                .filter(|meter| meter.shows_left)
-                .map(|meter| (card, meter))
-        })
-        .collect();
-    room.sort_by(|left, right| right.1.fill.total_cmp(&left.1.fill));
-    room.dedup_by(|left, right| left.0.name == right.0.name);
-    let subtitle = match room.as_slice() {
-        [(first, first_meter), (second, second_meter), ..] => format!(
-            "Most room: {} {} · {} {}",
-            first.name, first_meter.left, second.name, second_meter.left
-        ),
-        [(first, first_meter), ..] => format!("Most room: {} {}", first.name, first_meter.left),
-        [] => String::new(),
-    };
-    (title, subtitle)
 }
 
 fn needs_attention(card: &TrayCard) -> bool {
@@ -1160,71 +1156,38 @@ fn primary_meter(card: &TrayCard) -> Option<&Meter> {
         .or_else(|| card.meters.first())
 }
 
-fn pace_line(meter: &Meter) -> String {
-    if let Some(pace) = &meter.pace_left {
-        format!("{} · {pace}", meter.title)
-    } else if let Some(pace) = &meter.pace_right {
-        format!("{} · {pace}", meter.title)
+fn meter_html(meter: &Meter) -> String {
+    let (fill, caption) = if meter.shows_left {
+        let used = (100.0 - meter.fill).clamp(0.0, 100.0);
+        (used, format!("{}% used", used.round() as i64))
     } else {
-        meter.title.clone()
-    }
-}
-
-fn limits_timeline(cards: &[TrayCard]) -> String {
-    let mut marks = Vec::new();
-    for card in cards {
-        let Some(meter) = primary_meter(card) else {
-            continue;
-        };
-        let Some(ms) = meter.resets_in_ms else {
-            continue;
-        };
-        marks.push(format!(
-            "<div class=\"tick\" data-reset-ms=\"{ms}\"><i></i><span>{}</span></div>",
-            esc(&duration_text(ms))
-        ));
-    }
-    if marks.is_empty() {
-        return String::new();
-    }
+        (meter.fill, meter.left.clone())
+    };
+    let reset = meter.reset_text.as_deref().map(esc).unwrap_or_default();
+    let pace = pace_sentence(meter);
     format!(
-        r#"<section class="returns"><div class="row"><div><h2>Limits come back</h2><p class="note">Tightest limit per provider</p></div><div class="range"><button type="button" data-range="24">24h</button><button type="button" class="on" data-range="168">7d</button></div></div><div class="timeline"><div class="rail"></div>{marks}</div><p class="none" hidden>No resets in this window</p></section>"#,
-        marks = marks.join("")
+        "<section class=\"quota\"><h2>{title}</h2><div class=\"track\"><div class=\"fill\" style=\"width:{fill:.1}%\"><i class=\"dot\"></i></div></div><div class=\"pair\"><span>{caption}</span><span>{reset}</span></div>{pace}</section>",
+        title = esc(&meter.title),
+        caption = esc(&caption),
     )
 }
 
-fn meter_html(meter: &Meter) -> String {
-    let mark = meter
-        .marker
-        .map(|percent| {
-            let class = if meter.deficit {
-                "mark deficit"
-            } else {
-                "mark"
-            };
-            format!("<i class=\"{class}\" style=\"left:{percent:.1}%\"></i>")
-        })
-        .unwrap_or_default();
-    let pace_left = meter
-        .pace_left
-        .as_deref()
-        .map(|text| format!("<span class=\"sub\">{}</span>", esc(text)))
-        .unwrap_or_default();
-    let pace_right = meter
-        .pace_right
-        .as_deref()
-        .map(|text| format!("<span class=\"sub\">{}</span>", esc(text)))
-        .unwrap_or_default();
-    let reset = meter
-        .reset_text
-        .as_deref()
-        .map(|text| format!("<span class=\"sub\">{}</span>", esc(text)))
-        .unwrap_or_default();
+fn pace_sentence(meter: &Meter) -> String {
+    let Some(left) = &meter.pace_left else {
+        return String::new();
+    };
+    let stance = if left == "On pace" {
+        "On pace".to_string()
+    } else if meter.deficit {
+        format!("Behind ({})", left.trim_end_matches(" in deficit"))
+    } else {
+        format!("Ahead ({})", left.trim_end_matches(" in reserve"))
+    };
+    let tail = meter.pace_right.as_deref().unwrap_or("Lasts until reset");
     format!(
-        "<h2 class=\"row\"><span>{title}</span>{reset}</h2><div class=\"track\"><div class=\"fill\" style=\"width:{fill:.1}%\"></div>{mark}</div><div class=\"pair\"><span>{left} {pace_left}</span>{pace_right}</div>",
-        title = esc(&meter.title),
-        fill = meter.fill,
-        left = esc(&meter.left),
+        "<p class=\"pace-line\">Pace: {} · {}</p>",
+        esc(&stance),
+        esc(tail)
     )
 }
 
@@ -1523,12 +1486,15 @@ mod tests {
         assert!(needs_attention(&cards[0]));
         assert!(!needs_attention(&cards[1]));
         let html = render(&cards, true, None);
-        assert!(html.contains("1 needs attention"));
-        assert!(html.contains("Plenty of room"));
-        assert!(html.contains("Limits come back"));
-        assert!(html.contains("Most room:"));
-        assert!(html.contains("in deficit") || html.contains("in reserve"));
-        assert!(html.contains("class=\"dot\""));
+        assert!(html.contains("class=\"switch on\""));
+        assert!(
+            html.contains("data-panel=\"0\" class=\"panel on\"")
+                || html.contains("class=\"panel on\"")
+        );
+        assert!(html.contains("% used"));
+        assert!(html.contains("Resets in"));
+        assert!(html.contains("Pace:"));
+        assert!(html.contains(">Quit</button>"));
         assert!(html.contains("<title>Anthropic</title>"));
         assert!(html.contains("<title>Cursor</title>"));
         assert!(html.contains("<title>OpenAI</title>"));
