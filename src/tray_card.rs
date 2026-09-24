@@ -1380,9 +1380,22 @@ mod tests {
         assert!(html.contains("data-reset-confirm"));
         assert!(html.contains("--brand:"));
         assert!(html.contains("data-act=\"refresh\""));
+        assert!(html.contains("data-act=\"dashboard\""));
+        assert!(html.contains("data-act=\"settings\""));
         assert!(html.contains("Codex &lt;script&gt;"));
         assert!(!html.contains("Codex <script>"));
         assert!(html.contains("<title>OpenAI</title>"));
+    }
+
+    #[test]
+    fn status_line_is_only_present_while_set() {
+        let shown = present(&[], true, Some("Reset used"), 0);
+        assert!(shown.contains("data-act=\"dashboard\""));
+        assert!(shown.contains("data-act=\"settings\""));
+        assert!(shown.contains("<p class=\"status\">Reset used</p>"));
+        let cleared = present(&[], true, None, 0);
+        assert!(!cleared.contains("Reset used"));
+        assert!(!cleared.contains("class=\"status\""));
     }
 
     fn inventory(available: u32, fresh: Freshness) -> Observation<ResetInventory> {
