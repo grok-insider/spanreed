@@ -95,7 +95,11 @@ unit?: string | null,
 /**
  * Amount in `unit` (character count, audio ms, image count, video ms).
  */
-quantity?: number | null, };
+quantity?: number | null,
+/**
+ * Hosted tool types from the request (`x_search`, `web_search`). Not a hop kind.
+ */
+hosted_tools?: Array<string> | null, };
 
 export type AccountScope = { environment: string, owner: string, provider: string, account: string, };
 

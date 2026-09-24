@@ -74,7 +74,9 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev
       - run: bun install --frozen-lockfile
         working-directory: desktop
-      - run: bun test vendor/fabrials-ui/tests
+      - run: bun run check:vendor
+        working-directory: desktop
+      - run: bun run test
         working-directory: desktop
       - run: bun run build
         working-directory: desktop

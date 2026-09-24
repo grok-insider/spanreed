@@ -1,0 +1,79 @@
+/*
+ * Tailwind CSS v4 bridge. Import after tokens.css in hosts that use Tailwind:
+ *   @import "tailwindcss";
+ *   @import "@fabrials/ui/tokens.css";
+ *   @import "@fabrials/ui/tailwind.css";
+ * Shared components are styled by styles.css and do not need @source.
+ * Hosts keep their own `@custom-variant dark`.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+  --color-gem: var(--gem);
+  --color-success: var(--success);
+  --color-success-ink: var(--fui-success-ink);
+  --color-warning: var(--warning);
+  --color-warning-ink: var(--fui-warning-ink);
+  --color-danger-ink: var(--fui-danger-ink);
+  --color-info: var(--info);
+  --color-info-ink: var(--fui-info-ink);
+  --color-control-border: var(--fui-control-border);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--fui-font-sans);
+  --font-mono: var(--fui-font-mono);
+  --font-serif: var(--fui-font-serif);
+  --font-heading: var(--fui-font-sans);
+
+  --radius-xs: var(--fui-radius-xs);
+  --radius-sm: var(--fui-radius-sm);
+  --radius-md: var(--fui-radius-md);
+  --radius-lg: var(--fui-radius-lg);
+  --radius-xl: var(--fui-radius-xl);
+  --radius-2xl: calc(var(--fui-radius-xl) + 0.25rem);
+  --radius-3xl: calc(var(--fui-radius-xl) + 0.5rem);
+  --radius-4xl: calc(var(--fui-radius-xl) + 1rem);
+
+  --shadow-xs: var(--fui-shadow-xs);
+  --shadow-sm: var(--fui-shadow-sm);
+  --shadow-md: var(--fui-shadow-md);
+  --shadow-lg: var(--fui-shadow-lg);
+
+  --ease-fui: var(--fui-ease);
+  --default-transition-duration: var(--fui-duration);
+  --default-transition-timing-function: var(--fui-ease);
+}

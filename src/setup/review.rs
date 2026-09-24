@@ -279,10 +279,24 @@ fn validate_managed_connection(value: &Value, provider: &str, alias: &str) -> Re
     }
     Ok(())
 }
-fn prepare_grok(path: PathBuf, bind: &str, alias: &str) -> Result<Pending, String> {
+fn prepare_grok_change(
+    path: PathBuf,
+    bind: &str,
+    alias: &str,
+    model: Option<&str>,
+) -> Result<Pending, String> {
     let address: std::net::SocketAddr = bind.parse().map_err(|_| "Invalid proxy address")?;
     if !address.ip().is_loopback() || address.port() == 0 || !crate::accounts::valid_alias(alias) {
         return Err("Select a managed account and a nonzero loopback proxy port".into());
+    }
+    if let Some(model) = model {
+        if model.trim() != model
+            || model.is_empty()
+            || model.len() > 256
+            || model.chars().any(char::is_control)
+        {
+            return Err("Enter a valid model ID".into());
+        }
     }
     let before = read(&path)?;
     let text = before.as_deref().unwrap_or_default();
@@ -290,43 +304,79 @@ fn prepare_grok(path: PathBuf, bind: &str, alias: &str) -> Result<Pending, Strin
         .map_err(|_| "Grok configuration is not UTF-8")?
         .parse::<toml_edit::Document>()
         .map_err(|_| "Invalid Grok TOML configuration; no changes made")?;
-    if document.get("endpoints").is_none() {
-        document["endpoints"] = toml_edit::Item::Table(toml_edit::Table::new());
-    }
-    let endpoints = document["endpoints"]
-        .as_table_like_mut()
-        .ok_or("Grok endpoints must be a TOML table")?;
+    let current_model = document
+        .get("models")
+        .and_then(|item| item.get("default"))
+        .and_then(toml_edit::Item::as_str)
+        .map(str::to_owned);
     let endpoint = format!("http://{address}/acct/{alias}/v1");
-    if let Some(value) = endpoints.get("cli_chat_proxy_base_url") {
-        if value.as_str().is_none() {
-            return Err("Grok chat endpoint must be a string".into());
+    let endpoint_matches = {
+        if document.get("endpoints").is_none() {
+            document["endpoints"] = toml_edit::Item::Table(toml_edit::Table::new());
         }
-        if value.as_str() == Some(endpoint.as_str()) {
-            return Err("Grok Build is already configured for this connection".into());
+        let endpoints = document["endpoints"]
+            .as_table_like_mut()
+            .ok_or("Grok endpoints must be a TOML table")?;
+        if let Some(value) = endpoints.get("cli_chat_proxy_base_url") {
+            if value.as_str().is_none() {
+                return Err("Grok chat endpoint must be a string".into());
+            }
         }
+        let matches = endpoints
+            .get("cli_chat_proxy_base_url")
+            .and_then(toml_edit::Item::as_str)
+            == Some(endpoint.as_str());
+        if !matches {
+            let mut value = toml_edit::Value::from(endpoint.clone());
+            if let Some(previous) = endpoints
+                .get("cli_chat_proxy_base_url")
+                .and_then(toml_edit::Item::as_value)
+            {
+                *value.decor_mut() = previous.decor().clone();
+            }
+            if let Some(existing) = endpoints.get_mut("cli_chat_proxy_base_url") {
+                *existing = toml_edit::Item::Value(value);
+            } else {
+                endpoints.insert("cli_chat_proxy_base_url", toml_edit::Item::Value(value));
+            }
+        }
+        matches
+    };
+    let model_matches = model.is_none_or(|model| current_model.as_deref() == Some(model));
+    if endpoint_matches && model_matches {
+        return Err("Grok Build is already configured for this connection".into());
     }
-    let mut value = toml_edit::Value::from(endpoint.clone());
-    if let Some(previous) = endpoints
-        .get("cli_chat_proxy_base_url")
-        .and_then(toml_edit::Item::as_value)
-    {
-        *value.decor_mut() = previous.decor().clone();
-    }
-    if let Some(existing) = endpoints.get_mut("cli_chat_proxy_base_url") {
-        *existing = toml_edit::Item::Value(value);
-    } else {
-        endpoints.insert("cli_chat_proxy_base_url", toml_edit::Item::Value(value));
+    if let Some(model) = model.filter(|model| current_model.as_deref() != Some(*model)) {
+        if document.get("models").is_none() {
+            document["models"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        let models = document["models"]
+            .as_table_like_mut()
+            .ok_or("Grok models must be a TOML table")?;
+        let mut value = toml_edit::Value::from(model);
+        if let Some(previous) = models.get("default").and_then(toml_edit::Item::as_value) {
+            *value.decor_mut() = previous.decor().clone();
+        }
+        if let Some(existing) = models.get_mut("default") {
+            *existing = toml_edit::Item::Value(value);
+        } else {
+            models.insert("default", toml_edit::Item::Value(value));
+        }
     }
     let after = document.to_string().into_bytes();
     if after.len() as u64 > MAX_BYTES {
         return Err("Resulting client configuration exceeds 2 MiB".into());
+    }
+    let mut addition = json!({"endpoints":{"cli_chat_proxy_base_url":endpoint}});
+    if let Some(model) = model {
+        addition["models"] = json!({"default": model});
     }
     Ok(Pending {
         view: Preview {
             id: fabrials_runtime::accounting::new_request_id(),
             path: path.display().to_string(),
             provider_id: format!("grok/{alias}"),
-            addition: json!({"endpoints":{"cli_chat_proxy_base_url":endpoint}}),
+            addition,
             warnings: super::grok_environment::warnings(),
             client: ConfigurationClient::Grok,
             operation: Operation::Update,
@@ -339,6 +389,9 @@ fn prepare_grok(path: PathBuf, bind: &str, alias: &str) -> Result<Pending, Strin
     })
 }
 pub fn preview_grok(alias: &str) -> Result<Preview, String> {
+    preview_grok_with_model(alias, None)
+}
+pub fn preview_grok_with_model(alias: &str, model: Option<&str>) -> Result<Preview, String> {
     let status = crate::desktop_runtime::status()?;
     if status.state != crate::desktop_runtime::ProxyState::Running {
         return Err("Start the local proxy before configuring a client".into());
@@ -349,7 +402,7 @@ pub fn preview_grok(alias: &str) -> Result<Preview, String> {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| crate::creds::expand("~/.grok"));
-    let mut plan = prepare_grok(home.join("config.toml"), &status.bind, alias)?;
+    let mut plan = prepare_grok_change(home.join("config.toml"), &status.bind, alias, model)?;
     plan.context = Some((account.id, account.generation, status.bind));
     let view = plan.view.clone();
     *pending()
@@ -722,7 +775,7 @@ mod tests {
         let path = root.join("config.toml");
         let original = "# user configuration\n[models]\ndefault = \"keep-model\" # keep model\n[endpoints]\n# endpoint comment\ncli_chat_proxy_base_url = \"https://example.invalid/v1\" # preserve this\ndeployment_key = \"synthetic-secret\"\n";
         std::fs::write(&path, original).unwrap();
-        let plan = prepare_grok(path.clone(), "[::1]:18736", "work").unwrap();
+        let plan = prepare_grok_change(path.clone(), "[::1]:18736", "work", None).unwrap();
         assert_eq!(plan.view.client, ConfigurationClient::Grok);
         assert!(!serde_json::to_string(&plan.view)
             .unwrap()
@@ -751,11 +804,27 @@ mod tests {
             document["endpoints"]["cli_chat_proxy_base_url"].as_str(),
             Some("http://[::1]:18736/acct/work/v1")
         );
-        assert!(prepare_grok(path.clone(), "[::1]:18736", "work").is_err());
+        assert!(prepare_grok_change(path.clone(), "[::1]:18736", "work", None).is_err());
+        let with_model =
+            prepare_grok_change(path.clone(), "[::1]:18736", "work", Some("grok-4.5")).unwrap();
+        assert_eq!(with_model.view.addition["models"]["default"], "grok-4.5");
+        apply(with_model, &root.join("backups")).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("# keep model"));
+        let document: toml::Value = toml::from_str(&written).unwrap();
+        assert_eq!(document["models"]["default"].as_str(), Some("grok-4.5"));
+        assert_eq!(
+            document["endpoints"]["cli_chat_proxy_base_url"].as_str(),
+            Some("http://[::1]:18736/acct/work/v1")
+        );
+        assert!(
+            prepare_grok_change(path.clone(), "[::1]:18736", "work", Some("grok-4.5")).is_err()
+        );
+        assert!(prepare_grok_change(path.clone(), "[::1]:18736", "work", Some(" bad")).is_err());
         std::fs::write(&path, "endpoints = 42").unwrap();
-        assert!(prepare_grok(path.clone(), "127.0.0.1:18736", "work").is_err());
+        assert!(prepare_grok_change(path.clone(), "127.0.0.1:18736", "work", None).is_err());
         std::fs::write(&path, "[invalid").unwrap();
-        assert!(prepare_grok(path, "127.0.0.1:18736", "work").is_err());
+        assert!(prepare_grok_change(path, "127.0.0.1:18736", "work", None).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

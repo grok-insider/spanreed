@@ -1,81 +1,98 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ConsumptionView, type ConsumptionReport } from "@fabrials/ui";
+import { CollectionToolbar, Input, Label, NativeSelect, PageHeader, Skeleton, StatePanel, Tabs, TabsContent, TabsList, TabsTrigger } from "@fabrials/ui";
+import { ConsumptionView, type ConsumptionReport, type ConsumptionTotal } from "@fabrials/ai-ui";
+import { useLocalData } from "./local-data";
+import { ErrorAlert } from "./feedback";
+import { formatCompact, formatUsd } from "./format";
+import { HistoryTab } from "./history";
+import { RequestsTab } from "./requests";
+import { UsageSourcesTab, type UsageCatalog } from "./usage-sources";
+import { routeHref } from "./routes";
 
-interface Settings { additional_roots: Record<string, string[]>; disabled_clients: string[] }
-interface Catalog { clients: {id: string; name: string; remote_collection: boolean}[]; settings: Settings; connections: string[] }
+const tabs = [
+  { id: "consumption", label: "Consumption" },
+  { id: "history", label: "Limit history" },
+  { id: "requests", label: "Requests" },
+  { id: "sources", label: "Sources" },
+] as const;
 
-export function LocalUsage() {
-  const [report,setReport] = React.useState<ConsumptionReport | null>(null);
-  const [catalog,setCatalog] = React.useState<Catalog | null>(null);
-  const [client,setClient] = React.useState("");
-  const [days,setDays] = React.useState(31);
-  const [model,setModel] = React.useState("");
-  const [modelFilter,setModelFilter] = React.useState("");
-  React.useEffect(()=>{const timer=setTimeout(()=>setModelFilter(model.trim()),350);return()=>clearTimeout(timer);},[model]);
-  const [error,setError] = React.useState<string | null>(null);
-  const [busy,setBusy] = React.useState(false);
-  const [source,setSource] = React.useState("codex");
-  const [roots,setRoots] = React.useState("");
-  const [notice,setNotice] = React.useState("");
-  const [remoteClient,setRemoteClient]=React.useState("cursor");
-  const [account,setAccount]=React.useState("");
-  const [credential,setCredential]=React.useState("");
-  const generation = React.useRef(0);
-  const refresh = React.useCallback(async (force = false) => {
-    const current = ++generation.current;
-    setBusy(true);setError(null);
-    try {
-      const result = await invoke<ConsumptionReport>("usage_report",{force,filter:{client:client || null,model:modelFilter || null,since_ms:Date.now()-days*86400000}});
-      if (current === generation.current) setReport(result);
-    } catch(error) {if(current === generation.current)setError(String(error));}
-    finally {if(current === generation.current)setBusy(false);}
-  },[client,days,modelFilter]);
-  React.useEffect(()=>{void refresh();const timer=setInterval(()=>{if(!document.hidden)void refresh();},60000);return ()=>{clearInterval(timer);generation.current++;};},[refresh]);
-  React.useEffect(()=>{void invoke<Catalog>("usage_sources").then(setCatalog).catch(error=>setError(String(error)));},[]);
-  React.useEffect(()=>{setRoots((catalog?.settings.additional_roots[source] || []).join("\n"));},[catalog,source]);
-  async function saveRoots() {
-    if (!catalog) return;
-    setBusy(true);setNotice("");
-    try {
-      const settings = {...catalog.settings,additional_roots:{...catalog.settings.additional_roots,[source]:roots.split("\n").map(root=>root.trim()).filter(Boolean)}};
-      await invoke("save_usage_sources",{settings});setCatalog({...catalog,settings});setNotice("Source folders saved.");await refresh(true);
-    } catch(error) {setError(String(error));} finally {setBusy(false);}
-  }
+export function UsagePage({ tab }: { tab: string | null }) {
+  const current = tabs.some((item) => item.id === tab) ? tab! : "consumption";
   return <>
-    <div className="fb-heading"><h1>Usage</h1><p>Consumption from your local clients. No proxy connection is required.</p></div>
-    <div className="fb-consumption-filters">
-      <label>Client <select value={client} onChange={event=>setClient(event.target.value)}><option value="">All clients</option>{catalog?.clients.map(client=><option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
-      <label>Period <select value={days} onChange={event=>setDays(Number(event.target.value))}><option value={7}>7 days</option><option value={31}>31 days</option><option value={90}>90 days</option><option value={365}>365 days</option></select></label>
-      <label>Model <input value={model} onChange={event=>setModel(event.target.value)} placeholder="All models" /></label>
-      <button className="fb-button" disabled={busy} onClick={()=>void refresh(true)}>{busy?"Reading usage…":"Refresh usage"}</button>
-    </div>
-    {error && <p role="alert" className="fb-error">{error}</p>}
-    {notice && <p role="status">{notice}</p>}
-    {report && <ConsumptionView report={report} />}
-    {!report && !busy && !error && <p>No local usage found.</p>}
-    <details className="fb-card"><summary className="fb-card-body">Connect usage reports</summary><form className="fb-card-body fb-form" onSubmit={event=>{
-      event.preventDefault();setBusy(true);setError(null);
-      void invoke("connect_usage_source",{connection:{client:remoteClient,account,credential}})
-        .then(async()=>{setCredential("");setNotice("Usage connection saved on this machine.");setCatalog(await invoke<Catalog>("usage_sources"));await refresh(true);})
-        .catch(error=>setError(String(error))).finally(()=>setBusy(false));
-    }}>
-      <p className="fb-muted">Connected reports: {catalog?.connections?.join(", ") || "None"}</p>
-      <p>Read usage from an existing account. The credential stays on this machine and is not included in synchronization.</p>
-      <label>Client <select value={remoteClient} onChange={event=>{setRemoteClient(event.target.value);setCredential("");}}><option value="cursor">Cursor</option><option value="trae">Trae</option><option value="warp">Warp</option></select></label>
-      <label>Account label <input required value={account} onChange={event=>setAccount(event.target.value)} pattern="[A-Za-z0-9_.-]+" maxLength={128}/></label>
-      <label>{remoteClient==="cursor"?"Cursor session cookie (WorkosCursorSessionToken)":remoteClient==="trae"?"Trae access token":"Warp access token"}<input required type="password" autoComplete="off" value={credential} onChange={event=>setCredential(event.target.value)}/></label>
-      <button className="fb-button" disabled={busy}>Save connection and read usage</button>
-      <button type="button" className="fb-button" disabled={busy} onClick={()=>{
-        setBusy(true);void invoke("disconnect_usage_source",{client:remoteClient}).then(async()=>{setCredential("");setNotice("Connection and imported report cleared.");setCatalog(await invoke<Catalog>("usage_sources"));await refresh(true);}).catch(error=>setError(String(error))).finally(()=>setBusy(false));
-      }}>Disconnect and clear imported report</button>
-    </form></details>
-    <details className="fb-card"><summary className="fb-card-body">Additional source folders</summary><div className="fb-card-body fb-form">
-      <p>Default locations are detected automatically. Add other homes or archives here, one absolute path per line.</p>
-      <label>Client <select value={source} onChange={event=>setSource(event.target.value)}>{catalog?.clients.map(client=><option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
-      <label><span><input type="checkbox" checked={!catalog?.settings.disabled_clients.includes(source)} onChange={event=>{if(catalog)setCatalog({...catalog,settings:{...catalog.settings,disabled_clients:event.target.checked?catalog.settings.disabled_clients.filter(id=>id!==source):[...new Set([...catalog.settings.disabled_clients,source])]}});}}/> Collect this source</span></label>
-      <label style={{display:"block",marginBlock:12}}>Folders<textarea rows={4} style={{display:"block",width:"100%",boxSizing:"border-box"}} value={roots} onChange={event=>setRoots(event.target.value)} /></label>
-      <button className="fb-button" disabled={busy || !catalog} onClick={()=>void saveRoots()}>Save folders</button>
-    </div></details>
+    <PageHeader title="Usage" description="What your tools used, read from their local logs, limit readings over time and requests sent through Connect." />
+    <Tabs value={current} onValueChange={(value) => { location.hash = routeHref({ workspace: "local", page: "usage", tab: String(value) }); }}>
+      <TabsList aria-label="Usage views">
+        {tabs.map((item) => <TabsTrigger key={item.id} value={item.id}>{item.label}</TabsTrigger>)}
+      </TabsList>
+      <TabsContent value="consumption"><ConsumptionTab /></TabsContent>
+      <TabsContent value="history"><HistoryTab /></TabsContent>
+      <TabsContent value="requests"><RequestsTab /></TabsContent>
+      <TabsContent value="sources"><UsageSourcesTab /></TabsContent>
+    </Tabs>
   </>;
+}
+
+function DailyChart({ days }: { days: ConsumptionTotal[] }) {
+  if (days.length < 2) return null;
+  const peak = days.reduce((best, day) => (day.tokens > best.tokens ? day : best), days[0]);
+  const max = Math.max(1, peak.tokens);
+  return <figure className="sr-chart">
+    <figcaption className="sr-chart-caption">
+      <span>Tokens per day</span>
+      <span className="fui-description">Peak {formatCompact(peak.tokens)} on {peak.key}</span>
+    </figcaption>
+    <div className="sr-bars" role="img" aria-label={`Tokens per day from ${days[0].key} to ${days[days.length - 1].key}. Peak ${formatCompact(peak.tokens)} on ${peak.key}. The breakdown table lists every day.`}>
+      {days.map((day) => <span key={day.key} className="sr-bar" style={{ height: `${Math.max(day.tokens ? 2 : 0, (day.tokens / max) * 100)}%` }} title={`${day.key}: ${formatCompact(day.tokens)} tokens · ${formatUsd(day.known_usd)}`} />)}
+    </div>
+    <div className="sr-chart-axis" aria-hidden><span>{days[0].key}</span><span>{days[days.length - 1].key}</span></div>
+  </figure>;
+}
+
+function ConsumptionTab() {
+  const { signal } = useLocalData();
+  const [report, setReport] = React.useState<ConsumptionReport | null>(null);
+  const [catalog, setCatalog] = React.useState<UsageCatalog | null>(null);
+  const [client, setClient] = React.useState("");
+  const [days, setDays] = React.useState(31);
+  const [model, setModel] = React.useState("");
+  const [modelFilter, setModelFilter] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const generation = React.useRef(0);
+  React.useEffect(() => { const timer = setTimeout(() => setModelFilter(model.trim()), 350); return () => clearTimeout(timer); }, [model]);
+  const refresh = React.useCallback(async (force: boolean) => {
+    const current = ++generation.current;
+    setBusy(true); setError(null);
+    try {
+      const result = await invoke<ConsumptionReport>("usage_report", { force, filter: { client: client || null, model: modelFilter || null, since_ms: Date.now() - days * 86_400_000 } });
+      if (current === generation.current) setReport(result);
+    } catch (error) { if (current === generation.current) setError(String(error)); }
+    finally { if (current === generation.current) setBusy(false); }
+  }, [client, days, modelFilter]);
+  const handledSignal = React.useRef(signal);
+  React.useEffect(() => {
+    const force = handledSignal.current !== signal;
+    handledSignal.current = signal;
+    void refresh(force);
+    const timer = setInterval(() => { if (!document.hidden) void refresh(false); }, 60_000);
+    return () => { clearInterval(timer); generation.current++; };
+  }, [refresh, signal]);
+  React.useEffect(() => { void invoke<UsageCatalog>("usage_sources").then(setCatalog).catch((error) => setError(String(error))); }, []);
+  const empty = report && report.total.records === 0 && !report.daily.some((day) => day.tokens > 0);
+  return <div className="sr-stack">
+    <CollectionToolbar label="Consumption filters" filters={<>
+      <Label>Tool<NativeSelect value={client} onChange={(event) => setClient(event.target.value)}><option value="">All tools</option>{catalog?.clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</NativeSelect></Label>
+      <Label>Period<NativeSelect value={days} onChange={(event) => setDays(Number(event.target.value))}><option value={7}>Last 7 days</option><option value={31}>Last 31 days</option><option value={90}>Last 90 days</option><option value={365}>Last 365 days</option></NativeSelect></Label>
+      <Label>Model<Input type="search" value={model} onChange={(event) => setModel(event.target.value)} placeholder="All models" /></Label>
+    </>} />
+    <ErrorAlert title="Couldn't read local usage" error={error} />
+    {!report && busy && <Skeleton className="sr-chart-skeleton" />}
+    {report && empty && <StatePanel state="empty" title="No usage in this period"
+      description="Spanreed reads the local logs of supported tools. Use one of them, pick a longer period, or check which tools were found under Sources." />}
+    {report && !empty && <>
+      <DailyChart days={report.daily} />
+      <ConsumptionView report={report} />
+    </>}
+  </div>;
 }

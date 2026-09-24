@@ -32,8 +32,10 @@
           # Keep source builds independent from local node_modules, target and dist.
           source = lib.cleanSourceWith {
             src = ./.;
+            # Vendored UI packages ship their own dist; only the renderer build output is excluded.
             filter = path: type:
-              !(builtins.elem (builtins.baseNameOf path) [ "target" "node_modules" "dist" ".git" ]);
+              !(builtins.elem (builtins.baseNameOf path) [ "target" "node_modules" ".git" ])
+              && lib.removePrefix "${toString ./.}/" (toString path) != "desktop/dist";
           };
           nodeModules = pkgs.stdenvNoCC.mkDerivation {
             pname = "spanreed-desktop-node-modules";
@@ -50,12 +52,12 @@
               bun install --frozen-lockfile --ignore-scripts --no-progress --cpu '*' --os linux
             '';
             installPhase = ''
-              rm -rf node_modules/@fabrials/ui
+              rm -rf node_modules/@fabrials
               cp -R node_modules "$out"
             '';
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-PwGNtq0k/gx+xCs8YudQdlBgAYdVGnKJgwjZFL7xZ24=";
+            outputHash = "sha256-1nYRYZo2YPP0/A78GFlPFWDtSHKNBrgWG2lY0+j58nk=";
           };
         in pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed-desktop";
@@ -70,14 +72,17 @@
           preBuild = ''
             cp -R ${nodeModules} desktop/node_modules
             chmod -R u+w desktop/node_modules
-            # Local UI source must not come from the fixed-output dependency cache.
-            rm -rf desktop/node_modules/@fabrials/ui
-            ln -s ../../vendor/fabrials-ui desktop/node_modules/@fabrials/ui
+            # Local UI packages must not come from the fixed-output dependency cache.
+            rm -rf desktop/node_modules/@fabrials
+            mkdir -p desktop/node_modules/@fabrials
+            ln -s ../../vendor/fabrials-ui-0.4.0 desktop/node_modules/@fabrials/ui
+            ln -s ../../vendor/fabrials-ai-ui-0.4.0 desktop/node_modules/@fabrials/ai-ui
             patchShebangs desktop/node_modules
             (cd desktop && bun run build)
           '';
           postInstall = ''
             install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/com.fabrials.spanreed.png"
+            install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/spanreed-desktop.png"
             mkdir -p "$out/share/applications"
             cat > "$out/share/applications/com.fabrials.spanreed.desktop" <<EOF
             [Desktop Entry]
@@ -88,7 +93,7 @@
             Icon=com.fabrials.spanreed
             Categories=Development;Utility;
             Terminal=false
-            StartupWMClass=spanreed-desktop
+            StartupWMClass=com.fabrials.spanreed
             EOF
           '';
           dontWrapGApps = true;

@@ -69,8 +69,9 @@ async fn migration_candidates() -> Result<Vec<spanreed::migration::MigrationCand
 }
 
 #[tauri::command]
-async fn preview_grok_configuration(alias: String) -> Result<spanreed::client_configuration::Preview, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::client_configuration::preview_grok(&alias)).await.map_err(|_| "Configuration worker stopped".to_string())?
+async fn preview_grok_configuration(alias: String, model: Option<String>) -> Result<spanreed::client_configuration::Preview, String> {
+    let model = model.filter(|value| !value.is_empty());
+    tauri::async_runtime::spawn_blocking(move || spanreed::client_configuration::preview_grok_with_model(&alias, model.as_deref())).await.map_err(|_| "Configuration worker stopped".to_string())?
 }
 
 #[tauri::command]
