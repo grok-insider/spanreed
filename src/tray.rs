@@ -280,7 +280,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 let st = state.clone();
                 thread::spawn(move || {
                     refresh_state(&st);
-                    set_status(&st, "Usage refreshed");
+                    note_refreshed(&st);
                 });
             } else if message == "ensure" {
                 set_status(&state, "Ensuring capture…");
@@ -358,7 +358,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 let st = state.clone();
                 thread::spawn(move || {
                     refresh_state(&st);
-                    set_status(&st, "Usage refreshed");
+                    note_refreshed(&st);
                 });
             } else if id == id_ensure {
                 set_status(&state, "Ensuring capture…");
@@ -610,6 +610,9 @@ fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
     }
     let state = state.clone();
     thread::spawn(move || {
+        let _reset = ResetFlight {
+            state: state.clone(),
+        };
         let result = crate::providers::codex::redeem_reset(&request_id);
         {
             let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
@@ -624,6 +627,26 @@ fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
         }
         refresh_state(&state);
     });
+}
+
+struct ResetFlight {
+    state: Arc<Mutex<TrayState>>,
+}
+
+impl Drop for ResetFlight {
+    fn drop(&mut self) {
+        let mut guard = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut in_flight = guard.reset_in_flight;
+        let mut status = guard.status_note.clone();
+        let before = status.clone();
+        tray_format::abandon_reset(&mut in_flight, &mut status);
+        guard.reset_in_flight = in_flight;
+        guard.status_note = status;
+        if guard.status_note != before {
+            guard.status_at = Some(Instant::now());
+            guard.dirty = true;
+        }
+    }
 }
 
 fn new_redeem_request_id() -> Result<String, &'static str> {
@@ -644,6 +667,14 @@ fn new_redeem_request_id() -> Result<String, &'static str> {
 fn set_status(state: &Arc<Mutex<TrayState>>, note: &str) {
     let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
     stamp_status(&mut g, note);
+}
+
+fn note_refreshed(state: &Arc<Mutex<TrayState>>) {
+    let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+    if guard.status_note.as_deref() == Some("Capture proxy is DOWN") {
+        return;
+    }
+    stamp_status(&mut guard, "Usage refreshed");
 }
 
 fn stamp_status(guard: &mut TrayState, note: impl Into<String>) {

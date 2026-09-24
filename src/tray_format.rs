@@ -19,6 +19,17 @@ pub fn status_expired(status_at: Option<Instant>, reset_in_flight: bool, now: In
         && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(8))
 }
 
+/// A reset that never reports back must not leave "Using reset…" on the card.
+pub fn abandon_reset(reset_in_flight: &mut bool, status: &mut Option<String>) {
+    if !*reset_in_flight {
+        return;
+    }
+    *reset_in_flight = false;
+    if status.as_deref() == Some("Using reset…") {
+        *status = Some("Could not finish the reset".into());
+    }
+}
+
 /// Tray icon / notification band from a utilization percentage (used 0–100).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TraySeverity {
@@ -212,6 +223,19 @@ mod tests {
         assert!(status_expired(Some(earlier), false, now));
         assert!(!status_expired(Some(earlier), true, now));
         assert!(!status_expired(None, false, now));
+    }
+
+    #[test]
+    fn an_unfinished_reset_does_not_keep_its_status_line() {
+        let mut in_flight = true;
+        let mut status = Some("Using reset…".into());
+        abandon_reset(&mut in_flight, &mut status);
+        assert!(!in_flight);
+        assert_eq!(status.as_deref(), Some("Could not finish the reset"));
+        let mut status = Some("Reset used".into());
+        let mut in_flight = false;
+        abandon_reset(&mut in_flight, &mut status);
+        assert_eq!(status.as_deref(), Some("Reset used"));
     }
 
     #[test]
