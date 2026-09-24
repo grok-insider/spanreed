@@ -68,6 +68,7 @@ mod share_session;
 pub mod sharing_control;
 pub mod sync;
 mod sync_store;
+mod tray_card;
 mod tray_format;
 pub mod usage;
 mod usage_stats;
@@ -75,6 +76,8 @@ mod util;
 
 #[cfg(feature = "tray")]
 mod tray;
+#[cfg(feature = "tray")]
+mod tray_popover;
 
 use std::process::ExitCode;
 

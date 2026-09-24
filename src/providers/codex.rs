@@ -112,6 +112,20 @@ pub(crate) fn local_identity() -> Option<String> {
         })
 }
 
+/// Email shown on the tray card. Never returns a token.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn account_label() -> Option<String> {
+    let (document, _, _) = load_auth()?;
+    let proof = document["tokens"]["id_token"].as_str()?;
+    let claims = util::jwt_payload(proof)?;
+    claims
+        .get("email")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|email| !email.is_empty() && email.contains('@'))
+        .map(str::to_owned)
+}
+
 pub(crate) fn identity_proof() -> Result<String, String> {
     let (document, _, _) = load_auth().ok_or("No local Codex authorization found")?;
     let proof = document["tokens"]["id_token"]

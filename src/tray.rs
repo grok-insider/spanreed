@@ -19,10 +19,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use image::RgbaImage;
-use tao::event::Event;
+use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::api;
 use crate::capture_log;
@@ -111,7 +111,8 @@ pub fn cmd(args: &[String]) -> ExitCode {
                 println!(
                     "spanreed tray — system tray status (Spanreed icon)\n\n\
                      \t--interval S   Refresh every S seconds (default {DEFAULT_INTERVAL_SECS})\n\
-                     Menu: Refresh, Ensure, Open log, Link/Share/Unlink, Check/Install update, Quit tray"
+                     Left click opens the usage card. Right click keeps the menu:\n\
+                     \tRefresh, Ensure, Open log, Link/Share/Unlink, Check/Install update, Quit tray"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -178,9 +179,11 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     // First probe on main thread so tooltip is ready.
     refresh_state(&state);
 
+    let mut popover = crate::tray_popover::Popover::new(&event_loop)?;
     let icon = icon_for_severity(TraySeverity::Ok)?;
     let mut tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
+        .with_menu_on_left_click(false)
         .with_tooltip(tooltip_from(&state))
         .with_icon(icon)
         .with_title(crate::app::APP_NAME)
@@ -211,9 +214,70 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     });
 
     let menu_channel = MenuEvent::receiver();
+    let click_channel = TrayIconEvent::receiver();
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
+
+        if let Event::WindowEvent {
+            event: WindowEvent::Focused(false),
+            ..
+        } = &event
+        {
+            if popover.blur_should_close() {
+                popover.hide();
+            }
+        }
+
+        while let Ok(click) = click_channel.try_recv() {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                rect,
+                ..
+            } = click
+            {
+                let html = usage_card(&state);
+                popover.toggle(rect, html);
+            }
+        }
+
+        while let Some(message) = popover.poll() {
+            if message == "close" {
+                popover.hide();
+            } else if message == "refresh" {
+                set_status(&state, "Refreshing usage…");
+                let st = state.clone();
+                thread::spawn(move || {
+                    refresh_state(&st);
+                    set_status(&st, "Usage refreshed");
+                });
+            } else if message == "ensure" {
+                set_status(&state, "Ensuring capture…");
+                let st = state.clone();
+                thread::spawn(move || {
+                    let msg = match setup::service_ensure(false) {
+                        Ok(m) => format!("Capture: {m}"),
+                        Err(e) => format!("Capture ensure failed: {e}"),
+                    };
+                    set_status(&st, &msg);
+                    refresh_state(&st);
+                });
+            } else if message == "log" {
+                let path = capture_log::capture_log_path();
+                match open_path(&path) {
+                    Ok(()) => set_status(&state, "Opened capture log"),
+                    Err(e) => set_status(&state, &format!("Could not open log: {e}")),
+                }
+            } else if message == "quit" {
+                stop.store(true, Ordering::Relaxed);
+                *control_flow = ControlFlow::Exit;
+            } else if let Some(url) = message.strip_prefix("buy ") {
+                if crate::tray_popover::allowed_buy_url(url.trim()) {
+                    let _ = open_url(url.trim());
+                }
+            }
+        }
 
         if let Event::NewEvents(_) = event {
             let dirty = state.lock().map(|g| g.dirty).unwrap_or(false);
@@ -226,6 +290,9 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     &item_share_primary,
                     &item_unlink,
                 );
+                if popover.visible() {
+                    popover.load(usage_card(&state));
+                }
             }
         }
 
@@ -561,6 +628,16 @@ fn run_update_check(state: &Arc<Mutex<TrayState>>) -> String {
             msg
         }
     }
+}
+
+fn usage_card(state: &Arc<Mutex<TrayState>>) -> String {
+    let guard = state.lock().unwrap_or_else(|error| error.into_inner());
+    crate::tray_card::present(
+        &guard.outputs,
+        guard.capture_up,
+        guard.status_note.as_deref(),
+        crate::util::now_ms(),
+    )
 }
 
 fn tooltip_from(state: &Arc<Mutex<TrayState>>) -> String {
