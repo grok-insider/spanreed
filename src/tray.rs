@@ -232,6 +232,16 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             refresh_state(&state_bg);
         }
     });
+    let proxy = event_loop.create_proxy();
+    let stop_tick = stop.clone();
+    thread::spawn(move || {
+        while !stop_tick.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(250));
+            if proxy.send_event(()).is_err() {
+                break;
+            }
+        }
+    });
 
     let menu_channel = MenuEvent::receiver();
     let click_channel = TrayIconEvent::receiver();
@@ -314,23 +324,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 }
             } else if message == "reset" {
                 redeem_from_card(&state);
-            }
-        }
-
-        if let Event::NewEvents(_) = event {
-            let dirty = state.lock().map(|g| g.dirty).unwrap_or(false);
-            if dirty {
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
-                if popover.visible() {
-                    popover.load(usage_card(&state));
-                }
             }
         }
 
@@ -570,6 +563,21 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                         user_notify("spanreed — updates", &msg, true);
                     }
                 });
+            }
+        }
+
+        let dirty = state.lock().map(|guard| guard.dirty).unwrap_or(false);
+        if dirty {
+            apply_visual(
+                &state,
+                &mut tray,
+                &item_update,
+                &item_check,
+                &item_share_primary,
+                &item_unlink,
+            );
+            if popover.visible() {
+                popover.load(usage_card(&state));
             }
         }
     });
