@@ -1,50 +1,78 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-
+import { Button, Label, NativeSelect } from "@fabrials/ui";
+import { Done, ErrorAlert } from "./feedback";
+import { useModelCatalog } from "./models";
 import type { Preview } from "./contracts";
-export function ClientConfiguration({provider, alias}: {provider: string; alias: string}) {
-  const [client, setClient] = React.useState<"opencode" | "grok">("opencode");
-  const [operation, setOperation] = React.useState<"create" | "update" | "remove">("create");
-  const update = operation === "update";
-  const remove = operation === "remove";
+
+type Client = "opencode" | "grok";
+type Operation = "create" | "update" | "remove";
+
+export function ClientConfiguration({ provider, alias, accountId }: { provider: string; alias: string; accountId: string }) {
+  const [client, setClient] = React.useState<Client>("opencode");
+  const [operation, setOperation] = React.useState<Operation>("create");
   const [model, setModel] = React.useState("");
   const [review, setReview] = React.useState<Preview | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
+  const needsModel = client === "grok" || operation !== "remove";
+  const { catalog, error: catalogError } = useModelCatalog(needsModel ? accountId : null);
+  React.useEffect(() => { setModel(""); setReview(null); }, [accountId, client]);
   async function preview() {
-    setBusy(true);setError(null);setNotice(null);setReview(null);
-    try { setReview(await invoke<Preview>(client === "grok" ? "preview_grok_configuration" : remove ? "preview_opencode_remove" : update ? "preview_opencode_update" : "preview_opencode_configuration", client === "grok" ? {alias} : {provider, alias, model:model.trim()})); }
-    catch (error) { setError(String(error)); }
+    setBusy(true); setError(null); setNotice(null); setReview(null);
+    try {
+      const command = client === "grok" ? "preview_grok_configuration" : operation === "remove" ? "preview_opencode_remove" : operation === "update" ? "preview_opencode_update" : "preview_opencode_configuration";
+      setReview(await invoke<Preview>(command, client === "grok" ? { alias, model: model.trim() } : { provider, alias, model: model.trim() }));
+    } catch (error) { setError(String(error)); }
     finally { setBusy(false); }
   }
   async function apply() {
     if (!review) return;
-    setBusy(true);setError(null);
+    setBusy(true); setError(null);
     try {
-      const backup = await invoke<string | null>("apply_client_configuration", {id:review.id});
-      const instruction = review.operation === "remove" ? "Connection removed. Restart OpenCode to refresh the available providers." : review.client === "grok" ? "Grok Build endpoint saved. Start a new Grok session to use this account. Other endpoint overrides may take precedence." : `Connection added. Restart OpenCode and select ${review.providerId}/${model.trim()} in /models.`;
-      setNotice(`${review.warnings.join(" ")}${review.warnings.length ? " " : ""}${review.operation === "update" && review.client === "opencode" ? instruction.replace("Connection added.", "Connection updated.") : instruction}${backup ? ` Previous configuration saved to ${backup}.` : ""}`);
+      const backup = await invoke<string | null>("apply_client_configuration", { id: review.id });
+      const instruction = review.operation === "remove" ? "Connection removed. Restart OpenCode to refresh its providers."
+        : review.client === "grok" ? `Grok Build now uses this account${model.trim() ? ` and ${model.trim()}` : ""}. Start a new Grok session. Other endpoint overrides may take precedence.`
+        : `Connection ${review.operation === "update" ? "updated" : "added"}. Restart OpenCode and pick ${review.providerId}/${model.trim()} in /models.`;
+      setNotice([...review.warnings, instruction, backup ? `Your previous file was backed up to ${backup}.` : ""].filter(Boolean).join(" "));
       setReview(null);
-    } catch (error) { setError(String(error));setReview(null); }
+    } catch (error) { setError(String(error)); setReview(null); }
     finally { setBusy(false); }
   }
-  return <section className="fb-form" aria-label="Client configuration">
-    <h3>Save a client connection</h3>
-    <label>Client<select value={client} disabled={busy || !!review} onChange={event=>{setClient(event.target.value as "opencode" | "grok");setError(null);setNotice(null);}}><option value="opencode">OpenCode</option>{provider === "grok" && <option value="grok">Grok Build</option>}</select></label>
-    <p className="fb-muted">{client === "grok" ? "Update the Grok Build chat endpoint for this account. Existing model settings and TOML comments are preserved." : remove ? "Remove this generated connection. Change any default model references first." : update ? "Update the endpoint and model list of this Spanreed connection. Your default model stays as configured." : "Add a separate connection for this account. Your default model stays as configured."} Review the changes before saving.</p>
-    {client === "opencode" && <label>Operation<select value={operation} disabled={busy || !!review} onChange={event=>setOperation(event.target.value as typeof operation)}><option value="create">Create connection</option><option value="update">Update existing connection</option><option value="remove">Remove connection</option></select></label>}
-    {client === "opencode" && !remove && <label>Model ID<input value={model} disabled={busy || !!review} maxLength={256} onChange={event=>{setModel(event.target.value);setNotice(null);}} placeholder="Use an ID from the model catalog" /></label>}
-    {!review && <button className="fb-button" disabled={busy || (client === "opencode" && !remove && !model.trim())} onClick={()=>void preview()}>{busy ? "Preparing…" : "Review configuration"}</button>}
-    {review && <div className="fb-form">
-      {review.warnings.length > 0 && <div role="status">{review.warnings.map(warning => <p key={warning}>{warning}</p>)}</div>}
-      <p>File: <code style={{overflowWrap:"anywhere"}}>{review.path}</code></p>
-      <p>{review.operation === "remove" ? "Remove" : review.operation === "update" ? "Update" : "Create"} provider: <strong>{review.providerId}</strong></p>{review.client === "opencode" && review.operation === "update" && <p>This replaces the connection endpoint and model list with the values below.</p>}
-      {review.operation !== "remove" && <pre style={{whiteSpace:"pre-wrap",overflowWrap:"anywhere"}}>{JSON.stringify(review.addition,null,2)}</pre>}
-      <p className="fb-muted">A private backup is saved before changing an existing file. This review expires in five minutes.</p>
-      <div className="fb-row"><button className="fb-button fb-button-primary" disabled={busy} onClick={()=>void apply()}>{busy ? "Saving…" : "Apply configuration"}</button><button className="fb-button" disabled={busy} onClick={()=>setReview(null)}>Cancel</button></div>
-    </div>}
-    {error && <p className="fb-error" role="alert">{error}</p>}
-    {notice && <p role="status" style={{overflowWrap:"anywhere"}}>{notice}</p>}
+  return <section className="sr-form" aria-labelledby="client-configuration-title">
+    <h3 id="client-configuration-title" className="sr-subsection-title">Write the tool's settings for you</h3>
+    <p className="fui-description">Spanreed shows you the exact change first and backs up the file before saving.</p>
+    <div className="sr-field-row">
+      <Label>Tool<NativeSelect value={client} disabled={busy || !!review} onChange={(event) => { setClient(event.target.value as Client); setError(null); setNotice(null); }}>
+        <option value="opencode">OpenCode</option>{provider === "grok" && <option value="grok">Grok Build</option>}
+      </NativeSelect></Label>
+      {client === "opencode" && <Label>Change<NativeSelect value={operation} disabled={busy || !!review} onChange={(event) => setOperation(event.target.value as Operation)}>
+        <option value="create">Add a connection</option><option value="update">Update the existing connection</option><option value="remove">Remove the connection</option>
+      </NativeSelect></Label>}
+    </div>
+    <p className="fui-description">{client === "grok" ? "Points Grok Build's chat endpoint at this account and sets the model you choose as its default. Other settings and TOML comments are kept."
+      : operation === "remove" ? "Removes the connection Spanreed added. Change any default model that uses it first."
+      : operation === "update" ? "Refreshes the address and model of the connection Spanreed added. Your default model stays as it is."
+      : "Adds a separate provider for this account. Your default model stays as it is."}</p>
+    {needsModel && (catalog?.models.length
+      ? <Label>Model<NativeSelect value={catalog.models.includes(model) ? model : ""} disabled={busy || !!review} onChange={(event) => { setModel(event.target.value); setNotice(null); }}>
+          <option value="">Choose a model</option>{catalog.models.map((id) => <option key={id} value={id}>{id}</option>)}
+        </NativeSelect></Label>
+      : !catalogError && <p className="fui-description">{catalog ? "This account hasn't reported any models yet. Check it under Accounts, then come back and choose one." : "Reading this account's models…"}</p>)}
+    {catalogError && <ErrorAlert title="Couldn't read the model list" error={catalogError} />}
+    <ErrorAlert title="Couldn't prepare the change" error={error} />
+    <Done>{notice}</Done>
+    {!review ? <div className="fui-actions"><Button variant="outline" disabled={busy || (needsModel && !model.trim())} onClick={() => void preview()}>{busy ? "Preparing…" : "Review change"}</Button></div>
+      : <div className="sr-review">
+        {review.warnings.map((warning) => <p key={warning} className="sr-warning">{warning}</p>)}
+        <dl className="sr-facts">
+          <dt>File</dt><dd><code>{review.path}</code></dd>
+          <dt>{review.operation === "remove" ? "Removes" : review.operation === "update" ? "Updates" : "Adds"}</dt><dd><code>{review.providerId}</code></dd>
+        </dl>
+        {review.operation !== "remove" && <pre className="sr-code">{JSON.stringify(review.addition, null, 2)}</pre>}
+        <p className="fui-description">This review expires in five minutes.</p>
+        <div className="fui-actions"><Button disabled={busy} onClick={() => void apply()}>{busy ? "Saving…" : "Apply change"}</Button><Button variant="outline" disabled={busy} onClick={() => setReview(null)}>Cancel</Button></div>
+      </div>}
   </section>;
 }

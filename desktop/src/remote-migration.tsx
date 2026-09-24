@@ -1,5 +1,5 @@
 import * as React from "react";
-import { HostedMigration, type HostedMigrationApi } from "@fabrials/ui";
+import { HostedMigration, type HostedMigrationApi } from "@fabrials/ai-ui";
 import { RemoteDeviceLogin } from "./remote-device-login";
 import { useRemote } from "./remote-api";
 export function RemoteMigration() {
