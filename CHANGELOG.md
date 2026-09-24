@@ -4,8 +4,23 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1] - 2026-09-14
+## [0.6.1] - 2026-09-24
 
+- fix: use the ruby gem as the app icon
+- fix: release the account file lock on drop
+- fix: send the xAI compat fixture to the mock upstream
+- fix: show hosted resets relatively and fail stuck forwards
+- fix: remove the unused Grok review wrapper
+- fix(desktop): close the remaining setup and sharing gaps
+- ci: retrigger stuck pull request checks
+- fix: compare the Nix vendor links with normalized newlines
+- fix: keep vendored UI bytes stable and refresh the Nix node hash
+- feat(desktop): restyle the console with @fabrials/ui 0.4
+- docs(desktop): describe the sections, vendored UI packages and fixtures
+- feat(desktop): regroup the app into overview, usage, accounts, routing and connect
+- feat(desktop): add browser fixtures for layout review
+- fix: regenerate model contract bindings for hosted tools
+- feat: replace GTK titlebar with in-app Spanreed chrome
 - fix: match hosted OpenCode Go and Grok Build capture hops (#31)
 - feat: route local capture through OpenCode Go (#29)
 
