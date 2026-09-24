@@ -124,38 +124,42 @@ fn desktop_alive() -> bool {
     pid == std::process::id() || process_alive(pid)
 }
 
-fn spawn_desktop() -> Result<(), String> {
-    let name = if cfg!(windows) {
-        "spanreed-desktop.exe"
+fn desktop_binary_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["spanreed-desktop.exe", "Spanreed.exe"]
     } else {
-        "spanreed-desktop"
-    };
+        &["spanreed-desktop", "Spanreed"]
+    }
+}
+
+fn spawn_desktop() -> Result<(), String> {
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("SPANREED_DESKTOP") {
         if !path.is_empty() {
             candidates.push(PathBuf::from(path));
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join(name));
-            #[cfg(target_os = "macos")]
-            candidates.push(dir.join("../Spanreed.app/Contents/MacOS/spanreed-desktop"));
+    for name in desktop_binary_names() {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join(name));
+                #[cfg(target_os = "macos")]
+                candidates.push(dir.join("../Spanreed.app/Contents/MacOS").join(name));
+            }
         }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        candidates.push(PathBuf::from(
-            "/Applications/Spanreed.app/Contents/MacOS/spanreed-desktop",
-        ));
-        if let Some(home) = std::env::var_os("HOME") {
-            candidates.push(
-                PathBuf::from(home)
-                    .join("Applications/Spanreed.app/Contents/MacOS/spanreed-desktop"),
-            );
+        #[cfg(target_os = "macos")]
+        {
+            candidates.push(PathBuf::from("/Applications/Spanreed.app/Contents/MacOS").join(name));
+            if let Some(home) = std::env::var_os("HOME") {
+                candidates.push(
+                    PathBuf::from(home)
+                        .join("Applications/Spanreed.app/Contents/MacOS")
+                        .join(name),
+                );
+            }
         }
+        candidates.push(PathBuf::from(name));
     }
-    candidates.push(PathBuf::from(name));
     let mut last = "Install the desktop package.".to_string();
     for path in candidates {
         match Command::new(&path).spawn() {
@@ -250,6 +254,15 @@ mod tests {
             assert_eq!(take().as_deref(), Some("#/local/settings"));
             assert!(take().is_none());
         });
+    }
+
+    #[test]
+    fn desktop_candidates_include_the_packaged_names() {
+        let names = desktop_binary_names();
+        assert!(names
+            .iter()
+            .any(|name| name.starts_with("spanreed-desktop")));
+        assert!(names.iter().any(|name| name.starts_with("Spanreed")));
     }
 
     #[test]
