@@ -6,6 +6,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.6.1] - 2026-09-24
 
+- feat: label the local installation with the machine hostname
 - feat: cover every CodexBar provider
 - fix: use the ruby gem as the app icon
 - fix: release the account file lock on drop
