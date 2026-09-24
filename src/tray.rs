@@ -1085,6 +1085,9 @@ fn user_notify(title: &str, body: &str, modal: bool) {
     let title = title.to_string();
     let body = body.to_string();
     thread::spawn(move || {
+        if crate::desktop_open::hand_off_alert(&title, &body) {
+            return;
+        }
         if let Err(error) = crate::notifications::deliver_os(&title, &body) {
             log::warn!("tray notify failed: {error}");
             #[cfg(windows)]

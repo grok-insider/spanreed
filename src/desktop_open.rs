@@ -5,6 +5,8 @@ use std::process::Command;
 
 const LOCK: &str = "desktop.lock";
 const ROUTE: &str = "desktop-route";
+const ALERT: &str = "desktop-alert";
+const ALERT_ACK: &str = "desktop-alert-ack";
 
 /// Queue a local desktop page and make sure the window process is up.
 pub fn request(page: &str) -> Result<(), String> {
@@ -32,6 +34,64 @@ pub fn mark_running() {
     let dir = crate::app::data_dir();
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(dir.join(LOCK), format!("{}\n", std::process::id()));
+}
+
+pub struct PendingAlert {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+}
+
+/// Ask a running desktop to show an alert. False when it is not running or
+/// does not acknowledge in time, so the caller can deliver it directly.
+pub fn hand_off_alert(title: &str, body: &str) -> bool {
+    if !desktop_alive() {
+        return false;
+    }
+    let id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos().to_string())
+        .unwrap_or_else(|_| "0".into());
+    let dir = crate::app::data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::remove_file(dir.join(ALERT_ACK));
+    let payload = format!("{id}\n{}\n{}", one_line(title), one_line(body));
+    if std::fs::write(dir.join(ALERT), payload).is_err() {
+        return false;
+    }
+    for _ in 0..16 {
+        if std::fs::read_to_string(dir.join(ALERT_ACK))
+            .ok()
+            .is_some_and(|text| text.trim() == id)
+        {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    false
+}
+
+pub fn take_alert() -> Option<PendingAlert> {
+    let path = crate::app::data_dir().join(ALERT);
+    let text = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let mut lines = text.lines();
+    let id = lines.next()?.trim().to_string();
+    if id.is_empty() {
+        return None;
+    }
+    let title = lines.next().unwrap_or("").to_string();
+    let body = lines.collect::<Vec<_>>().join("\n");
+    Some(PendingAlert { id, title, body })
+}
+
+pub fn ack_alert(id: &str) {
+    let dir = crate::app::data_dir();
+    let _ = std::fs::write(dir.join(ALERT_ACK), id);
+}
+
+fn one_line(value: &str) -> String {
+    value.replace(['\n', '\r'], " ").chars().take(240).collect()
 }
 
 pub fn unmark_running() {
@@ -189,6 +249,31 @@ mod tests {
             request("settings").expect("running desktop accepts settings");
             assert_eq!(take().as_deref(), Some("#/local/settings"));
             assert!(take().is_none());
+        });
+    }
+
+    #[test]
+    fn running_desktop_accepts_an_alert() {
+        with_data_home(|_| {
+            assert!(!hand_off_alert("Capture proxy is DOWN", "Ensure capture"));
+            mark_running();
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let stop_worker = stop.clone();
+            let worker = std::thread::spawn(move || {
+                while !stop_worker.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(alert) = take_alert() {
+                        assert_eq!(alert.title, "Capture proxy is DOWN");
+                        ack_alert(&alert.id);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            });
+            assert!(hand_off_alert(
+                "Capture proxy is DOWN",
+                "Ensure capture before new hops."
+            ));
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            worker.join().unwrap();
         });
     }
 
