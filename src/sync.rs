@@ -20,6 +20,24 @@ pub struct SyncStatus {
     pub error: Option<String>,
 }
 
+fn remember_installation_label(owner: &str, device: &str) -> Result<(), String> {
+    let Some(hostname) = crate::machine_name::profile_label() else {
+        return Ok(());
+    };
+    if hostname == device {
+        return Ok(());
+    }
+    let response = request_for_subject(
+        RemoteOperation::SetInstallationHostname,
+        serde_json::json!({ "device": device, "hostname": hostname }),
+        owner,
+    )?;
+    if response["accepted"] != true {
+        return Err("Could not save this machine name".into());
+    }
+    Ok(())
+}
+
 fn cached_owner() -> Option<String> {
     let session = crate::share_session::load()?;
     crate::util::jwt_payload(&session.access_token)?
@@ -261,6 +279,11 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
         serde_json::json!({}),
         &owner,
     );
+    if let Ok(value) = capabilities.as_ref() {
+        if value["installation_hostname_v1"] == true {
+            remember_installation_label(&owner, &device)?;
+        }
+    }
     let mut uploaded = 0;
     let mut downloaded = 0;
     loop {
