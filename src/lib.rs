@@ -211,9 +211,8 @@ fn print_help() {
          \tspanreed tray [--interval S] System tray companion (needs --features tray)\n\
          \tspanreed account …           Identities (add/import/use/login grok)\n\
          \tspanreed plugin list         Drivers (in-process / toml / PATH)\n\n\
-         PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
-         \t           synthetic, kimi, copilot, factory, devin,\n\
-         \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
+         PROVIDERS: `spanreed list` shows every provider and whether it is detected.\n\
+         \t           `spanreed probe <id>` fetches one provider.\n\
          \t           (copilot requires `spanreed auth copilot`)"
     );
 }
