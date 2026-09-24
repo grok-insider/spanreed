@@ -370,14 +370,21 @@ fn main() {
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 if let Some(alert) = spanreed::desktop_open::take_alert() {
+                    use tauri::plugin::PermissionState;
                     use tauri_plugin_notification::NotificationExt;
-                    let shown = handle
+                    let permitted = handle
                         .notification()
-                        .builder()
-                        .title(alert.title)
-                        .body(alert.body)
-                        .show()
-                        .is_ok();
+                        .permission_state()
+                        .ok()
+                        .is_some_and(|state| state == PermissionState::Granted);
+                    let shown = permitted
+                        && handle
+                            .notification()
+                            .builder()
+                            .title(alert.title)
+                            .body(alert.body)
+                            .show()
+                            .is_ok();
                     if shown {
                         spanreed::desktop_open::ack_alert(&alert.id);
                     }
