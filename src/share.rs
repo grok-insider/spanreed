@@ -509,6 +509,7 @@ mod tests {
             "authorization",
             "api_key",
             "credential",
+            "hostname",
         ] {
             assert!(
                 keys.iter().all(|k| !k.to_ascii_lowercase().contains(bad)),
