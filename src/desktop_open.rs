@@ -21,6 +21,14 @@ pub fn request(page: &str) -> Result<(), String> {
     spawn_desktop()
 }
 
+/// Read a queued route without clearing it. The desktop process uses this to
+/// show a hidden window before the page script can run.
+pub fn peek() -> Option<String> {
+    let text = std::fs::read_to_string(crate::app::data_dir().join(ROUTE)).ok()?;
+    let text = text.trim();
+    text.starts_with("#/local/").then(|| text.to_string())
+}
+
 /// Read and clear a queued route. The desktop window applies it once.
 pub fn take() -> Option<String> {
     let path = crate::app::data_dir().join(ROUTE);
@@ -251,7 +259,9 @@ mod tests {
             assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
             let queued = std::fs::read_to_string(dir.join("spanreed").join(ROUTE)).unwrap();
             assert_eq!(queued, "#/local/overview");
+            assert_eq!(peek().as_deref(), Some("#/local/overview"));
             assert_eq!(take().as_deref(), Some("#/local/overview"));
+            assert!(peek().is_none());
             assert!(take().is_none());
             let error = request("settings").unwrap_err();
             assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
