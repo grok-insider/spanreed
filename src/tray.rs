@@ -240,10 +240,9 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
         {
             let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
-            let stale = guard
-                .status_at
-                .is_some_and(|at| at.elapsed() > Duration::from_secs(8));
-            if stale && !guard.reset_in_flight {
+            let stale =
+                tray_format::status_expired(guard.status_at, guard.reset_in_flight, Instant::now());
+            if stale {
                 guard.status_note = None;
                 guard.status_at = None;
                 guard.dirty = true;
@@ -583,23 +582,20 @@ fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
             return;
         }
         if !guard.outputs.iter().any(crate::tray_card::can_use_reset) {
-            guard.status_note = Some("No limit reset credit is available".into());
-            guard.dirty = true;
+            stamp_status(&mut guard, "No limit reset credit is available");
             return;
         }
         if guard.reset_request_id.is_none() {
             match new_redeem_request_id() {
                 Ok(id) => guard.reset_request_id = Some(id),
                 Err(message) => {
-                    guard.status_note = Some(message.into());
-                    guard.dirty = true;
+                    stamp_status(&mut guard, message);
                     return;
                 }
             }
         }
         guard.reset_in_flight = true;
-        guard.status_note = Some("Using reset…".into());
-        guard.dirty = true;
+        stamp_status(&mut guard, "Using reset…");
         guard
             .reset_request_id
             .clone()
@@ -609,8 +605,7 @@ fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
         let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
         guard.reset_in_flight = false;
         guard.reset_request_id = None;
-        guard.status_note = Some("Could not start the reset".into());
-        guard.dirty = true;
+        stamp_status(&mut guard, "Could not start the reset");
         return;
     }
     let state = state.clone();
@@ -622,13 +617,10 @@ fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
             match result {
                 Ok(()) => {
                     guard.reset_request_id = None;
-                    guard.status_note = Some("Reset used".into());
+                    stamp_status(&mut guard, "Reset used");
                 }
-                Err(message) => {
-                    guard.status_note = Some(message.into());
-                }
+                Err(message) => stamp_status(&mut guard, message),
             }
-            guard.dirty = true;
         }
         refresh_state(&state);
     });
@@ -651,9 +643,13 @@ fn new_redeem_request_id() -> Result<String, &'static str> {
 
 fn set_status(state: &Arc<Mutex<TrayState>>, note: &str) {
     let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
-    g.status_note = Some(note.to_string());
-    g.status_at = Some(Instant::now());
-    g.dirty = true;
+    stamp_status(&mut g, note);
+}
+
+fn stamp_status(guard: &mut TrayState, note: impl Into<String>) {
+    guard.status_note = Some(note.into());
+    guard.status_at = Some(Instant::now());
+    guard.dirty = true;
 }
 
 fn refresh_state(state: &Arc<Mutex<TrayState>>) {
@@ -665,6 +661,10 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
     let prev_used = g.max_used;
     let prev_up = g.capture_up;
     g.capture_up = capture_up;
+    if capture_up && g.status_note.as_deref() == Some("Capture proxy is DOWN") {
+        g.status_note = None;
+        g.status_at = None;
+    }
     g.outputs = outputs;
     g.max_used = max_used;
     g.share_logged_in = share_session::is_logged_in();
@@ -685,7 +685,7 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
         if cool {
             log::warn!("spanreed tray: capture proxy is DOWN");
             g.last_notify_proxy = Some(now);
-            g.status_note = Some("Capture proxy is DOWN".into());
+            stamp_status(&mut g, "Capture proxy is DOWN");
             drop(g);
             user_notify(
                 "spanreed — capture",

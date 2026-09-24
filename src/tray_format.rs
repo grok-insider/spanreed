@@ -7,8 +7,17 @@
 
 #![cfg_attr(not(feature = "tray"), allow(dead_code))]
 
+use std::time::{Duration, Instant};
+
 use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
 use crate::output;
+
+/// Action results such as "Reset used" leave the card and tooltip on their own.
+/// A reset that is still running keeps its line until it finishes.
+pub fn status_expired(status_at: Option<Instant>, reset_in_flight: bool, now: Instant) -> bool {
+    !reset_in_flight
+        && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(8))
+}
 
 /// Tray icon / notification band from a utilization percentage (used 0–100).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +178,16 @@ pub fn crossed_threshold(prev: Option<f64>, next: Option<f64>) -> Option<&'stati
 mod tests {
     use super::*;
     use crate::model::MetricLine;
+
+    #[test]
+    fn status_lines_expire_without_another_action() {
+        let now = Instant::now();
+        let earlier = now.checked_sub(Duration::from_secs(9)).expect("instant");
+        assert!(!status_expired(Some(now), false, now));
+        assert!(status_expired(Some(earlier), false, now));
+        assert!(!status_expired(Some(earlier), true, now));
+        assert!(!status_expired(None, false, now));
+    }
 
     #[test]
     fn remaining() {

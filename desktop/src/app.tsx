@@ -1,5 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Boxes, ChartColumn, CircleGauge, Plug, RefreshCw, Route as RouteIcon } from "lucide-react";
 import { Button, StatusDot } from "@fabrials/ui";
 import { useClock } from "@fabrials/ai-ui";
@@ -77,7 +78,12 @@ export function App() {
     let active = true;
     const pull = () => {
       void invoke<string | null>("take_desktop_route").then((href) => {
-        if (active && href && location.hash !== href) location.hash = href;
+        if (!active || !href) return;
+        if (location.hash !== href) location.hash = href;
+        const window = getCurrentWindow();
+        void window.unminimize();
+        void window.show();
+        void window.setFocus();
       }).catch(() => undefined);
     };
     pull();

@@ -131,6 +131,12 @@ mod tests {
         assert_eq!(queued, "#/local/overview");
         assert_eq!(take().as_deref(), Some("#/local/overview"));
         assert!(take().is_none());
+        let error = request("settings").unwrap_err();
+        assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("spanreed").join(ROUTE)).unwrap(),
+            "#/local/settings"
+        );
         assert!(request("nope").is_err());
         match previous {
             Some(value) => std::env::set_var("XDG_DATA_HOME", value),
