@@ -29,8 +29,12 @@ pub struct Pace {
 pub struct Meter {
     pub title: String,
     pub reset_text: Option<String>,
+    /// Milliseconds until this window resets.
+    pub resets_in_ms: Option<i64>,
     /// Fill of the bar, 0–100. Quota meters show percent left.
     pub fill: f64,
+    /// `fill` is percent remaining. Dollar and count meters store percent used.
+    pub shows_left: bool,
     pub left: String,
     pub pace_left: Option<String>,
     pub pace_right: Option<String>,
@@ -250,34 +254,27 @@ fn local_cost(output: &ProviderOutput) -> Option<CostSummary> {
 }
 
 pub fn render(cards: &[TrayCard], capture_up: bool, status: Option<&str>) -> String {
+    let (title, subtitle) = menu_summary(cards);
+    let title = esc(&title);
+    let subtitle = esc(&subtitle);
+    let updated = esc(cards
+        .first()
+        .map(|card| card.updated.as_str())
+        .unwrap_or(""));
+    let (attention, plenty): (Vec<_>, Vec<_>) = cards
+        .iter()
+        .enumerate()
+        .partition(|(_, card)| needs_attention(card));
     let body = if cards.is_empty() {
         "<p class=\"empty\">No locally detected providers</p>".into()
     } else {
-        cards
-            .iter()
-            .enumerate()
-            .map(|(index, card)| card_html(card, index))
-            .collect::<Vec<_>>()
-            .join("\n")
+        format!(
+            "{}{}",
+            menu_section("Needs attention", &attention),
+            menu_section("Plenty of room", &plenty)
+        )
     };
-    let tabs = if cards.len() > 1 {
-        let buttons = cards
-            .iter()
-            .enumerate()
-            .map(|(index, card)| {
-                format!(
-                    "<button type=\"button\" class=\"tab{}\" data-tab=\"{}\">{}</button>",
-                    if index == 0 { " on" } else { "" },
-                    index,
-                    esc(&card.name)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("");
-        format!("<div class=\"tabs\" role=\"tablist\">{buttons}</div>")
-    } else {
-        String::new()
-    };
+    let timeline = limits_timeline(cards);
     let banner = if capture_up {
         String::new()
     } else {
@@ -479,12 +476,114 @@ button.reset {{
 .card-body {{ display: none; }}
 .card-body.on {{ display: block; }}
 .empty {{ padding: 24px; }}
+.summary {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }}
+.summary h1 {{ margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }}
+.summary p, .ago, .kicker, .when, .pace, .pill {{ color: var(--muted); }}
+.ago {{ font-size: 11px; white-space: nowrap; }}
+.kicker {{
+  display: flex;
+  justify-content: space-between;
+  margin: 16px 0 6px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}}
+.agent {{ padding: 8px 0 10px; border-top: 1px solid var(--line); }}
+.agent-main {{
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}}
+.glyph {{
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--track);
+  font-size: 12px;
+  font-weight: 650;
+}}
+.who {{ min-width: 0; }}
+.name {{ font-size: 13px; font-weight: 600; }}
+.pill {{
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--track);
+  font-size: 10px;
+  font-weight: 550;
+}}
+.pace {{ display: block; margin-top: 2px; font-size: 11px; }}
+.pace.warn {{ color: var(--danger); }}
+.right {{ text-align: right; }}
+.right b {{ display: block; font-size: 13px; font-weight: 650; }}
+.when {{ display: block; margin-top: 2px; font-size: 11px; }}
+.agent .track {{ margin-top: 8px; height: 4px; overflow: visible; }}
+.agent .fill {{ background: var(--brand); }}
+.agent.attention .fill {{ background: var(--danger); }}
+.mark {{ background: var(--fg); width: 2px; height: 8px; top: -2px; }}
+.detail {{ display: none; margin-top: 10px; padding-top: 4px; }}
+.agent.open .detail {{ display: block; }}
+.returns {{ margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }}
+.returns h2 {{ margin: 0; font-size: 13px; }}
+.range {{ display: flex; gap: 4px; }}
+.range button {{
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  cursor: pointer;
+}}
+.range button.on {{ background: var(--track); color: var(--fg); }}
+.timeline {{ position: relative; height: 42px; margin-top: 14px; }}
+.timeline .rail {{
+  position: absolute;
+  left: 0; right: 0; top: 4px;
+  height: 2px;
+  background: var(--track);
+}}
+.tick {{
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  text-align: center;
+  font-size: 10px;
+  color: var(--muted);
+}}
+.tick i {{
+  display: block;
+  width: 7px;
+  height: 7px;
+  margin: 0 auto 4px;
+  border-radius: 999px;
+  background: var(--brand);
+}}
+.tick[hidden] {{ display: none; }}
+.none {{ margin: 8px 0 0; font-size: 11px; color: var(--muted); }}
 </style>
 </head>
 <body>
 <main class="card">
-{banner}{status}{tabs}
+{banner}{status}
+<header class="summary">
+  <div><h1>{title}</h1><p>{subtitle}</p></div>
+  <span class="ago">{updated}</span>
+</header>
 {body}
+{timeline}
 <div class="actions">
   <button type="button" class="act" data-act="refresh">Refresh</button>
   <button type="button" class="act" data-act="ensure">Ensure capture</button>
@@ -506,14 +605,33 @@ button.reset {{
 const post = (msg) => {{
   try {{ window.ipc.postMessage(msg); }} catch (e) {{}}
 }};
-document.querySelectorAll("[data-tab]").forEach((tab) => {{
-  tab.addEventListener("click", () => {{
-    document.querySelectorAll("[data-tab]").forEach((node) => node.classList.toggle("on", node === tab));
-    document.querySelectorAll(".card-body").forEach((node) => {{
-      node.classList.toggle("on", node.dataset.card === tab.dataset.tab);
-    }});
+document.querySelectorAll("[data-open]").forEach((button) => {{
+  button.addEventListener("click", () => {{
+    button.closest(".agent").classList.toggle("open");
   }});
 }});
+const applyRange = (hours) => {{
+  const max = Number(hours) * 3600000;
+  let shown = 0;
+  document.querySelectorAll("[data-reset-ms]").forEach((node) => {{
+    const ms = Number(node.dataset.resetMs);
+    const visible = ms > 0 && ms <= max;
+    node.hidden = !visible;
+    if (visible) {{
+      shown += 1;
+      node.style.left = Math.min(96, Math.max(4, ms / max * 100)) + "%";
+    }}
+  }});
+  const empty = document.querySelector(".none");
+  if (empty) empty.hidden = shown > 0;
+}};
+document.querySelectorAll("[data-range]").forEach((button) => {{
+  button.addEventListener("click", () => {{
+    document.querySelectorAll("[data-range]").forEach((node) => node.classList.toggle("on", node === button));
+    applyRange(button.dataset.range);
+  }});
+}});
+applyRange(168);
 document.querySelectorAll("[data-act]").forEach((button) => {{
   button.addEventListener("click", () => post(button.dataset.act));
 }});
@@ -576,9 +694,8 @@ fn meter(
     let resets_ms = resets_at.and_then(|iso| {
         util::parse_iso_dt(iso).map(|dt| (dt.unix_timestamp_nanos() / 1_000_000) as i64)
     });
-    let reset_text = resets_ms
-        .filter(|ms| *ms > now_ms)
-        .map(|ms| format!("Resets in {}", duration_text(ms - now_ms)));
+    let resets_in_ms = resets_ms.filter(|ms| *ms > now_ms).map(|ms| ms - now_ms);
+    let reset_text = resets_in_ms.map(|ms| format!("Resets in {}", duration_text(ms)));
     match format {
         ProgressFormat::Percent => {
             let used = used.clamp(0.0, 100.0);
@@ -587,7 +704,9 @@ fn meter(
             Some(Meter {
                 title: label.to_string(),
                 reset_text,
+                resets_in_ms,
                 fill: (100.0 - used).clamp(0.0, 100.0),
+                shows_left: true,
                 left: format!("{}% left", (100.0 - used).round() as i64),
                 pace_left: pace.as_ref().map(|pace| pace.left_label.clone()),
                 pace_right: pace.as_ref().and_then(|pace| pace.right_label.clone()),
@@ -604,7 +723,9 @@ fn meter(
             Some(Meter {
                 title: label.to_string(),
                 reset_text,
+                resets_in_ms,
                 fill,
+                shows_left: false,
                 left: format!("${used:.2} / ${limit:.2}"),
                 pace_left: None,
                 pace_right: None,
@@ -621,7 +742,9 @@ fn meter(
             Some(Meter {
                 title: label.to_string(),
                 reset_text,
+                resets_in_ms,
                 fill,
+                shows_left: false,
                 left: format!("{used:.0}/{limit:.0} {suffix}"),
                 pace_left: None,
                 pace_right: None,
@@ -902,27 +1025,153 @@ fn card_html(card: &TrayCard, index: usize) -> String {
     let plan = if card.plan.is_empty() {
         String::new()
     } else {
-        format!("<span>{}</span>", esc(&card.plan))
+        format!("<span class=\"pill\">{}</span>", esc(&card.plan))
     };
+    let meter = primary_meter(card);
+    let value = meter.map(|item| item.left.as_str()).unwrap_or("—");
+    let pace = meter.map(pace_line).unwrap_or_default();
+    let when = meter
+        .and_then(|item| item.resets_in_ms)
+        .map(duration_text)
+        .unwrap_or_default();
+    let fill = meter.map(|item| item.fill).unwrap_or(0.0);
+    let mark = meter
+        .and_then(|item| item.marker)
+        .map(|percent| format!("<i class=\"mark\" style=\"left:{percent:.1}%\"></i>"))
+        .unwrap_or_default();
+    let warn = if needs_attention(card) { " warn" } else { "" };
+    let attention = if needs_attention(card) {
+        " attention"
+    } else {
+        ""
+    };
+    let initial = card
+        .name
+        .chars()
+        .next()
+        .map(|ch| ch.to_ascii_uppercase())
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_string())
+        .unwrap_or_else(|| "•".into());
     format!(
-        r#"<section class="card-body{on}" data-card="{index}">
+        r#"<article class="agent{attention}" data-card="{index}">
+<button type="button" class="agent-main" data-open="{index}">
+  <span class="glyph">{initial}</span>
+  <span class="who"><span class="name">{name} {plan}</span><span class="pace{warn}">{pace}</span></span>
+  <span class="right"><b>{value}</b><span class="when">{when}</span></span>
+</button>
+<div class="track"><div class="fill" style="width:{fill:.1}%"></div>{mark}</div>
+<div class="detail">
 {error}
-<div class="head"><h1 class="name">{name}</h1><span class="account">{account}</span></div>
-<div class="row meta"><span>{updated}</span>{plan}</div>
+<p class="note">{account}</p>
 {meters}{credits_block}{stats}{bars}{notes}{credits}
-</section>"#,
-        on = if index == 0 { " on" } else { "" },
+</div>
+</article>"#,
         index = index,
+        initial = esc(&initial),
         name = esc(&card.name),
-        account = esc(&card.account),
-        updated = esc(&card.updated),
         plan = plan,
-        meters = meters,
-        credits_block = credits_block,
-        stats = stats,
-        bars = bars,
-        notes = notes,
-        credits = credits,
+        pace = esc(&pace),
+        value = esc(value),
+        when = esc(&when),
+        fill = fill,
+        account = esc(&card.account),
+    )
+}
+
+fn menu_section(label: &str, rows: &[(usize, &TrayCard)]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let body = rows
+        .iter()
+        .map(|(index, card)| card_html(card, *index))
+        .collect::<Vec<_>>()
+        .join("");
+    format!(
+        "<section><h2 class=\"kicker\"><span>{}</span><span>{}</span></h2>{}</section>",
+        esc(label),
+        rows.len(),
+        body
+    )
+}
+
+fn menu_summary(cards: &[TrayCard]) -> (String, String) {
+    let attention = cards.iter().filter(|card| needs_attention(card)).count();
+    let title = if attention == 0 {
+        "Plenty of room".into()
+    } else if attention == 1 {
+        "1 needs attention".into()
+    } else {
+        format!("{attention} need attention")
+    };
+    let most = cards
+        .iter()
+        .filter_map(|card| {
+            primary_meter(card)
+                .filter(|meter| meter.shows_left)
+                .map(|meter| (card, meter))
+        })
+        .max_by(|left, right| left.1.fill.total_cmp(&right.1.fill));
+    let subtitle = match most {
+        Some((card, meter)) => format!("Most room: {} {}", card.name, meter.left),
+        None => String::new(),
+    };
+    (title, subtitle)
+}
+
+fn needs_attention(card: &TrayCard) -> bool {
+    if card.error.is_some() {
+        return true;
+    }
+    let Some(meter) = primary_meter(card) else {
+        return false;
+    };
+    if meter.shows_left {
+        meter.fill < 25.0 || meter.deficit
+    } else {
+        meter.fill >= 80.0 || meter.deficit
+    }
+}
+
+fn primary_meter(card: &TrayCard) -> Option<&Meter> {
+    card.meters
+        .iter()
+        .filter(|meter| meter.shows_left)
+        .min_by(|left, right| left.fill.total_cmp(&right.fill))
+        .or_else(|| card.meters.first())
+}
+
+fn pace_line(meter: &Meter) -> String {
+    if let Some(pace) = &meter.pace_left {
+        format!("{} · {pace}", meter.title)
+    } else if let Some(pace) = &meter.pace_right {
+        format!("{} · {pace}", meter.title)
+    } else {
+        meter.title.clone()
+    }
+}
+
+fn limits_timeline(cards: &[TrayCard]) -> String {
+    let mut marks = Vec::new();
+    for card in cards {
+        let Some(meter) = primary_meter(card) else {
+            continue;
+        };
+        let Some(ms) = meter.resets_in_ms else {
+            continue;
+        };
+        marks.push(format!(
+            "<div class=\"tick\" data-reset-ms=\"{ms}\"><i></i><span>{}</span></div>",
+            esc(&duration_text(ms))
+        ));
+    }
+    if marks.is_empty() {
+        return String::new();
+    }
+    format!(
+        r#"<section class="returns"><div class="row"><div><h2>Limits come back</h2><p class="note">Tightest limit per provider</p></div><div class="range"><button type="button" data-range="24">24h</button><button type="button" class="on" data-range="168">7d</button></div></div><div class="timeline"><div class="rail"></div>{marks}</div><p class="none" hidden>No resets in this window</p></section>"#,
+        marks = marks.join("")
     )
 }
 
@@ -1209,6 +1458,47 @@ mod tests {
             updated_ms: now,
         });
         assert!(!grok.can_use_reset);
+    }
+
+    fn quota(id: &str, name: &str, plan: &str, session: f64, weekly: f64, now: i64) -> TrayCard {
+        let session_at = crate::util::ms_to_iso(now + 2 * 3_600_000).unwrap();
+        let weekly_at = crate::util::ms_to_iso(now + 3 * 86_400_000).unwrap();
+        let sample = ProviderOutput::new(
+            id,
+            name,
+            vec![
+                MetricLine::percent("Session", session, Some(session_at)),
+                MetricLine::percent("Weekly", weekly, Some(weekly_at)),
+            ],
+        )
+        .with_plan(Some(plan.into()));
+        build(CardSources {
+            output: &sample,
+            account: None,
+            cost: None,
+            now_ms: now,
+            updated_ms: now,
+        })
+    }
+
+    #[test]
+    fn menu_splits_attention_from_room_and_lists_resets() {
+        let now = 1_750_000_000_000;
+        let cards = vec![
+            quota("claude", "Claude", "Max", 78.0, 40.0, now),
+            quota("codex", "Codex", "Plus", 37.0, 27.0, now),
+            quota("cursor", "Cursor", "Pro", 46.0, 20.0, now),
+        ];
+        assert!(needs_attention(&cards[0]));
+        assert!(!needs_attention(&cards[1]));
+        let html = render(&cards, true, None);
+        assert!(html.contains("1 needs attention"));
+        assert!(html.contains("Plenty of room"));
+        assert!(html.contains("Limits come back"));
+        assert!(html.contains("Most room:"));
+        if let Ok(path) = std::env::var("SPANREED_TRAY_MENU") {
+            std::fs::write(path, &html).expect("menu preview");
+        }
     }
 
     #[test]
