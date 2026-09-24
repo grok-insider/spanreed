@@ -238,6 +238,7 @@ function Show-SpanreedBalloon {
   Start-Sleep -Seconds 2
   $notify.Dispose()
 }
+$toastShown = $false
 try {
   [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
   [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
@@ -250,11 +251,12 @@ try {
   # PowerShell's own AppUserModelID is registered on Windows. An unregistered
   # id such as com.fabrials.spanreed accepts Show and then drops the toast.
   [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)
-} catch {
-  # Show can succeed and still drop an unregistered toast. The balloon below
-  # is what actually reaches the user.
-} finally {
+  $toastShown = $true
+} catch {}
+try {
   Show-SpanreedBalloon
+} catch {
+  if (-not $toastShown) { throw }
 }
 "#;
 
@@ -347,7 +349,7 @@ mod tests {
         ));
         assert!(WINDOWS_NOTIFY.contains("Show-SpanreedBalloon"));
         assert!(WINDOWS_NOTIFY.contains("Show($toast)"));
-        assert!(WINDOWS_NOTIFY.contains("} finally {\n  Show-SpanreedBalloon"));
+        assert!(WINDOWS_NOTIFY.contains("if (-not $toastShown) { throw }"));
         assert!(WINDOWS_NOTIFY.contains("Start-Sleep -Seconds 2"));
         assert!(!WINDOWS_NOTIFY.contains("CreateToastNotifier('com.fabrials.spanreed')"));
     }
