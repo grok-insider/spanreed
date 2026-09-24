@@ -357,6 +357,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let log = dir.join("received.txt");
+        let ready = dir.join("ready.txt");
+        let stderr_log = dir.join("service.err");
         let script = dir.join("service.py");
         std::fs::write(
             &script,
@@ -367,6 +369,12 @@ import dbus
 import dbus.service
 from gi.repository import GLib
 class Notifications(dbus.service.Object):
+    @dbus.service.method("org.freedesktop.Notifications", in_signature="", out_signature="as")
+    def GetCapabilities(self):
+        return []
+    @dbus.service.method("org.freedesktop.Notifications", in_signature="", out_signature="ssss")
+    def GetServerInformation(self):
+        return ("Spanreed", "fabrials", "1", "1.2")
     @dbus.service.method("org.freedesktop.Notifications", in_signature="susssasa{sv}i", out_signature="u")
     def Notify(self, app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout):
         with open(sys.argv[1], "w", encoding="utf-8") as handle:
@@ -377,6 +385,8 @@ loop = GLib.MainLoop()
 bus = dbus.SessionBus()
 name = dbus.service.BusName("org.freedesktop.Notifications", bus)
 Notifications(bus, "/org/freedesktop/Notifications")
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write("ready\n")
 loop.run()
 "#,
         )
@@ -392,12 +402,27 @@ loop.run()
             .read_line(&mut address)
             .unwrap();
         let address = address.trim().to_string();
-        let mut service = std::process::Command::new("python3")
+        let python = std::path::Path::new("/usr/bin/python3");
+        let python = if python.exists() {
+            python
+        } else {
+            std::path::Path::new("python3")
+        };
+        let stderr = std::fs::File::create(&stderr_log).unwrap();
+        let mut service = std::process::Command::new(python)
             .arg(&script)
             .arg(&log)
+            .arg(&ready)
             .env("DBUS_SESSION_BUS_ADDRESS", &address)
+            .stderr(stderr)
             .spawn()
             .expect("notification service");
+        for _ in 0..50 {
+            if ready.exists() || service.try_wait().ok().flatten().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
         let previous = std::env::var_os("DBUS_SESSION_BUS_ADDRESS");
         std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
         let mut text = String::new();
@@ -419,10 +444,11 @@ loop.run()
             Some(value) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", value),
             None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
         }
+        let service_err = std::fs::read_to_string(&stderr_log).unwrap_or_default();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             text.contains("Capture proxy is DOWN"),
-            "notification service did not receive the alert: {text}"
+            "notification service did not receive the alert: {text} service: {service_err}"
         );
         assert!(text.contains("Ensure capture before new hops."));
     }
