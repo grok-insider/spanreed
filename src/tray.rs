@@ -1077,7 +1077,9 @@ fn user_notify(title: &str, body: &str, modal: bool) {
             return;
         }
     }
-    let _ = crate::notifications::deliver_os(title, body);
+    if let Err(error) = crate::notifications::deliver_os(title, body) {
+        log::warn!("tray notify failed: {error}");
+    }
     if modal {
         eprintln!("spanreed tray: {title}: {body}");
     }

@@ -126,7 +126,7 @@ pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
     #[cfg(target_os = "linux")]
-    let status = std::process::Command::new("notify-send")
+    let output = std::process::Command::new("notify-send")
         .args([
             "--app-name=Spanreed",
             "--icon=com.fabrials.spanreed",
@@ -135,52 +135,88 @@ pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
             body,
         ])
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .output();
     #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("powershell.exe")
+    let output = std::process::Command::new("powershell.exe")
         .creation_flags(0x08000000)
-        .args(["-NoProfile", "-NonInteractive", "-Command", r#"
-$ErrorActionPreference = 'Stop'
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
-$document = New-Object Windows.Data.Xml.Dom.XmlDocument
-$document.LoadXml('<toast><visual><binding template="ToastGeneric"><text/><text/></binding></visual></toast>')
-$nodes = $document.GetElementsByTagName('text')
-$nodes.Item(0).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_TITLE)) > $null
-$nodes.Item(1).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_BODY)) > $null
-$toast = [Windows.UI.Notifications.ToastNotification]::new($document)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('com.fabrials.spanreed').Show($toast)
-"#])
-        .env("SPANREED_NOTIFICATION_TITLE", title).env("SPANREED_NOTIFICATION_BODY", body)
-        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null()).status();
-    #[cfg(target_os = "macos")]
-    let status = std::process::Command::new("osascript")
-        .args([
-            "-e",
-            &format!(
-                "display notification \"{}\" with title \"{}\"",
-                body.replace('\\', "\\\\").replace('"', "\\\""),
-                title.replace('\\', "\\\\").replace('"', "\\\"")
-            ),
-        ])
+        .args(["-NoProfile", "-NonInteractive", "-Command", WINDOWS_NOTIFY])
+        .env("SPANREED_NOTIFICATION_TITLE", title)
+        .env("SPANREED_NOTIFICATION_BODY", body)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .output();
+    #[cfg(target_os = "macos")]
+    let output = std::process::Command::new("osascript")
+        .args(["-e", &osascript_notification(title, body)])
+        .stdin(std::process::Stdio::null())
+        .output();
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
         let _ = (title, body);
         return Err("Background notifications have not been qualified on this platform".into());
     }
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-    return match status {
-        Ok(status) if status.success() => Ok(()),
-        _ => Err("Could not deliver the notification through the operating system".into()),
+    return match output {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            let detail = detail.trim();
+            if detail.is_empty() {
+                Err("Could not deliver the notification through the operating system".into())
+            } else {
+                Err(format!(
+                    "Could not deliver the notification through the operating system: {detail}"
+                ))
+            }
+        }
+        Err(error) => Err(format!(
+            "Could not deliver the notification through the operating system: {error}"
+        )),
     };
 }
+
+/// One AppleScript statement. Newlines would break the `-e` string.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn osascript_notification(title: &str, body: &str) -> String {
+    fn escape(value: &str) -> String {
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace(['\n', '\r'], " ")
+    }
+    format!(
+        "display notification \"{}\" with title \"{}\"",
+        escape(body),
+        escape(title)
+    )
+}
+
+#[cfg(target_os = "windows")]
+const WINDOWS_NOTIFY: &str = r#"
+$ErrorActionPreference = 'Stop'
+function Show-SpanreedBalloon {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $notify = New-Object System.Windows.Forms.NotifyIcon
+  $notify.Icon = [System.Drawing.SystemIcons]::Information
+  $notify.Visible = $true
+  $notify.ShowBalloonTip(8000, $env:SPANREED_NOTIFICATION_TITLE, $env:SPANREED_NOTIFICATION_BODY, [System.Windows.Forms.ToolTipIcon]::Info)
+  Start-Sleep -Seconds 2
+  $notify.Dispose()
+}
+try {
+  [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+  [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+  $document = New-Object Windows.Data.Xml.Dom.XmlDocument
+  $document.LoadXml('<toast><visual><binding template="ToastGeneric"><text/><text/></binding></visual></toast>')
+  $nodes = $document.GetElementsByTagName('text')
+  $nodes.Item(0).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_TITLE)) > $null
+  $nodes.Item(1).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_BODY)) > $null
+  $toast = [Windows.UI.Notifications.ToastNotification]::new($document)
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('com.fabrials.spanreed').Show($toast)
+} catch {
+  Show-SpanreedBalloon
+}
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -262,5 +298,13 @@ mod tests {
         observed.freshness = Freshness::Fresh;
         observed.observed_at_ms = None;
         assert_eq!(expiring(&observed, 1_000_000), None);
+    }
+
+    #[test]
+    fn macos_notification_script_stays_one_statement() {
+        let script = osascript_notification("Capture \"down\"", "Line one\nLine two");
+        assert!(!script.contains('\n'));
+        assert!(script.contains("display notification \"Line one Line two\""));
+        assert!(script.contains("with title \"Capture \\\"down\\\"\""));
     }
 }

@@ -74,6 +74,20 @@ fn spawn_desktop() -> Result<(), String> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join(name));
+            #[cfg(target_os = "macos")]
+            candidates.push(dir.join("../Spanreed.app/Contents/MacOS/spanreed-desktop"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(PathBuf::from(
+            "/Applications/Spanreed.app/Contents/MacOS/spanreed-desktop",
+        ));
+        if let Some(home) = std::env::var_os("HOME") {
+            candidates.push(
+                PathBuf::from(home)
+                    .join("Applications/Spanreed.app/Contents/MacOS/spanreed-desktop"),
+            );
         }
     }
     candidates.push(PathBuf::from(name));
