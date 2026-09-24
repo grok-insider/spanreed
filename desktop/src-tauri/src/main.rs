@@ -392,6 +392,12 @@ fn main() {
                 }).build(app)?;
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .build(tauri::generate_context!())
         .expect("could not start Spanreed desktop")
         .run(|_app, event| {
