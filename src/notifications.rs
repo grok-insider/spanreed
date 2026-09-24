@@ -126,16 +126,7 @@ pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
     #[cfg(target_os = "linux")]
-    let output = std::process::Command::new("notify-send")
-        .args([
-            "--app-name=Spanreed",
-            "--icon=com.fabrials.spanreed",
-            "--",
-            title,
-            body,
-        ])
-        .stdin(std::process::Stdio::null())
-        .output();
+    let output = deliver_linux(title, body);
     #[cfg(target_os = "windows")]
     let output = std::process::Command::new("powershell.exe")
         .creation_flags(0x08000000)
@@ -190,7 +181,51 @@ fn osascript_notification(title: &str, body: &str) -> String {
     )
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "linux")]
+fn deliver_linux(title: &str, body: &str) -> std::io::Result<std::process::Output> {
+    let sent = std::process::Command::new("notify-send")
+        .args([
+            "--app-name=Spanreed",
+            "--icon=com.fabrials.spanreed",
+            "--",
+            title,
+            body,
+        ])
+        .stdin(std::process::Stdio::null())
+        .output();
+    if sent.as_ref().is_ok_and(|output| output.status.success()) {
+        return sent;
+    }
+    if sent
+        .as_ref()
+        .is_ok_and(|output| output.status.code().is_some())
+    {
+        return sent;
+    }
+    std::process::Command::new("gdbus")
+        .args([
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.Notifications",
+            "--object-path",
+            "/org/freedesktop/Notifications",
+            "--method",
+            "org.freedesktop.Notifications.Notify",
+            "Spanreed",
+            "0",
+            "com.fabrials.spanreed",
+            title,
+            body,
+            "[]",
+            "{}",
+            "5000",
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const WINDOWS_NOTIFY: &str = r#"
 $ErrorActionPreference = 'Stop'
 function Show-SpanreedBalloon {
@@ -212,7 +247,9 @@ try {
   $nodes.Item(0).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_TITLE)) > $null
   $nodes.Item(1).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_BODY)) > $null
   $toast = [Windows.UI.Notifications.ToastNotification]::new($document)
-  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('com.fabrials.spanreed').Show($toast)
+  # PowerShell's own AppUserModelID is registered on Windows. An unregistered
+  # id such as com.fabrials.spanreed accepts Show and then drops the toast.
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)
 } catch {
   Show-SpanreedBalloon
 }
@@ -298,6 +335,15 @@ mod tests {
         observed.freshness = Freshness::Fresh;
         observed.observed_at_ms = None;
         assert_eq!(expiring(&observed, 1_000_000), None);
+    }
+
+    #[test]
+    fn windows_toast_uses_a_registered_app_id() {
+        assert!(WINDOWS_NOTIFY.contains(
+            r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+        ));
+        assert!(WINDOWS_NOTIFY.contains("Show-SpanreedBalloon"));
+        assert!(!WINDOWS_NOTIFY.contains("CreateToastNotifier('com.fabrials.spanreed')"));
     }
 
     #[test]

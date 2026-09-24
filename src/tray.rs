@@ -827,9 +827,9 @@ fn apply_visual(
     if current != "Checking for updates…" {
         item_check.set_text(check_label);
     }
+    let _ = tray.set_tooltip(Some(tip));
     if let Ok(icon) = icon_for_severity(sev) {
         let _ = tray.set_icon(Some(icon));
-        let _ = tray.set_tooltip(Some(tip));
     }
 }
 
