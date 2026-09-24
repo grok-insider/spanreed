@@ -64,6 +64,9 @@ struct TrayState {
     last_notify_quota: Option<Instant>,
     /// Background thread sets this; UI thread clears after repaint.
     dirty: bool,
+    /// Idempotency key for an in-progress Codex reset. Reused until success.
+    reset_request_id: Option<String>,
+    reset_in_flight: bool,
 }
 
 impl Default for TrayState {
@@ -79,6 +82,8 @@ impl Default for TrayState {
             last_notify_proxy: None,
             last_notify_quota: None,
             dirty: true,
+            reset_request_id: None,
+            reset_in_flight: false,
         }
     }
 }
@@ -276,6 +281,8 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 if crate::tray_popover::allowed_buy_url(url.trim()) {
                     let _ = open_url(url.trim());
                 }
+            } else if message == "reset" {
+                redeem_from_card(&state);
             }
         }
 
@@ -529,6 +536,79 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             }
         }
     });
+}
+
+fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
+    let request_id = {
+        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+        if guard.reset_in_flight {
+            return;
+        }
+        if !guard.outputs.iter().any(crate::tray_card::can_use_reset) {
+            guard.status_note = Some("No limit reset credit is available".into());
+            guard.dirty = true;
+            return;
+        }
+        if guard.reset_request_id.is_none() {
+            match new_redeem_request_id() {
+                Ok(id) => guard.reset_request_id = Some(id),
+                Err(message) => {
+                    guard.status_note = Some(message.into());
+                    guard.dirty = true;
+                    return;
+                }
+            }
+        }
+        guard.reset_in_flight = true;
+        guard.status_note = Some("Using reset…".into());
+        guard.dirty = true;
+        guard
+            .reset_request_id
+            .clone()
+            .unwrap_or_else(|| "invalid".into())
+    };
+    if !crate::providers::codex::valid_redeem_request_id(&request_id) {
+        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+        guard.reset_in_flight = false;
+        guard.reset_request_id = None;
+        guard.status_note = Some("Could not start the reset".into());
+        guard.dirty = true;
+        return;
+    }
+    let state = state.clone();
+    thread::spawn(move || {
+        let result = crate::providers::codex::redeem_reset(&request_id);
+        {
+            let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+            guard.reset_in_flight = false;
+            match result {
+                Ok(()) => {
+                    guard.reset_request_id = None;
+                    guard.status_note = Some("Reset used".into());
+                }
+                Err(message) => {
+                    guard.status_note = Some(message.into());
+                }
+            }
+            guard.dirty = true;
+        }
+        refresh_state(&state);
+    });
+}
+
+fn new_redeem_request_id() -> Result<String, &'static str> {
+    let mut bytes = [0_u8; 16];
+    getrandom::getrandom(&mut bytes).map_err(|_| "Could not start the reset")?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let mut id = String::with_capacity(36);
+    for (index, byte) in bytes.iter().enumerate() {
+        if matches!(index, 4 | 6 | 8 | 10) {
+            id.push('-');
+        }
+        id.push_str(&format!("{byte:02x}"));
+    }
+    Ok(id)
 }
 
 fn set_status(state: &Arc<Mutex<TrayState>>, note: &str) {

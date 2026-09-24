@@ -4,7 +4,7 @@
 //! Pure data and HTML. The `tray` feature hosts this document in a borderless
 //! window on macOS, Windows, and Linux. Colors are the Fabrials dark/light tokens.
 
-use fabrials_core::{Freshness, ResetInventory};
+use fabrials_core::{Availability, Freshness, ResetInventory};
 
 use crate::cost::CostSummary;
 use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
@@ -63,6 +63,8 @@ pub struct TrayCard {
     pub meters: Vec<Meter>,
     pub reset_credits: Option<String>,
     pub reset_expiry: Option<String>,
+    /// Codex-only spend action. True only for a fresh available credit.
+    pub can_use_reset: bool,
     pub stats: Vec<Stat>,
     pub bars: Vec<ChartBar>,
     pub notes: Vec<String>,
@@ -178,6 +180,7 @@ pub fn build(source: CardSources<'_>) -> TrayCard {
         }
     }
     let (reset_credits, reset_expiry) = reset_copy(out, source.now_ms);
+    let can_use_reset = can_use_reset(out);
     let (stats, bars, top_model, partial) = cost_view(source.cost);
     if let Some(model) = top_model {
         notes.insert(0, format!("Top model: {model}"));
@@ -196,6 +199,7 @@ pub fn build(source: CardSources<'_>) -> TrayCard {
         meters,
         reset_credits,
         reset_expiry,
+        can_use_reset,
         stats,
         bars,
         notes,
@@ -285,7 +289,7 @@ pub fn render(cards: &[TrayCard], capture_up: bool, status: Option<&str>) -> Str
         .map(|text| format!("<p class=\"status\">{}</p>", esc(text)))
         .unwrap_or_default();
     format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="en" data-gem="stormlight">
 <head>
 <meta charset="utf-8">
@@ -407,7 +411,7 @@ h2 {{ font-size: 14px; font-weight: 500; margin: 14px 0 6px; }}
   font-size: 12px;
 }}
 .status {{ color: var(--muted); }}
-button.link, button.act {{
+button.link, button.act, button.reset {{
   border: 0;
   background: transparent;
   color: var(--brand);
@@ -415,6 +419,55 @@ button.link, button.act {{
   padding: 0;
   cursor: pointer;
 }}
+button.reset {{
+  margin-top: 8px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--fg);
+}}
+.dialog {{
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: oklch(0.2 0.01 85 / 45%);
+}}
+.dialog[hidden] {{ display: none; }}
+.dialog-card {{
+  width: min(100%, 320px);
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}}
+.dialog-card h2 {{ margin-top: 0; }}
+.dialog-card p {{ margin: 0; color: var(--muted); line-height: 1.4; }}
+.dialog-actions {{
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}}
+.dialog-actions button {{
+  min-height: 36px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}}
+.dialog-actions button.confirm {{
+  background: var(--brand);
+  border-color: transparent;
+  color: white;
+}}
+.dialog-actions button:disabled {{ opacity: 0.6; cursor: default; }}
 .actions {{
   display: flex;
   gap: 12px;
@@ -438,6 +491,16 @@ button.link, button.act {{
   <button type="button" class="act" data-act="log">Open log</button>
   <button type="button" class="act" data-act="quit">Quit tray</button>
 </div>
+<div class="dialog" hidden>
+  <div class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+    <h2 id="reset-title">Use a limit reset?</h2>
+    <p id="reset-body"></p>
+    <div class="dialog-actions">
+      <button type="button" data-reset-cancel>Cancel</button>
+      <button type="button" class="confirm" data-reset-confirm>Use reset</button>
+    </div>
+  </div>
+</div>
 </main>
 <script>
 const post = (msg) => {{
@@ -457,6 +520,31 @@ document.querySelectorAll("[data-act]").forEach((button) => {{
 document.querySelectorAll("[data-buy]").forEach((button) => {{
   button.addEventListener("click", () => post("buy " + button.dataset.buy));
 }});
+const resetDialog = document.querySelector(".dialog");
+const resetBody = document.querySelector("#reset-body");
+const resetCancel = document.querySelector("[data-reset-cancel]");
+const resetConfirm = document.querySelector("[data-reset-confirm]");
+let resetPending = false;
+document.querySelectorAll("[data-reset]").forEach((button) => {{
+  button.addEventListener("click", () => {{
+    if (resetPending) return;
+    const account = button.dataset.reset || "this account";
+    resetBody.textContent = "This spends one limit reset credit for " + account + " and asks Codex to clear the current rate-limit windows. This cannot be undone.";
+    resetDialog.hidden = false;
+  }});
+}});
+resetCancel.addEventListener("click", () => {{
+  if (resetPending) return;
+  resetDialog.hidden = true;
+}});
+resetConfirm.addEventListener("click", () => {{
+  if (resetPending) return;
+  resetPending = true;
+  resetConfirm.textContent = "Using reset…";
+  resetConfirm.disabled = true;
+  resetCancel.disabled = true;
+  post("reset");
+}});
 document.querySelectorAll(".bars i").forEach((bar) => {{
   bar.addEventListener("mouseenter", () => {{
     const note = bar.closest(".card-body").querySelector(".hover");
@@ -464,11 +552,16 @@ document.querySelectorAll(".bars i").forEach((bar) => {{
   }});
 }});
 document.addEventListener("keydown", (event) => {{
-  if (event.key === "Escape") post("close");
+  if (event.key !== "Escape") return;
+  if (!resetDialog.hidden && !resetPending) {{
+    resetDialog.hidden = true;
+    return;
+  }}
+  post("close");
 }});
 </script>
 </body>
-</html>"#,
+</html>"##,
     )
 }
 
@@ -548,6 +641,23 @@ fn window_minutes(label: &str) -> Option<i64> {
     } else {
         None
     }
+}
+
+/// A reset can be spent only when this Codex observation still reports one.
+pub fn can_use_reset(output: &ProviderOutput) -> bool {
+    if output.provider_id.split('/').next().unwrap_or("") != "codex" {
+        return false;
+    }
+    let Some(observed) = &output.reset_inventory else {
+        return false;
+    };
+    if observed.availability != Availability::Available || observed.freshness != Freshness::Fresh {
+        return false;
+    }
+    observed
+        .value
+        .as_ref()
+        .is_some_and(|inventory| inventory.available > 0)
 }
 
 fn reset_copy(output: &ProviderOutput, now_ms: i64) -> (Option<String>, Option<String>) {
@@ -695,11 +805,26 @@ fn card_html(card: &TrayCard, index: usize) -> String {
         .collect::<Vec<_>>()
         .join("");
     let credits_block = match (&card.reset_credits, &card.reset_expiry) {
-        (Some(count), expiry) => format!(
-            "<section class=\"row\"><div><h2>Limit Reset Credits</h2><div>{}</div></div><div class=\"sub\">{}</div></section>",
-            esc(count),
-            esc(expiry.as_deref().unwrap_or(""))
-        ),
+        (Some(count), expiry) => {
+            let action = if card.can_use_reset {
+                let who = if card.account.is_empty() {
+                    card.name.clone()
+                } else {
+                    card.account.clone()
+                };
+                format!(
+                    "<button type=\"button\" class=\"reset\" data-reset=\"{}\">Use reset</button>",
+                    esc(&who)
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "<section class=\"credits\"><div class=\"row\"><div><h2>Limit Reset Credits</h2><div>{}</div></div><div class=\"sub\">{}</div></div>{action}</section>",
+                esc(count),
+                esc(expiry.as_deref().unwrap_or(""))
+            )
+        }
         _ => String::new(),
     };
     let stats = if card.stats.is_empty() {
@@ -996,6 +1121,7 @@ mod tests {
         assert_eq!(card.stats[3].value, "85M");
         assert_eq!(card.credits_left.as_deref(), Some("0 left"));
         assert_eq!(card.buy_url.as_deref(), Some("https://chatgpt.com/"));
+        assert!(card.can_use_reset);
         let html = render(&[card], true, None);
         if let Ok(path) = std::env::var("SPANREED_TRAY_PREVIEW") {
             std::fs::write(path, &html).expect("preview");
@@ -1004,10 +1130,85 @@ mod tests {
         assert!(html.contains("Last 31 days Cost"));
         assert!(html.contains("Top model: Example-1"));
         assert!(html.contains("Buy credits"));
+        assert!(html.contains("data-reset=\"user@example.com\""));
+        assert!(html.contains("Use a limit reset?"));
+        assert!(html.contains("This cannot be undone."));
+        assert!(html.contains("data-reset-confirm"));
         assert!(html.contains("--brand:"));
         assert!(html.contains("data-act=\"refresh\""));
         assert!(html.contains("Codex &lt;script&gt;"));
         assert!(!html.contains("Codex <script>"));
+    }
+
+    fn inventory(available: u32, fresh: Freshness) -> Observation<ResetInventory> {
+        Observation {
+            availability: Availability::Available,
+            freshness: fresh,
+            observed_at_ms: Some(1),
+            source: "test".into(),
+            value: Some(ResetInventory {
+                available,
+                credits: vec![],
+                details_complete: true,
+            }),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn use_reset_requires_a_fresh_codex_credit() {
+        let now = 1_700_000_000_000;
+        let mut sample = output();
+        sample.reset_inventory = Some(inventory(1, Freshness::Fresh));
+        let card = build(CardSources {
+            output: &sample,
+            account: Some("user@example.com"),
+            cost: None,
+            now_ms: now,
+            updated_ms: now,
+        });
+        assert!(card.can_use_reset);
+        let html = render(&[card], true, None);
+        assert!(html.contains(">Use reset</button>"));
+        let open = html.find("data-reset=").unwrap();
+        let confirm = html.find("post(\"reset\")").unwrap();
+        assert!(open < confirm);
+
+        sample.reset_inventory = Some(inventory(0, Freshness::Fresh));
+        let empty = build(CardSources {
+            output: &sample,
+            account: None,
+            cost: None,
+            now_ms: now,
+            updated_ms: now,
+        });
+        assert!(!empty.can_use_reset);
+        assert!(!render(&[empty], true, None).contains("data-reset="));
+
+        sample.reset_inventory = Some(inventory(2, Freshness::Stale));
+        let stale = build(CardSources {
+            output: &sample,
+            account: None,
+            cost: None,
+            now_ms: now,
+            updated_ms: now,
+        });
+        assert_eq!(
+            stale.reset_credits.as_deref(),
+            Some("2 resets last reported")
+        );
+        assert!(!stale.can_use_reset);
+
+        sample.provider_id = "grok".into();
+        sample.reset_inventory = Some(inventory(1, Freshness::Fresh));
+        let grok = build(CardSources {
+            output: &sample,
+            account: None,
+            cost: None,
+            now_ms: now,
+            updated_ms: now,
+        });
+        assert!(!grok.can_use_reset);
     }
 
     #[test]
