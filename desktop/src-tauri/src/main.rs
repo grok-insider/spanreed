@@ -369,6 +369,7 @@ fn main() {
             spanreed::desktop_open::mark_running();
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if spanreed::desktop_open::peek().is_some() {
                     use tauri::Manager;
                     if let Some(window) = handle.get_webview_window("main") {
@@ -401,6 +402,7 @@ fn main() {
                         spanreed::desktop_open::ack_alert(&alert.id);
                     }
                 }
+                }));
                 std::thread::sleep(std::time::Duration::from_millis(200));
             });
             let show = tauri::menu::MenuItem::with_id(app, "show", "Open dashboard", true, None::<&str>)?;
