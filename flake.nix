@@ -412,6 +412,9 @@
                     tray = true;
                   }
                 }/bin/spanreed tray --interval ${toString cfg.tray.interval}";
+                Environment = lib.optionals cfg.desktop.enable [
+                  "SPANREED_DESKTOP=${cfg.desktop.package}/bin/spanreed-desktop"
+                ];
                 Restart = "on-failure";
                 RestartSec = 5;
               };

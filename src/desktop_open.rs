@@ -71,6 +71,11 @@ fn spawn_desktop() -> Result<(), String> {
         "spanreed-desktop"
     };
     let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("SPANREED_DESKTOP") {
+        if !path.is_empty() {
+            candidates.push(PathBuf::from(path));
+        }
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join(name));
@@ -184,6 +189,29 @@ mod tests {
             request("settings").expect("running desktop accepts settings");
             assert_eq!(take().as_deref(), Some("#/local/settings"));
             assert!(take().is_none());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn request_starts_the_desktop_named_by_the_environment() {
+        with_data_home(|dir| {
+            std::fs::create_dir_all(dir).unwrap();
+            let stub = dir.join("spanreed-desktop");
+            std::fs::copy("/bin/true", &stub).unwrap();
+            let mut permissions = std::fs::metadata(&stub).unwrap().permissions();
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&stub, permissions).unwrap();
+            let previous = std::env::var_os("SPANREED_DESKTOP");
+            std::env::set_var("SPANREED_DESKTOP", &stub);
+            request("overview").expect("configured desktop starts");
+            assert_eq!(take().as_deref(), Some("#/local/overview"));
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            match previous {
+                Some(value) => std::env::set_var("SPANREED_DESKTOP", value),
+                None => std::env::remove_var("SPANREED_DESKTOP"),
+            }
         });
     }
 
