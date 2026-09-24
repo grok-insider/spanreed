@@ -511,9 +511,9 @@ button.reset {{
   place-items: center;
   border-radius: 8px;
   background: var(--track);
-  font-size: 12px;
-  font-weight: 650;
+  color: var(--fg);
 }}
+.glyph svg {{ width: 16px; height: 16px; display: block; }}
 .stack {{ min-width: 0; display: flex; flex-direction: column; gap: 6px; }}
 .topline, .subline {{ display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }}
 .name {{ font-size: 13px; font-weight: 600; }}
@@ -1058,14 +1058,6 @@ fn card_html(card: &TrayCard, index: usize) -> String {
     } else {
         ""
     };
-    let initial = card
-        .name
-        .chars()
-        .next()
-        .map(|ch| ch.to_ascii_uppercase())
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_string())
-        .unwrap_or_else(|| "•".into());
     let account = if card.account.is_empty() {
         String::new()
     } else {
@@ -1074,7 +1066,7 @@ fn card_html(card: &TrayCard, index: usize) -> String {
     format!(
         r#"<article class="agent{attention}" data-card="{index}">
 <button type="button" class="agent-main" data-open="{index}">
-  <span class="glyph">{initial}</span>
+  <span class="glyph">{icon}</span>
   <span class="stack">
     <span class="topline"><span class="name">{name} {plan}</span><b>{value}</b></span>
     <span class="track"><span class="fill" style="width:{fill:.1}%"></span>{mark}</span>
@@ -1088,7 +1080,7 @@ fn card_html(card: &TrayCard, index: usize) -> String {
 </div>
 </article>"#,
         index = index,
-        initial = esc(&initial),
+        icon = crate::provider_icons::icon(&card.provider_id),
         name = esc(&card.name),
         plan = plan,
         pace = esc(&pace),
@@ -1425,6 +1417,7 @@ mod tests {
         assert!(html.contains("data-act=\"refresh\""));
         assert!(html.contains("Codex &lt;script&gt;"));
         assert!(!html.contains("Codex <script>"));
+        assert!(html.contains("<title>OpenAI</title>"));
     }
 
     fn inventory(available: u32, fresh: Freshness) -> Observation<ResetInventory> {
@@ -1536,9 +1529,39 @@ mod tests {
         assert!(html.contains("Most room:"));
         assert!(html.contains("in deficit") || html.contains("in reserve"));
         assert!(html.contains("class=\"dot\""));
+        assert!(html.contains("<title>Anthropic</title>"));
+        assert!(html.contains("<title>Cursor</title>"));
+        assert!(html.contains("<title>OpenAI</title>"));
         if let Ok(path) = std::env::var("SPANREED_TRAY_MENU") {
-            std::fs::write(path, &html).expect("menu preview");
+            let mut preview = cards;
+            for (id, name) in [
+                ("grok", "Grok"),
+                ("nous", "Nous"),
+                ("opencode-go", "OpenCode Go"),
+                ("copilot", "Copilot"),
+                ("kimi", "Kimi"),
+                ("amp", "Amp"),
+                ("factory", "Factory"),
+                ("jetbrains-ai-assistant", "JetBrains"),
+            ] {
+                preview.push(quota(id, name, "Pro", 20.0, 15.0, now));
+            }
+            std::fs::write(path, render(&preview, true, None)).expect("menu preview");
         }
+    }
+
+    #[test]
+    fn provider_marks_replace_letter_glyphs() {
+        let now = 1_750_000_000_000;
+        let cards = vec![
+            quota("copilot", "Copilot", "Pro", 10.0, 10.0, now),
+            quota("unknown-vendor", "Mystery", "Free", 10.0, 10.0, now),
+        ];
+        let html = render(&cards, true, None);
+        assert!(html.contains("<title>Copilot</title>"));
+        assert!(html.contains("data-icon=\"fallback\""));
+        assert!(!html.contains(">C</span>"));
+        assert!(!html.contains(">M</span>"));
     }
 
     #[test]

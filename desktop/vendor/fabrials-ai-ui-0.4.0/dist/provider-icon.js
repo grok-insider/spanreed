@@ -13,7 +13,22 @@ function providerBrand(provider) {
     xai: "grok",
     nous: "nousresearch",
     opencode: "opencode",
-    "opencode-go": "opencode"
+    "opencode-go": "opencode",
+    amp: "amp",
+    zai: "zai",
+    minimax: "minimax",
+    kimi: "kimi",
+    moonshot: "kimi",
+    copilot: "copilot",
+    github: "copilot",
+    devin: "devin",
+    kiro: "kiro",
+    antigravity: "antigravity",
+    perplexity: "perplexity",
+    factory: "factory",
+    synthetic: "synthetic",
+    jetbrains: "jetbrains",
+    "jetbrains-ai-assistant": "jetbrains"
   };
   return aliases[name] ?? null;
 }

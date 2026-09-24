@@ -61,6 +61,7 @@ mod secret;
 mod self_update;
 mod setup;
 pub use setup::review as client_configuration;
+mod provider_icons;
 mod share;
 mod share_economics;
 mod share_schedule;
