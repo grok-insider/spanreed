@@ -128,7 +128,7 @@ pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let output = deliver_linux(title, body);
     #[cfg(target_os = "windows")]
-    let output = std::process::Command::new("powershell.exe")
+    let output = std::process::Command::new(powershell_program())
         .creation_flags(0x08000000)
         .args(["-NoProfile", "-NonInteractive", "-Command", WINDOWS_NOTIFY])
         .env("SPANREED_NOTIFICATION_TITLE", title)
@@ -136,7 +136,7 @@ pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
         .stdin(std::process::Stdio::null())
         .output();
     #[cfg(target_os = "macos")]
-    let output = std::process::Command::new("osascript")
+    let output = std::process::Command::new(osascript_program())
         .args(["-e", &osascript_notification(title, body)])
         .stdin(std::process::Stdio::null())
         .output();
@@ -163,6 +163,20 @@ pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
             "Could not deliver the notification through the operating system: {error}"
         )),
     };
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn osascript_program() -> &'static str {
+    "/usr/bin/osascript"
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn powershell_program() -> std::path::PathBuf {
+    let root = std::env::var_os("SystemRoot")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"));
+    root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe")
 }
 
 /// One AppleScript statement. Newlines would break the `-e` string.
@@ -459,6 +473,13 @@ loop.run()
             "notification service did not receive the alert: {text} service: {service_err}"
         );
         assert!(text.contains("Ensure capture before new hops."));
+    }
+
+    #[test]
+    fn notification_programs_do_not_depend_on_path() {
+        assert_eq!(osascript_program(), "/usr/bin/osascript");
+        let powershell = powershell_program();
+        assert!(powershell.ends_with(r"System32\WindowsPowerShell\v1.0\powershell.exe"));
     }
 
     #[test]
