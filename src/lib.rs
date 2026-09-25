@@ -81,8 +81,6 @@ mod util;
 
 #[cfg(feature = "tray")]
 mod tray;
-#[cfg(feature = "tray")]
-mod tray_popover;
 
 pub use cli::run_cli;
 

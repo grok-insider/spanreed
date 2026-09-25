@@ -41,7 +41,14 @@ pub fn estimate_full_week(
             obs_tokens,
             density_oneshot(obs_tokens.unwrap_or(0), obs_usd, pct_now),
         ) {
-            let proj = project_week_to_full(tok, obs_usd, pct_now, tp, cp, pct_now < 5.0);
+            let proj = project_week_to_full(crate::forecast::WeekSoFar {
+                tokens_now: tok,
+                cost_now: obs_usd,
+                weekly_pct: pct_now,
+                tokens_per_pct: tp,
+                cost_per_pct: cp,
+                low_confidence: pct_now < 5.0,
+            });
             return FullWeekEst {
                 usd: Some(proj.cost_usd),
                 tokens: Some(proj.tokens),

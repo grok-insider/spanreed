@@ -11,7 +11,10 @@ pub async fn notification_settings() -> Result<app::notifications::Settings, Str
 }
 
 #[tauri::command]
-pub async fn set_reset_notifications(handle: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+pub async fn set_reset_notifications(
+    handle: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
     blocking(NOTIFICATION, move || {
         if enabled
             && handle
@@ -28,7 +31,10 @@ pub async fn set_reset_notifications(handle: tauri::AppHandle, enabled: bool) ->
 }
 
 #[tauri::command]
-pub async fn check_reset_notifications(_handle: tauri::AppHandle, ctx: Ctx<'_>) -> Result<u32, String> {
+pub async fn check_reset_notifications(
+    _handle: tauri::AppHandle,
+    ctx: Ctx<'_>,
+) -> Result<u32, String> {
     let ctx = ctx.inner().clone();
     blocking(NOTIFICATION, move || {
         app::notifications::check(&ctx, app::notifications::deliver_user_visible)
@@ -38,5 +44,8 @@ pub async fn check_reset_notifications(_handle: tauri::AppHandle, ctx: Ctx<'_>) 
 
 #[tauri::command]
 pub async fn test_reset_notification(_handle: tauri::AppHandle) -> Result<(), String> {
-    blocking(NOTIFICATION, || app::notifications::test(app::notifications::deliver_user_visible)).await
+    blocking(NOTIFICATION, || {
+        app::notifications::test(app::notifications::deliver_user_visible)
+    })
+    .await
 }

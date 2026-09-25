@@ -572,7 +572,14 @@ impl Provider for Codex {
                 .map(|ms| ms.to_string())
                 .unwrap_or_else(|| "codex-week".into());
             cost.extend(crate::forecast::forecast_lines(
-                "codex", &week_id, pct, tok, c, week_end,
+                crate::forecast::ForecastInput {
+                    provider: "codex",
+                    week_id: &week_id,
+                    weekly_pct: pct,
+                    tokens_week: tok,
+                    cost_week: c,
+                    week_end_ms: week_end,
+                },
             ));
         }
         lines.extend(cost);

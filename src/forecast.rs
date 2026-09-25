@@ -96,14 +96,26 @@ pub fn origin_is_near_zero(first_weekly_pct: f64) -> bool {
 }
 
 /// Project full week to 100% pool using density.
-pub fn project_week_to_full(
-    tokens_now: u64,
-    cost_now: f64,
-    weekly_pct: f64,
-    tokens_per_pct: f64,
-    cost_per_pct: f64,
-    low_confidence: bool,
-) -> WeekProjection {
+/// Usage so far this week and its density per pool percent.
+#[derive(Debug, Clone, Copy)]
+pub struct WeekSoFar {
+    pub tokens_now: u64,
+    pub cost_now: f64,
+    pub weekly_pct: f64,
+    pub tokens_per_pct: f64,
+    pub cost_per_pct: f64,
+    pub low_confidence: bool,
+}
+
+pub fn project_week_to_full(so_far: WeekSoFar) -> WeekProjection {
+    let WeekSoFar {
+        tokens_now,
+        cost_now,
+        weekly_pct,
+        tokens_per_pct,
+        cost_per_pct,
+        low_confidence,
+    } = so_far;
     let remaining = (100.0 - weekly_pct).max(0.0);
     let add_tok = (tokens_per_pct * remaining).max(0.0).round() as u64;
     let add_cost = (cost_per_pct * remaining).max(0.0);
@@ -284,14 +296,26 @@ fn load_samples_for_week(provider: &str, week_id: &str) -> Vec<PctSample> {
 }
 
 /// Build Cost metric lines for expected week/month when projection available.
-pub fn forecast_lines(
-    provider: &str,
-    week_id: &str,
-    weekly_pct: f64,
-    tokens_week: u64,
-    cost_week: f64,
-    week_end_ms: Option<i64>,
-) -> Vec<MetricLine> {
+/// The current week of one provider, for the Expected lines.
+#[derive(Debug, Clone, Copy)]
+pub struct ForecastInput<'a> {
+    pub provider: &'a str,
+    pub week_id: &'a str,
+    pub weekly_pct: f64,
+    pub tokens_week: u64,
+    pub cost_week: f64,
+    pub week_end_ms: Option<i64>,
+}
+
+pub fn forecast_lines(input: ForecastInput<'_>) -> Vec<MetricLine> {
+    let ForecastInput {
+        provider,
+        week_id,
+        weekly_pct,
+        tokens_week,
+        cost_week,
+        week_end_ms,
+    } = input;
     if tokens_week == 0 && cost_week <= 0.0 {
         return Vec::new();
     }
@@ -308,14 +332,14 @@ pub fn forecast_lines(
         return Vec::new();
     };
 
-    let week = project_week_to_full(
-        tokens_week,
-        cost_week,
-        sample.weekly_pct,
-        tok_per,
-        cost_per,
-        low,
-    );
+    let week = project_week_to_full(WeekSoFar {
+        tokens_now: tokens_week,
+        cost_now: cost_week,
+        weekly_pct: sample.weekly_pct,
+        tokens_per_pct: tok_per,
+        cost_per_pct: cost_per,
+        low_confidence: low,
+    });
 
     let mut lines = vec![format_expected("Expected this week", &week)];
 
@@ -486,7 +510,14 @@ mod tests {
     #[test]
     fn project_week_extrapolates_to_full_pool() {
         // 50% used, 50M tokens, density 1M/%
-        let w = project_week_to_full(50_000_000, 100.0, 50.0, 1_000_000.0, 2.0, false);
+        let w = project_week_to_full(WeekSoFar {
+            tokens_now: 50_000_000,
+            cost_now: 100.0,
+            weekly_pct: 50.0,
+            tokens_per_pct: 1_000_000.0,
+            cost_per_pct: 2.0,
+            low_confidence: false,
+        });
         assert_eq!(w.tokens, 100_000_000);
         assert!((w.cost_usd - 200.0).abs() < 0.01);
         assert!(!w.low_confidence);

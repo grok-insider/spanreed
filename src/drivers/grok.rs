@@ -353,12 +353,14 @@ struct QuotaSnap {
 fn persist_snap(id: &str, snap: QuotaSnap) {
     let _ = accounts::apply_snapshot(
         id,
-        snap.slug,
-        snap.label,
-        snap.used_pct,
-        snap.resets_at,
-        util::now_ms(),
-        Some(snap.billing),
+        accounts::QuotaSnapshot {
+            plan_slug: snap.slug,
+            plan_label: snap.label,
+            used_pct: snap.used_pct,
+            resets_at: snap.resets_at,
+            quota_at: util::now_ms(),
+            billing: Some(snap.billing),
+        },
     );
 }
 

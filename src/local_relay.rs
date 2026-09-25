@@ -106,7 +106,7 @@ impl listener::ConnectionHost for LocalRelay {
             .map_err(|e| e.to_string())?;
         let mut reader =
             http::HttpRequestReader::new(client.try_clone().map_err(|e| e.to_string())?);
-        let mut head = match http::read_http_request_head(&mut reader) {
+        let head = match http::read_http_request_head(&mut reader) {
             Ok(head) => head,
             Err(error) => {
                 return http::write_status(
@@ -116,113 +116,97 @@ impl listener::ConnectionHost for LocalRelay {
                 );
             }
         };
-        if !routes::is_safe_request_target(&head.path) {
-            return http::write_status(&mut client, 400, "{\"error\":\"invalid_request_target\"}");
-        }
-        if head.headers.get("host") != Some(&self.bind) {
-            return http::write_status(&mut client, 400, "{\"error\":\"invalid_local_host\"}");
+        if let Err(reject) = self.admit(&head) {
+            return reject.write(&mut client);
         }
         if routes::is_health_path(&head.path) {
-            return if head.method == "GET" {
-                http::write_status(&mut client, 200, "{\"ok\":true,\"service\":\"spanreed\"}")
-            } else {
-                http::write_status(&mut client, 405, "{\"error\":\"method_not_allowed\"}")
-            };
-        }
-        if !origin_allowed(&head.headers, &self.bind) {
-            return http::write_status(&mut client, 403, "{\"error\":\"cross_origin_forbidden\"}");
+            return http::write_status(&mut client, 200, "{\"ok\":true,\"service\":\"spanreed\"}");
         }
         let control_path = head.path.split('?').next().unwrap_or(&head.path);
         if control_path.starts_with("/__spanreed/") {
-            let provider = head
-                .path
-                .split_once('?')
-                .and_then(|(_, query)| {
-                    query
-                        .split('&')
-                        .find_map(|pair| pair.strip_prefix("provider="))
-                })
-                .unwrap_or("grok");
-            let result = match (head.method.as_str(), control_path) {
-                ("GET", "/__spanreed/environment") => crate::local_control::environment(&self.bind),
-                ("GET", "/__spanreed/limits") => crate::local_control::limits(),
-                ("GET", "/__spanreed/autosteer") => crate::local_control::status(provider),
-                ("POST", "/__spanreed/autosteer") => {
-                    let body = match http::read_http_request_body(&mut reader, &head, 64 * 1024) {
-                        Ok(body) => body,
-                        Err(error) => {
-                            return http::write_status(
-                                &mut client,
-                                error.status_code(),
-                                "{\"error\":\"invalid_body\"}",
-                            );
-                        }
-                    };
-                    let body: serde_json::Value = match serde_json::from_slice(&body) {
-                        Ok(value) => value,
-                        Err(_) => {
-                            return http::write_status(
-                                &mut client,
-                                400,
-                                "{\"error\":\"bad_json\"}",
-                            );
-                        }
-                    };
-                    let provider = body
-                        .get("provider")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(provider);
-                    let Some(on) = body.get("on").and_then(|v| v.as_bool()) else {
-                        return http::write_status(&mut client, 400, "{\"error\":\"invalid_on\"}");
-                    };
-                    if !crate::local_control::PROVIDERS.contains(&provider) {
-                        return http::write_status(
-                            &mut client,
-                            400,
-                            "{\"error\":\"unsupported_provider\"}",
-                        );
-                    }
-                    let threshold = match body.get("exhausted_pct") {
-                        None => None,
-                        Some(value) => match value
-                            .as_f64()
-                            .filter(|value| value.is_finite() && *value > 0.0 && *value <= 100.0)
-                        {
-                            Some(value) => Some(value),
-                            None => {
-                                return http::write_status(
-                                    &mut client,
-                                    400,
-                                    "{\"error\":\"invalid_exhaustion_threshold\"}",
-                                );
-                            }
-                        },
-                    };
-                    crate::local_control::set_policy(provider, on, threshold)
-                        .and_then(|()| crate::local_control::status(provider))
-                }
-                (_, "/__spanreed/environment" | "/__spanreed/limits" | "/__spanreed/autosteer") => {
-                    return http::write_status(
-                        &mut client,
-                        405,
-                        "{\"error\":\"method_not_allowed\"}",
-                    );
-                }
-                _ => {
-                    return http::write_status(
-                        &mut client,
-                        404,
-                        "{\"error\":\"unknown_local_endpoint\"}",
-                    );
-                }
-            };
-            return match result {
+            return match self.control(&mut reader, &head, control_path) {
                 Ok(value) => http::write_status(&mut client, 200, &value.to_string()),
-                Err(_) => {
-                    http::write_status(&mut client, 503, "{\"error\":\"local_state_unavailable\"}")
-                }
+                Err(reject) => reject.write(&mut client),
             };
         }
+        match self.authorize(&mut reader, head) {
+            Ok(hop) => forward::forward(hop.with_client(client, reader), self.usage.as_ref()),
+            Err(reject) => reject.write(&mut client),
+        }
+    }
+}
+
+/// A request refused before forwarding: HTTP status and JSON body.
+struct Reject(u16, &'static str);
+
+impl Reject {
+    fn write(self, client: &mut TcpStream) -> Result<(), String> {
+        http::write_status(client, self.0, self.1)
+    }
+}
+
+impl LocalRelay {
+    /// Loopback host, safe target and same-origin checks; health needs GET.
+    fn admit(&self, head: &http::HttpRequestHead) -> Result<(), Reject> {
+        if !routes::is_safe_request_target(&head.path) {
+            return Err(Reject(400, "{\"error\":\"invalid_request_target\"}"));
+        }
+        if head.headers.get("host") != Some(&self.bind) {
+            return Err(Reject(400, "{\"error\":\"invalid_local_host\"}"));
+        }
+        if routes::is_health_path(&head.path) {
+            return if head.method == "GET" {
+                Ok(())
+            } else {
+                Err(Reject(405, "{\"error\":\"method_not_allowed\"}"))
+            };
+        }
+        if !origin_allowed(&head.headers, &self.bind) {
+            return Err(Reject(403, "{\"error\":\"cross_origin_forbidden\"}"));
+        }
+        Ok(())
+    }
+
+    /// `/__spanreed/…` local control endpoints.
+    fn control(
+        &self,
+        reader: &mut http::HttpRequestReader,
+        head: &http::HttpRequestHead,
+        control_path: &str,
+    ) -> Result<serde_json::Value, Reject> {
+        let provider = head
+            .path
+            .split_once('?')
+            .and_then(|(_, query)| {
+                query
+                    .split('&')
+                    .find_map(|pair| pair.strip_prefix("provider="))
+            })
+            .unwrap_or("grok");
+        let result = match (head.method.as_str(), control_path) {
+            ("GET", "/__spanreed/environment") => crate::local_control::environment(&self.bind),
+            ("GET", "/__spanreed/limits") => crate::local_control::limits(),
+            ("GET", "/__spanreed/autosteer") => crate::local_control::status(provider),
+            ("POST", "/__spanreed/autosteer") => {
+                let update = autosteer_update(reader, head, provider)?;
+                crate::local_control::set_policy(update.provider, update.on, update.threshold)
+                    .and_then(|()| crate::local_control::status(update.provider))
+            }
+            (_, "/__spanreed/environment" | "/__spanreed/limits" | "/__spanreed/autosteer") => {
+                return Err(Reject(405, "{\"error\":\"method_not_allowed\"}"));
+            }
+            _ => return Err(Reject(404, "{\"error\":\"unknown_local_endpoint\"}")),
+        };
+        result.map_err(|_| Reject(503, "{\"error\":\"local_state_unavailable\"}"))
+    }
+
+    /// Route, validate and credential a provider request. The returned hop
+    /// still needs the client stream and reader.
+    fn authorize(
+        &self,
+        reader: &mut http::HttpRequestReader,
+        mut head: http::HttpRequestHead,
+    ) -> Result<PendingHop<'_>, Reject> {
         if self.xai_compat && head.path.starts_with("/v1/") {
             head.path = format!("/xai{}", head.path);
         }
@@ -231,95 +215,149 @@ impl listener::ConnectionHost for LocalRelay {
             .iter()
             .find_map(|p| p.resolve(&head.path).map(|route| (p, route)))
         else {
-            return http::write_status(&mut client, 404, "{\"error\":\"unknown_route\"}");
+            return Err(Reject(404, "{\"error\":\"unknown_route\"}"));
         };
         let upgrade =
             fabrials_runtime::ws_tunnel::is_websocket_upgrade(&head.method, &head.headers);
         if !provider.allows_request(&head.method, &routed, upgrade) {
-            return http::write_status(
-                &mut client,
-                404,
-                "{\"error\":\"unsupported_provider_route\"}",
-            );
+            return Err(Reject(404, "{\"error\":\"unsupported_provider_route\"}"));
         }
         if head
             .headers
             .get("content-encoding")
             .is_some_and(|v| !v.eq_ignore_ascii_case("identity"))
         {
-            return http::write_status(
-                &mut client,
-                415,
-                "{\"error\":\"unsupported_content_encoding\"}",
-            );
+            return Err(Reject(415, "{\"error\":\"unsupported_content_encoding\"}"));
         }
         let class = provider.classify(&routed, upgrade);
-        let mut body = match http::read_http_request_body(
-            &mut reader,
-            &head,
-            if class.transport == Transport::WebSocket {
-                0
-            } else {
-                body_limit(&routed.path)
-            },
-        ) {
-            Ok(body) => body,
-            Err(error) => {
-                return http::write_status(
-                    &mut client,
-                    error.status_code(),
-                    "{\"error\":\"invalid_body\"}",
-                );
-            }
+        let limit = if class.transport == Transport::WebSocket {
+            0
+        } else {
+            body_limit(&routed.path)
         };
+        let mut body = http::read_http_request_body(reader, &head, limit)
+            .map_err(|error| Reject(error.status_code(), "{\"error\":\"invalid_body\"}"))?;
         if provider.id() == "grok"
             && let Some(rewritten) = fabrials_runtime::models::rewrite_grok_request_model(&body)
         {
             body = rewritten;
         }
-        let model = match accounting::request_model(&body) {
-            Ok(model) => model,
-            Err(()) => {
-                return http::write_status(&mut client, 400, "{\"error\":\"invalid_model\"}");
-            }
-        };
-        let credential = match (self.credentials)(provider.id(), routed.account_alias.as_deref()) {
-            Ok(credential) => credential,
-            Err(_) => {
-                return http::write_status(
-                    &mut client,
-                    503,
-                    "{\"error\":\"provider_credentials_unavailable\"}",
-                );
-            }
-        };
+        let model = accounting::request_model(&body)
+            .map_err(|()| Reject(400, "{\"error\":\"invalid_model\"}"))?;
+        let credential = (self.credentials)(provider.id(), routed.account_alias.as_deref())
+            .map_err(|_| Reject(503, "{\"error\":\"provider_credentials_unavailable\"}"))?;
         let request_id = accounting::new_request_id();
         http::set_request_id(request_id.clone());
-        forward::forward(
-            forward::AuthorizedHop {
-                client,
-                reader,
-                prov: provider.as_ref(),
-                routed,
-                method: head.method,
-                headers: head.headers,
-                body,
-                class,
-                inject: credential.token,
-                alias: credential.alias,
-                request_id,
-                key_hash: None,
-                model,
-                inspect_json_body: matches!(
-                    class.kind,
-                    HopKind::Chat | HopKind::Image | HopKind::Video | HopKind::Tts
-                ),
-                secret: credential.document,
-                strict_credentials: false,
-            },
-            self.usage.as_ref(),
-        )
+        Ok(PendingHop {
+            prov: provider.as_ref(),
+            routed,
+            method: head.method,
+            headers: head.headers,
+            body,
+            class,
+            inject: credential.token,
+            alias: credential.alias,
+            request_id,
+            key_hash: None,
+            model,
+            inspect_json_body: matches!(
+                class.kind,
+                HopKind::Chat | HopKind::Image | HopKind::Video | HopKind::Tts
+            ),
+            secret: credential.document,
+            strict_credentials: false,
+        })
     }
+}
+
+/// An authorized hop waiting for its connection.
+struct PendingHop<'a> {
+    prov: &'a dyn Provider,
+    routed: fabrials_runtime::provider::Upstream,
+    method: String,
+    headers: std::collections::HashMap<String, String>,
+    body: Vec<u8>,
+    class: fabrials_types::hop::HopClass,
+    inject: Option<String>,
+    alias: Option<String>,
+    request_id: String,
+    key_hash: Option<String>,
+    model: Option<String>,
+    inspect_json_body: bool,
+    secret: Option<serde_json::Value>,
+    strict_credentials: bool,
+}
+
+impl<'a> PendingHop<'a> {
+    fn with_client(
+        self,
+        client: TcpStream,
+        reader: http::HttpRequestReader,
+    ) -> forward::AuthorizedHop<'a> {
+        forward::AuthorizedHop {
+            client,
+            reader,
+            prov: self.prov,
+            routed: self.routed,
+            method: self.method,
+            headers: self.headers,
+            body: self.body,
+            class: self.class,
+            inject: self.inject,
+            alias: self.alias,
+            request_id: self.request_id,
+            key_hash: self.key_hash,
+            model: self.model,
+            inspect_json_body: self.inspect_json_body,
+            secret: self.secret,
+            strict_credentials: self.strict_credentials,
+        }
+    }
+}
+
+struct AutosteerUpdate<'a> {
+    provider: &'a str,
+    on: bool,
+    threshold: Option<f64>,
+}
+
+/// Parse the `POST /__spanreed/autosteer` body.
+fn autosteer_update<'a>(
+    reader: &mut http::HttpRequestReader,
+    head: &http::HttpRequestHead,
+    default_provider: &'a str,
+) -> Result<AutosteerUpdate<'a>, Reject> {
+    let body = http::read_http_request_body(reader, head, 64 * 1024)
+        .map_err(|error| Reject(error.status_code(), "{\"error\":\"invalid_body\"}"))?;
+    let body: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|_| Reject(400, "{\"error\":\"bad_json\"}"))?;
+    let provider = match body.get("provider").and_then(|v| v.as_str()) {
+        Some(named) => crate::local_control::PROVIDERS
+            .iter()
+            .copied()
+            .find(|known| *known == named),
+        None => Some(default_provider),
+    };
+    let Some(on) = body.get("on").and_then(|v| v.as_bool()) else {
+        return Err(Reject(400, "{\"error\":\"invalid_on\"}"));
+    };
+    let Some(provider) = provider.filter(|p| crate::local_control::PROVIDERS.contains(p)) else {
+        return Err(Reject(400, "{\"error\":\"unsupported_provider\"}"));
+    };
+    let threshold = match body.get("exhausted_pct") {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_f64()
+                .filter(|value| value.is_finite() && *value > 0.0 && *value <= 100.0)
+                .ok_or(Reject(400, "{\"error\":\"invalid_exhaustion_threshold\"}"))?,
+        ),
+    };
+    Ok(AutosteerUpdate {
+        provider,
+        on,
+        threshold,
+    })
 }
 
 fn body_limit(path: &str) -> usize {

@@ -36,19 +36,39 @@ pub fn token(provider: &str, alias: &str) -> Result<String, String> {
     if !queue.reserve(key.clone()) {
         return Err("Credential recovery capacity reached; retry later".into());
     }
-    let result = token_with_recovery(provider, alias, &key, &mut queue, &journal, &vault);
+    let result = token_with_recovery(
+        provider,
+        alias,
+        Refresh {
+            key: &key,
+            queue: &mut queue,
+            journal: &journal,
+            vault: &vault,
+        },
+    );
     queue.release_reservation(&key);
     result
+}
+
+/// The locks and recovery state held while one credential refreshes.
+struct Refresh<'a> {
+    key: &'a String,
+    queue: &'a mut PendingQueue,
+    journal: &'a Rotation,
+    vault: &'a accounts::Vault,
 }
 
 fn token_with_recovery(
     provider: &str,
     alias: &str,
-    key: &String,
-    queue: &mut PendingQueue,
-    journal: &Rotation,
-    vault: &accounts::Vault,
+    recovery: Refresh<'_>,
 ) -> Result<String, String> {
+    let Refresh {
+        key,
+        queue,
+        journal,
+        vault,
+    } = recovery;
     let mut document =
         accounts::read_secret_document(provider, alias)?.ok_or("Provider credential missing")?;
     if let Some(pending) = queue.take_reserved(key)

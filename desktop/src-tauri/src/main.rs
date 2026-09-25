@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use tauri::Manager;
 mod commands;
 mod notifications;
+mod shell;
 
 fn main() {
     tauri::Builder::default()
@@ -81,75 +81,8 @@ fn main() {
         ])
         .setup(|app| {
             spanreed::app::window::mark_running();
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let mut applied = String::new();
-                loop {
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if let Some(href) = spanreed::app::window::peek() {
-                    use tauri::Manager;
-                    if let Some(window) = handle.get_webview_window("main") {
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        if applied != href {
-                            if let Some(script) = spanreed::app::window::route_location_script(&href) {
-                                if window.eval(&script).is_ok() {
-                                    applied.clone_from(&href);
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    applied.clear();
-                }
-                if let Some(alert) = spanreed::app::window::take_alert() {
-                    use tauri::plugin::PermissionState;
-                    use tauri_plugin_notification::NotificationExt;
-                    let permitted = handle
-                        .notification()
-                        .permission_state()
-                        .ok()
-                        .is_some_and(|state| state == PermissionState::Granted);
-                    let shown = permitted
-                        && handle
-                            .notification()
-                            .builder()
-                            .title(alert.title)
-                            .body(alert.body)
-                            .show()
-                            .is_ok();
-                    if shown {
-                        spanreed::app::window::ack_alert(&alert.id);
-                    }
-                }
-                }));
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                }
-            });
-            let show = tauri::menu::MenuItem::with_id(app, "show", "Open dashboard", true, None::<&str>)?;
-            let settings = tauri::menu::MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-            let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit Spanreed", true, None::<&str>)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &settings, &quit])?;
-            tauri::tray::TrayIconBuilder::new().menu(&menu).tooltip("Spanreed")
-                .icon(app.default_window_icon().expect("bundled application icon").clone())
-                .on_menu_event(|app, event| {
-                    let page = match event.id.as_ref() {
-                        "show" => "overview",
-                        "settings" => "settings",
-                        "quit" => {
-                            app.exit(0);
-                            return;
-                        }
-                        _ => return,
-                    };
-                    let _ = spanreed::app::window::open(page);
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }).build(app)?;
+            shell::watch_routes(app.handle().clone());
+            shell::build_tray(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {

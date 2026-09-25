@@ -154,14 +154,25 @@ fn pin(record: &mut Record, view: MigrationSessionView) -> Result<(), String> {
     record.view = Some(view);
     Ok(())
 }
+/// Who pairs which migration session.
+struct Pairing<'a> {
+    origin: &'a str,
+    id: &'a str,
+    invitation: &'a str,
+    local: &'a str,
+}
+
 fn pair_at(
     root: &Path,
-    origin: &str,
-    id: &str,
-    invitation: &str,
-    local: &str,
+    pairing: Pairing<'_>,
     remote: &impl Remote,
 ) -> Result<MigrationSessionView, String> {
+    let Pairing {
+        origin,
+        id,
+        invitation,
+        local,
+    } = pairing;
     filename(id)?;
     let files = FileSet::acquire_wait(root)?;
     let mut record = match load(root, id)? {
@@ -196,7 +207,13 @@ fn pair_at(
 pub fn pair(origin: &str, id: &str, invitation: &str) -> Result<MigrationSessionView, String> {
     let client = Client::new(origin)?;
     let local = crate::local_control::environment_id()?;
-    pair_at(&root(), client.origin(), id, invitation, &local, &client)
+    let pairing = Pairing {
+        origin: client.origin(),
+        id,
+        invitation,
+        local: &local,
+    };
+    pair_at(&root(), pairing, &client)
 }
 pub fn status(id: &str) -> Result<MigrationSessionView, String> {
     let directory = root();
@@ -656,10 +673,12 @@ mod tests {
     fn connect(f: &Fixture) -> Result<MigrationSessionView, String> {
         pair_at(
             &f.root,
-            "https://relay.example",
-            ID,
-            "invitation",
-            "local-fixture",
+            Pairing {
+                origin: "https://relay.example",
+                id: ID,
+                invitation: "invitation",
+                local: "local-fixture",
+            },
             f,
         )
     }
@@ -1014,22 +1033,26 @@ mod tests {
         assert!(
             pair_at(
                 &f.root,
-                "https://other.example",
-                ID,
-                "invitation",
-                "local-fixture",
-                &f
+                Pairing {
+                    origin: "https://other.example",
+                    id: ID,
+                    invitation: "invitation",
+                    local: "local-fixture",
+                },
+                &f,
             )
             .is_err()
         );
         assert!(
             pair_at(
                 &f.root,
-                "https://relay.example",
-                ID,
-                "invitation",
-                "other-local",
-                &f
+                Pairing {
+                    origin: "https://relay.example",
+                    id: ID,
+                    invitation: "invitation",
+                    local: "other-local",
+                },
+                &f,
             )
             .is_err()
         );

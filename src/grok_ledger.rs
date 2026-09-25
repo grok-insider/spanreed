@@ -243,12 +243,14 @@ fn lines_from_records(
             .map(|ms| ms.to_string())
             .unwrap_or_else(|| "unknown".into());
         lines.extend(crate::forecast::forecast_lines(
-            "grok",
-            &week_id,
-            pct,
-            week_tokens,
-            week_cost,
-            week_end_ms,
+            crate::forecast::ForecastInput {
+                provider: "grok",
+                week_id: &week_id,
+                weekly_pct: pct,
+                tokens_week: week_tokens,
+                cost_week: week_cost,
+                week_end_ms,
+            },
         ));
     }
 

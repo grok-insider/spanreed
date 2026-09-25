@@ -60,7 +60,9 @@ pub async fn saved_migrations() -> Result<Vec<app::migration::SavedSession>, Str
 }
 
 #[tauri::command]
-pub async fn migration_inventory(id: String) -> Result<Vec<app::migration::MigrationCandidate>, String> {
+pub async fn migration_inventory(
+    id: String,
+) -> Result<Vec<app::migration::MigrationCandidate>, String> {
     blocking(MIGRATION, move || app::migration::inventory(&id)).await
 }
 
@@ -70,7 +72,10 @@ pub async fn propose_migration(
     selection: Vec<app::migration::MigrationSelection>,
 ) -> Result<Value, String> {
     blocking(MIGRATION, move || {
-        json(app::migration::propose(&id, &selection)?, "Invalid migration view")
+        json(
+            app::migration::propose(&id, &selection)?,
+            "Invalid migration view",
+        )
     })
     .await
 }
@@ -81,16 +86,26 @@ pub async fn execute_migration(id: String, revision: String) -> Result<Vec<Strin
 }
 
 #[tauri::command]
-pub async fn pair_migration(origin: String, id: String, invitation: String) -> Result<Value, String> {
+pub async fn pair_migration(
+    origin: String,
+    id: String,
+    invitation: String,
+) -> Result<Value, String> {
     blocking(MIGRATION, move || {
-        json(app::migration::pair(&origin, &id, &invitation)?, "Invalid migration view")
+        json(
+            app::migration::pair(&origin, &id, &invitation)?,
+            "Invalid migration view",
+        )
     })
     .await
 }
 
 #[tauri::command]
 pub async fn migration_status(id: String) -> Result<Value, String> {
-    blocking(MIGRATION, move || json(app::migration::status(&id)?, "Invalid migration view")).await
+    blocking(MIGRATION, move || {
+        json(app::migration::status(&id)?, "Invalid migration view")
+    })
+    .await
 }
 
 #[tauri::command]
@@ -100,7 +115,11 @@ pub async fn cancel_migration(id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn migration_candidates() -> Result<Vec<app::migration::MigrationCandidate>, String> {
-    blocking("Migration inventory worker stopped", app::migration::candidates).await
+    blocking(
+        "Migration inventory worker stopped",
+        app::migration::candidates,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -159,7 +178,10 @@ pub async fn preview_opencode_configuration(
 }
 
 #[tauri::command]
-pub async fn apply_client_configuration(ctx: Ctx<'_>, id: String) -> Result<Option<String>, String> {
+pub async fn apply_client_configuration(
+    ctx: Ctx<'_>,
+    id: String,
+) -> Result<Option<String>, String> {
     let ctx = ctx.inner().clone();
     blocking(CONFIGURATION, move || app::clients::apply(&ctx, &id)).await
 }
@@ -190,9 +212,16 @@ pub async fn preview_hosted_client(
 }
 
 #[tauri::command]
-pub async fn apply_hosted_client(ctx: Ctx<'_>, owner: String, id: String) -> Result<String, String> {
+pub async fn apply_hosted_client(
+    ctx: Ctx<'_>,
+    owner: String,
+    id: String,
+) -> Result<String, String> {
     let ctx = ctx.inner().clone();
-    blocking(CONFIGURATION, move || app::clients::apply_hosted(&ctx, &owner, &id)).await
+    blocking(CONFIGURATION, move || {
+        app::clients::apply_hosted(&ctx, &owner, &id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -243,18 +272,28 @@ pub async fn models(account_id: String) -> Result<app::accounts::ModelCatalog, S
 pub async fn reauthorize_account(ctx: Ctx<'_>, id: String) -> Result<Value, String> {
     let ctx = ctx.inner().clone();
     blocking(AUTHORIZATION, move || {
-        json(app::accounts::reauthorize(&ctx, &id)?, "Invalid authorization view")
+        json(
+            app::accounts::reauthorize(&ctx, &id)?,
+            "Invalid authorization view",
+        )
     })
     .await
 }
 
 #[tauri::command]
 pub async fn add_api_key(provider: String, alias: String, key: String) -> Result<(), String> {
-    blocking(ACCOUNT, move || app::accounts::add_api_key(&provider, &alias, &key)).await
+    blocking(ACCOUNT, move || {
+        app::accounts::add_api_key(&provider, &alias, &key)
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn replace_api_key(id: String, generation: Option<String>, key: String) -> Result<(), String> {
+pub async fn replace_api_key(
+    id: String,
+    generation: Option<String>,
+    key: String,
+) -> Result<(), String> {
     blocking(ACCOUNT, move || {
         app::accounts::replace_api_key(&id, generation.as_deref(), &key)
     })
@@ -263,7 +302,10 @@ pub async fn replace_api_key(id: String, generation: Option<String>, key: String
 
 #[tauri::command]
 pub async fn remove_account(id: String, generation: Option<String>) -> Result<(), String> {
-    blocking(ACCOUNT, move || app::accounts::remove(&id, generation.as_deref())).await
+    blocking(ACCOUNT, move || {
+        app::accounts::remove(&id, generation.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -277,10 +319,17 @@ pub async fn accounts() -> Result<app::accounts::AccountsView, String> {
 }
 
 #[tauri::command]
-pub async fn begin_device_login(ctx: Ctx<'_>, provider: String, alias: String) -> Result<Value, String> {
+pub async fn begin_device_login(
+    ctx: Ctx<'_>,
+    provider: String,
+    alias: String,
+) -> Result<Value, String> {
     let ctx = ctx.inner().clone();
     blocking(AUTHORIZATION, move || {
-        json(app::accounts::begin_login(&ctx, &provider, alias)?, "Invalid authorization view")
+        json(
+            app::accounts::begin_login(&ctx, &provider, alias)?,
+            "Invalid authorization view",
+        )
     })
     .await
 }
@@ -302,7 +351,10 @@ pub async fn begin_inactive_device_login(
 pub async fn poll_device_login(ctx: Ctx<'_>, id: String) -> Result<Value, String> {
     let ctx = ctx.inner().clone();
     blocking(AUTHORIZATION, move || {
-        json(app::accounts::poll_login(&ctx, &id)?, "Invalid authorization state")
+        json(
+            app::accounts::poll_login(&ctx, &id)?,
+            "Invalid authorization state",
+        )
     })
     .await
 }
@@ -310,7 +362,10 @@ pub async fn poll_device_login(ctx: Ctx<'_>, id: String) -> Result<Value, String
 #[tauri::command]
 pub async fn cancel_device_login(ctx: Ctx<'_>, id: String) -> Result<(), String> {
     let ctx = ctx.inner().clone();
-    blocking(AUTHORIZATION, move || app::accounts::cancel_login(&ctx, &id)).await
+    blocking(AUTHORIZATION, move || {
+        app::accounts::cancel_login(&ctx, &id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -328,7 +383,10 @@ pub async fn hops() -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn history() -> Result<Value, String> {
-    blocking("History worker stopped", || json(app::usage::history()?, "Invalid history")).await
+    blocking("History worker stopped", || {
+        json(app::usage::history()?, "Invalid history")
+    })
+    .await
 }
 
 #[tauri::command]
@@ -338,7 +396,10 @@ pub async fn routing() -> Result<app::routing::RoutingSnapshot, String> {
 
 #[tauri::command]
 pub async fn set_routing(provider: String, on: bool, threshold: f64) -> Result<(), String> {
-    blocking(ROUTING, move || app::routing::set_routing(&provider, on, threshold)).await
+    blocking(ROUTING, move || {
+        app::routing::set_routing(&provider, on, threshold)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -347,7 +408,9 @@ pub async fn disconnect_usage_source(client: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_usage_source(connection: app::usage::connections::Connection) -> Result<(), String> {
+pub async fn connect_usage_source(
+    connection: app::usage::connections::Connection,
+) -> Result<(), String> {
     blocking(USAGE, move || app::usage::connections::save(connection)).await
 }
 
@@ -370,14 +433,19 @@ pub async fn usage_sources() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn save_usage_sources(settings: app::usage::discovery::UsageSettings) -> Result<(), String> {
+pub async fn save_usage_sources(
+    settings: app::usage::discovery::UsageSettings,
+) -> Result<(), String> {
     blocking(USAGE, move || app::usage::discovery::save(&settings)).await
 }
 
 #[tauri::command]
 pub async fn snapshot(ctx: Ctx<'_>, force: bool) -> Result<Value, String> {
     let ctx = ctx.inner().clone();
-    blocking(USAGE, move || json(app::usage::snapshot(&ctx, force), "Could not encode usage")).await
+    blocking(USAGE, move || {
+        json(app::usage::snapshot(&ctx, force), "Could not encode usage")
+    })
+    .await
 }
 
 #[tauri::command]
@@ -398,7 +466,10 @@ pub fn set_privacy(consent: app::sharing::SharingConsent) -> Result<(), String> 
 #[tauri::command]
 pub async fn private_history(before: Option<i64>) -> Result<Value, String> {
     blocking("History worker stopped", move || {
-        json(app::sync::recent(before)?, "Could not encode private history")
+        json(
+            app::sync::recent(before)?,
+            "Could not encode private history",
+        )
     })
     .await
 }
@@ -519,5 +590,7 @@ pub fn open_url(url: &str) -> Result<(), String> {
     let result = std::process::Command::new("rundll32")
         .args(["url.dll,FileProtocolHandler", url])
         .spawn();
-    result.map(|_| ()).map_err(|_| "Could not open the browser".into())
+    result
+        .map(|_| ())
+        .map_err(|_| "Could not open the browser".into())
 }

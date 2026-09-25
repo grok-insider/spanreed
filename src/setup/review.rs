@@ -97,16 +97,34 @@ fn prepare(
     alias: &str,
     model: &str,
 ) -> Result<Pending, String> {
-    prepare_change(path, bind, provider, alias, model, Operation::Create)
+    prepare_change(
+        path,
+        Change {
+            bind,
+            provider,
+            alias,
+            model,
+            operation: Operation::Create,
+        },
+    )
 }
-fn prepare_change(
-    path: PathBuf,
-    bind: &str,
-    provider: &str,
-    alias: &str,
-    model: &str,
+/// An OpenCode provider entry to create, update or remove.
+struct Change<'a> {
+    bind: &'a str,
+    provider: &'a str,
+    alias: &'a str,
+    model: &'a str,
     operation: Operation,
-) -> Result<Pending, String> {
+}
+
+fn prepare_change(path: PathBuf, change: Change<'_>) -> Result<Pending, String> {
+    let Change {
+        bind,
+        provider,
+        alias,
+        model,
+        operation,
+    } = change;
     let address: std::net::SocketAddr = bind.parse().map_err(|_| "Invalid proxy address")?;
     if !address.ip().is_loopback() || address.port() == 0 {
         return Err("Use a nonzero loopback proxy port".into());
@@ -478,7 +496,16 @@ impl Reviews {
         let mut plan = if operation == Operation::Create {
             prepare(path, &status.bind, provider, alias, model)?
         } else {
-            prepare_change(path, &status.bind, provider, alias, model, operation)?
+            prepare_change(
+                path,
+                Change {
+                    bind: &status.bind,
+                    provider,
+                    alias,
+                    model,
+                    operation,
+                },
+            )?
         };
         plan.context = Some((account.id, account.generation, status.bind));
         let view = plan.view.clone();
@@ -589,11 +616,13 @@ mod tests {
             };
             let plan = prepare_change(
                 path.clone(),
-                "127.0.0.1:18736",
-                "nous",
-                "work",
-                model,
-                operation,
+                Change {
+                    bind: "127.0.0.1:18736",
+                    provider: "nous",
+                    alias: "work",
+                    model,
+                    operation,
+                },
             )
             .unwrap();
             apply(plan, &root.join("backups")).unwrap();
@@ -656,11 +685,13 @@ mod tests {
         for operation in [Operation::Update, Operation::Remove] {
             let plan = prepare_change(
                 path.clone(),
-                "127.0.0.1:18737",
-                "nous",
-                "work",
-                "second",
-                operation,
+                Change {
+                    bind: "127.0.0.1:18737",
+                    provider: "nous",
+                    alias: "work",
+                    model: "second",
+                    operation,
+                },
             )
             .unwrap();
             apply(plan, &root.join("backups")).unwrap();
@@ -692,33 +723,39 @@ mod tests {
         assert!(
             prepare_change(
                 path.clone(),
-                "127.0.0.1:18736",
-                "grok",
-                "work",
-                "",
-                Operation::Remove
+                Change {
+                    bind: "127.0.0.1:18736",
+                    provider: "grok",
+                    alias: "work",
+                    model: "",
+                    operation: Operation::Remove,
+                },
             )
             .is_err()
         );
         assert!(
             prepare_change(
                 path.clone(),
-                "127.0.0.1:18736",
-                "grok",
-                "work",
-                "new-model",
-                Operation::Update
+                Change {
+                    bind: "127.0.0.1:18736",
+                    provider: "grok",
+                    alias: "work",
+                    model: "new-model",
+                    operation: Operation::Update,
+                },
             )
             .is_err()
         );
         assert!(
             prepare_change(
                 path.clone(),
-                "127.0.0.1:18737",
-                "grok",
-                "work",
-                "old-model",
-                Operation::Update
+                Change {
+                    bind: "127.0.0.1:18737",
+                    provider: "grok",
+                    alias: "work",
+                    model: "old-model",
+                    operation: Operation::Update,
+                },
             )
             .is_ok()
         );
@@ -728,11 +765,13 @@ mod tests {
         let before = std::fs::read(&path).unwrap();
         let removal = prepare_change(
             path.clone(),
-            "127.0.0.1:18736",
-            "grok",
-            "work",
-            "",
-            Operation::Remove,
+            Change {
+                bind: "127.0.0.1:18736",
+                provider: "grok",
+                alias: "work",
+                model: "",
+                operation: Operation::Remove,
+            },
         )
         .unwrap();
         assert_eq!(removal.view.operation, Operation::Remove);
@@ -763,11 +802,13 @@ mod tests {
         let before = std::fs::read(&path).unwrap();
         let update = prepare_change(
             path.clone(),
-            "[::1]:18737",
-            "nous",
-            "work",
-            "new-model",
-            Operation::Update,
+            Change {
+                bind: "[::1]:18737",
+                provider: "nous",
+                alias: "work",
+                model: "new-model",
+                operation: Operation::Update,
+            },
         )
         .unwrap();
         assert_eq!(update.view.operation, Operation::Update);
@@ -797,11 +838,13 @@ mod tests {
         assert!(
             prepare_change(
                 path.clone(),
-                "127.0.0.1:18736",
-                "nous",
-                "work",
-                "model",
-                Operation::Update
+                Change {
+                    bind: "127.0.0.1:18736",
+                    provider: "nous",
+                    alias: "work",
+                    model: "model",
+                    operation: Operation::Update,
+                },
             )
             .is_err()
         );
