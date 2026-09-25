@@ -174,6 +174,16 @@ pub fn format_tooltip(
 }
 
 /// Status lines such as "Reset used" sit above the capture summary, and only while set.
+/// Linux tray tooltips are ignored by the icon library. The panel title is the
+/// line the user can see, so a cleared status must return the app name.
+pub fn indicator_title(status: Option<&str>, app_name: &str) -> String {
+    status
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or(app_name)
+        .to_string()
+}
+
 pub fn compose_tooltip(status: Option<&str>, share_line: &str, body: &str) -> String {
     let mut parts = Vec::new();
     if let Some(status) = status.map(str::trim).filter(|text| !text.is_empty()) {
@@ -243,6 +253,16 @@ mod tests {
         let cleared = compose_tooltip(None, "", body);
         assert_eq!(cleared, body);
         assert!(!cleared.contains("Reset used"));
+        assert_eq!(
+            indicator_title(Some("Reset used"), "Spanreed"),
+            "Reset used"
+        );
+        assert_eq!(
+            indicator_title(Some("Refreshing usage…"), "Spanreed"),
+            "Refreshing usage…"
+        );
+        assert_eq!(indicator_title(None, "Spanreed"), "Spanreed");
+        assert_eq!(indicator_title(Some("  "), "Spanreed"), "Spanreed");
     }
 
     #[test]

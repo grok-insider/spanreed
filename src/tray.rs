@@ -797,10 +797,11 @@ fn apply_visual(
     item_share_primary: &MenuItem,
     item_unlink: &MenuItem,
 ) {
-    let (sev, tip, update_enabled, check_label, share_logged_in) = {
+    let (sev, tip, title, update_enabled, check_label, share_logged_in) = {
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.dirty = false;
         let sev = tray_format::severity(g.capture_up, g.max_used);
+        let title = tray_format::indicator_title(g.status_note.as_deref(), crate::app::APP_NAME);
         let tip = tray_format::compose_tooltip(
             g.status_note.as_deref(),
             &g.share_line,
@@ -813,7 +814,14 @@ fn apply_visual(
                 .unwrap_or(false);
         let check_label = MENU_CHECK.to_string();
         let share_logged_in = g.share_logged_in;
-        (sev, tip, update_enabled, check_label, share_logged_in)
+        (
+            sev,
+            tip,
+            title,
+            update_enabled,
+            check_label,
+            share_logged_in,
+        )
     };
     item_share_primary.set_text(if share_logged_in {
         MENU_SHARE_NOW
@@ -829,6 +837,7 @@ fn apply_visual(
         item_check.set_text(check_label);
     }
     let _ = tray.set_tooltip(Some(tip));
+    tray.set_title(Some(title));
     if let Ok(icon) = icon_for_severity(sev) {
         let _ = tray.set_icon(Some(icon));
     }
