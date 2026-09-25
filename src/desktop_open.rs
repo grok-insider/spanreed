@@ -151,7 +151,15 @@ fn desktop_alive() -> bool {
 fn command_is_desktop(command: &str) -> bool {
     command
         .split(['\0', ' ', '\\', '/'])
-        .any(|part| desktop_binary_names().contains(&part))
+        .any(|part| {
+            desktop_binary_names().iter().any(|name| {
+                part == *name
+                    || part
+                        .strip_prefix('.')
+                        .and_then(|rest| rest.strip_suffix("-wrapped"))
+                        == Some(*name)
+            })
+        })
 }
 
 fn process_command(pid: u32) -> Option<String> {
@@ -483,6 +491,10 @@ mod tests {
     #[test]
     fn a_live_cli_process_is_not_the_desktop() {
         assert!(command_is_desktop(desktop_binary_names()[0]));
+        assert!(command_is_desktop(&format!(
+            "/nix/store/x/bin/.{}-wrapped",
+            desktop_binary_names()[0]
+        )));
         assert!(command_is_desktop(&format!(
             "/usr/bin/{}\0",
             desktop_binary_names()[1]
