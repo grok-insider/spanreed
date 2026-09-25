@@ -234,6 +234,7 @@ pub fn build_table(embedded: &str, remote: Option<&str>, user: Option<&str>) -> 
     }
     overlay_xai_media_prices(&mut table);
     overlay_codex_list_prices(&mut table);
+    overlay_claude_list_prices(&mut table);
     PricingMap::new(table)
 }
 
@@ -261,6 +262,33 @@ fn overlay_codex_list_prices(table: &mut HashMap<String, Pricing>) {
             cost_per_image: None,
         },
     );
+}
+
+/// Anthropic list prices for Claude 5 models absent from the LiteLLM snapshot.
+/// https://platform.claude.com/docs/en/about-claude/pricing
+/// Per million tokens: input, 5-minute cache write, cache read, output. The full
+/// context window is billed at the standard rate.
+fn overlay_claude_list_prices(table: &mut HashMap<String, Pricing>) {
+    const M: f64 = 1_000_000.0;
+    for (model, input, cache_create, cache_read, output) in [
+        ("claude-opus-5-5", 4.0, 5.0, 0.20, 20.0),
+        ("claude-opus-5", 5.0, 6.25, 0.50, 25.0),
+        ("claude-sonnet-5", 2.0, 2.50, 0.20, 10.0),
+    ] {
+        table.entry(model.into()).or_insert(Pricing {
+            input: input / M,
+            output: output / M,
+            cache_create: cache_create / M,
+            cache_read: cache_read / M,
+            input_above_200k: None,
+            output_above_200k: None,
+            cache_create_above_200k: None,
+            cache_read_above_200k: None,
+            cost_per_character: None,
+            cost_per_second: None,
+            cost_per_image: None,
+        });
+    }
 }
 
 /// Official xAI Voice + Imagine list prices (not LiteLLM).
@@ -373,6 +401,17 @@ pub fn filter_upstream(json: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_5_models_carry_anthropic_list_prices() {
+        let t = table();
+        let opus = t.find("claude-opus-5-5").expect("claude-opus-5-5 priced");
+        assert!((opus.input - 4e-6).abs() < 1e-15);
+        assert!((opus.cache_read - 2e-7).abs() < 1e-15);
+        assert!((opus.output - 2e-5).abs() < 1e-15);
+        assert!(t.find("claude-opus-5").is_some());
+        assert!(t.find("claude-sonnet-5").is_some());
+    }
 
     #[test]
     fn embedded_table_parses_and_has_claude_and_gpt() {

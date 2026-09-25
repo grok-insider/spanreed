@@ -1,10 +1,12 @@
 //! Rewrite Grok/xAI `GET /v1/models` so Grok Build sees `-build` siblings
-//! and a reasoning-effort menu on 4.5/4.6.
+//! and a reasoning-effort menu on 4.5/4.6/4.7.
 //!
 //! Grok Build CLI: `id` is the picker catalog key; `model` is the routing
 //! slug sent to the API. `-build` is not an api.x.ai id (404 / no team
 //! access), so siblings keep `id = grok-4.N-build` and `model = grok-4.N`.
-//! Request bodies that still send the picker id are rewritten the same way.
+//! Fast is the opposite: the API id is `grok-4.7-build-fast`, and the picker
+//! id is `grok-4.7-fast`. Request bodies that still send a picker id are
+//! rewritten the same way.
 //!
 //! `grok-4.20-*-non-reasoning`, `grok-4.20-0309-reasoning`, and multi-agent
 //! are left alone: those ids reject `reasoning.effort` or mean something else.
@@ -20,11 +22,19 @@ pub const MODELS_REWRITE_MEMORY_RESERVATION: usize = 4 * 1024 * 1024;
 const MAX_MODEL_ENTRIES: usize = 2_048;
 
 const BUILD_SIBLINGS: &[(&str, &str, &str)] = &[
+    ("grok-4.7", "grok-4.7-build", "Grok 4.7 Build"),
     ("grok-4.6", "grok-4.6-build", "Grok 4.6 Build"),
     ("grok-4.5", "grok-4.5-build", "Grok 4.5 Build"),
 ];
 
+/// Picker id without `build`. The upstream slug stays `grok-4.7-build-fast`.
+const FAST_PICKER: &str = "grok-4.7-fast";
+const FAST_API: &str = "grok-4.7-build-fast";
+
 pub fn api_slug_for_picker(id: &str) -> Option<&'static str> {
+    if id == FAST_PICKER {
+        return Some(FAST_API);
+    }
     BUILD_SIBLINGS
         .iter()
         .find(|&&(_, sibling, _)| sibling == id)
@@ -41,6 +51,7 @@ pub fn rewrite_models_list(v: &mut Value) -> bool {
         return false;
     };
     inject_build_siblings(data);
+    alias_fast_picker(data);
     mark_reasoning_effort(data);
     true
 }
@@ -253,12 +264,33 @@ fn inject_build_siblings(data: &mut Vec<Value>) {
     }
 }
 
+fn alias_fast_picker(data: &mut [Value]) {
+    for item in data.iter_mut() {
+        if entry_id(item) != Some(FAST_API) {
+            continue;
+        }
+        let Some(obj) = item.as_object_mut() else {
+            continue;
+        };
+        obj.insert("id".into(), json!(FAST_PICKER));
+        obj.insert("model".into(), json!(FAST_API));
+        if obj
+            .get("name")
+            .and_then(|name| name.as_str())
+            .is_none_or(str::is_empty)
+        {
+            obj.insert("name".into(), json!("Grok 4.7 Fast"));
+        }
+    }
+}
+
 fn mark_reasoning_effort(data: &mut [Value]) {
     for item in data {
         let Some(id) = entry_id(item) else {
             continue;
         };
         let efforts = match id {
+            "grok-4.7" | "grok-4.7-build" | "grok-4.7-fast" | "grok-4.7-build-fast" => EFFORT_46,
             "grok-4.6" | "grok-4.6-build" => EFFORT_46,
             "grok-4.5" | "grok-4.5-build" => EFFORT_45,
             _ => continue,
@@ -362,6 +394,33 @@ mod tests {
     }
 
     #[test]
+    fn injects_47_build_sibling_and_xhigh() {
+        let out = rewrite(json!({
+            "data": [
+                {"id": "grok-4.7", "name": "Grok 4.7"},
+                {"id": "grok-4.7-build-fast"},
+            ]
+        }));
+        assert_eq!(
+            ids(&out),
+            vec!["grok-4.7", "grok-4.7-build", "grok-4.7-fast"]
+        );
+        assert_eq!(entry(&out, "grok-4.7-build")["model"], "grok-4.7");
+        assert_eq!(entry(&out, "grok-4.7-build")["name"], "Grok 4.7 Build");
+        assert_eq!(entry(&out, "grok-4.7-fast")["model"], "grok-4.7-build-fast");
+        assert_eq!(entry(&out, "grok-4.7").get("model"), None);
+        for id in ["grok-4.7", "grok-4.7-build", "grok-4.7-fast"] {
+            let e = entry(&out, id);
+            assert_eq!(e["supportsReasoningEffort"], true, "{id}");
+            assert_eq!(
+                e["reasoningEfforts"],
+                json!(["low", "medium", "high", "xhigh"]),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
     fn flags_45_without_xhigh() {
         let out = rewrite(json!({
             "data": [{"id": "grok-4.5", "model": "grok-4.5"}]
@@ -436,7 +495,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out["model"], "grok-4.5");
+        let out: Value = serde_json::from_slice(
+            &rewrite_grok_request_model(br#"{"model":"grok-4.7-build"}"#).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(out["model"], "grok-4.7");
+        let out: Value = serde_json::from_slice(
+            &rewrite_grok_request_model(br#"{"model":"grok-4.7-fast"}"#).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(out["model"], "grok-4.7-build-fast");
         assert!(rewrite_grok_request_model(br#"{"model":"grok-4.6"}"#).is_none());
+        assert!(rewrite_grok_request_model(br#"{"model":"grok-4.7"}"#).is_none());
+        assert!(rewrite_grok_request_model(br#"{"model":"grok-4.7-build-fast"}"#).is_none());
         assert!(
             rewrite_grok_request_model(br#"{"model":"grok-4.20-0309-non-reasoning"}"#).is_none()
         );

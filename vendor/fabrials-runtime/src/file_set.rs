@@ -13,14 +13,6 @@ pub struct FileSet {
     root: PathBuf,
     _lock: std::fs::File,
 }
-impl Drop for FileSet {
-    fn drop(&mut self) {
-        // close() can leave this flock held, so the next acquire stays busy.
-        #[cfg(unix)]
-        unlock_nonblocking(&self._lock);
-        let _ = fs2::FileExt::unlock(&self._lock);
-    }
-}
 impl FileSet {
     pub fn acquire(root: &Path) -> Result<Self, String> {
         Self::open(root, false)
@@ -112,21 +104,6 @@ impl FileSet {
             .and_then(|file| file.sync_all())
             .map_err(|_| "Account recovery cleanup durability failed")?;
         Ok(())
-    }
-}
-#[cfg(unix)]
-fn unlock_nonblocking(lock: &std::fs::File) {
-    use std::os::raw::c_int;
-    use std::os::unix::io::AsRawFd;
-    const LOCK_UN: c_int = 8;
-    const LOCK_NB: c_int = 4;
-    extern "C" {
-        fn flock(fd: c_int, op: c_int) -> c_int;
-    }
-    // SAFETY: `lock` is an open descriptor owned by this FileSet. `flock` only
-    // updates the advisory lock on that descriptor.
-    unsafe {
-        flock(lock.as_raw_fd(), LOCK_UN | LOCK_NB);
     }
 }
 fn validate(changes: &[Change]) -> Result<(), String> {

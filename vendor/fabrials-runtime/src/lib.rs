@@ -2,7 +2,6 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 pub mod history;
-pub mod local_usage;
 
 pub struct Snapshot<T> {
     state: Mutex<Option<(Instant, T)>>,
@@ -63,15 +62,16 @@ mod tests {
 }
 
 pub mod accounting;
+pub mod catalog;
 pub mod files;
 pub mod forward;
-pub mod wire_compat;
 pub mod http;
 pub mod listener;
 pub mod models;
 pub mod provider;
 pub mod routes;
 pub mod upstreams;
+pub mod wire_compat;
 pub mod ws_tunnel;
 
 mod database;
@@ -83,3 +83,5 @@ pub mod file_set;
 
 pub mod migration;
 pub mod notifications;
+
+pub mod local_usage;

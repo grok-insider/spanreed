@@ -4,6 +4,29 @@ use fabrials_model::UsageRecord;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 
+/// Oldest Codex release that can list GPT-6 Sol and Luna. Callers that do not
+/// send their own `client_version` still need a version new enough for the
+/// current subscription catalog.
+pub(crate) const DEFAULT_CATALOG_CLIENT_VERSION: &str = "0.155.1";
+
+pub(crate) fn client_version_from_query(query: &str) -> Option<&str> {
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == "client_version" && valid_client_version(value)).then_some(value)
+    })
+}
+
+fn valid_client_version(value: &str) -> bool {
+    (1..=16).contains(&value.len())
+        && value.chars().any(|character| character.is_ascii_digit())
+        && value
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '.')
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+        && !value.contains("..")
+}
+
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -196,7 +219,8 @@ pub fn forward(
     client: &mut dyn Write,
 ) -> Result<Option<UsageRecord>, String> {
     let started = std::time::Instant::now();
-    let chat = path.ends_with("/chat/completions");
+    let api_path = path.split_once('?').map(|(path, _)| path).unwrap_or(path);
+    let chat = api_path.ends_with("/chat/completions");
     let completion_id = format!("chatcmpl-{}", now_ms());
     let created = now_ms() / 1000;
     let mut record = UsageRecord {
@@ -237,12 +261,18 @@ pub fn forward(
     };
     record.model = original["model"].as_str().map(str::to_owned);
     let base = adapter.base.as_deref().unwrap_or("https://chatgpt.com");
+    let requested_version = path
+        .split_once('?')
+        .and_then(|(_, query)| client_version_from_query(query));
     let endpoint = if method == "GET" {
-        "/backend-api/codex/models?client_version=0.153.4"
+        format!(
+            "/backend-api/codex/models?client_version={}",
+            requested_version.unwrap_or(DEFAULT_CATALOG_CLIENT_VERSION)
+        )
     } else {
-        "/backend-api/codex/responses"
+        "/backend-api/codex/responses".to_string()
     };
-    let url = crate::forward::validated_upstream_url(base, endpoint)
+    let url = crate::forward::validated_upstream_url(base, &endpoint)
         .map_err(|_| "Invalid Codex origin")?;
     let http = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
@@ -317,7 +347,14 @@ pub fn forward(
                 Ok(json!({"id":id,"object":"model","owned_by":"openai"}))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        json_reply(client, 200, &json!({"object":"list","data":models}))?;
+        // Codex CLI deserializes this endpoint into its native catalog. A
+        // reduced OpenAI list makes the picker fall back to the binary's
+        // bundled models and hide anything that shipped after that build.
+        if requested_version.is_some() {
+            json_reply(client, 200, &value)?;
+        } else {
+            json_reply(client, 200, &json!({"object":"list","data":models}))?;
+        }
         return Ok(None);
     }
     if stream && write!(client,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n").is_err() {record.status=Some(499);return Ok(Some(record));}
@@ -577,5 +614,119 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(chunks.iter().all(|c| c["id"] == chunks[0]["id"]));
         assert_eq!(chunks.last().unwrap()["usage"]["total_tokens"], 10);
+    }
+
+    #[test]
+    fn client_version_accepts_only_a_dotted_release() {
+        assert_eq!(
+            client_version_from_query("client_version=0.155.1"),
+            Some("0.155.1")
+        );
+        assert_eq!(
+            client_version_from_query("foo=1&client_version=0.156.0"),
+            Some("0.156.0")
+        );
+        assert!(client_version_from_query("client_version=0.155.1%0aX").is_none());
+        assert!(client_version_from_query("client_version=../0").is_none());
+        assert!(client_version_from_query("client_version=").is_none());
+        assert!(client_version_from_query("client_version=0..155").is_none());
+    }
+
+    #[test]
+    fn codex_client_version_receives_the_native_catalog() {
+        use std::io::{BufRead, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let fixture = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
+            let mut request = String::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                request.push_str(&line);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            assert!(
+                request.contains("GET /backend-api/codex/models?client_version=0.155.1 HTTP/1.1")
+            );
+            let body = r#"{"models":[{"slug":"gpt-6-sol","visibility":"list","display_name":"GPT-6-Sol"}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).unwrap();
+        });
+        let adapter = CodexAdapter { base: Some(base) };
+        let mut output = Vec::new();
+        forward(
+            &adapter,
+            "GET",
+            "/backend-api/codex/models?client_version=0.155.1",
+            b"",
+            "fixture-token",
+            Some(&json!({"account_id":"fixture-account"})),
+            &mut output,
+        )
+        .unwrap();
+        fixture.join().unwrap();
+        let wire = String::from_utf8(output).unwrap();
+        let body = wire.split("\r\n\r\n").nth(1).unwrap();
+        let value: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(value["models"][0]["slug"], "gpt-6-sol");
+        assert_eq!(value["models"][0]["display_name"], "GPT-6-Sol");
+        assert!(value.get("data").is_none());
+    }
+
+    #[test]
+    fn catalog_without_client_version_stays_an_openai_list() {
+        use std::io::{BufRead, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let fixture = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
+            let mut request = String::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                request.push_str(&line);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            assert!(request.contains(&format!(
+                "GET /backend-api/codex/models?client_version={DEFAULT_CATALOG_CLIENT_VERSION} HTTP/1.1"
+            )));
+            let body = r#"{"models":[{"slug":"gpt-6-sol","visibility":"list"}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).unwrap();
+        });
+        let adapter = CodexAdapter { base: Some(base) };
+        let mut output = Vec::new();
+        forward(
+            &adapter,
+            "GET",
+            "/backend-api/codex/models",
+            b"",
+            "fixture-token",
+            Some(&json!({"account_id":"fixture-account"})),
+            &mut output,
+        )
+        .unwrap();
+        fixture.join().unwrap();
+        let wire = String::from_utf8(output).unwrap();
+        let body = wire.split("\r\n\r\n").nth(1).unwrap();
+        let value: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(value["object"], "list");
+        assert_eq!(value["data"][0]["id"], "gpt-6-sol");
+        assert!(value.get("models").is_none());
     }
 }

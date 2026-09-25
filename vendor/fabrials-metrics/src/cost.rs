@@ -16,6 +16,9 @@ pub fn list_cost_usd_with(record: &UsageRecord, table: &pricing::PricingMap) -> 
     if record.is_failed() {
         return None;
     }
+    if let Some(usd) = crate::opencode_go::list_cost_usd(record) {
+        return Some(usd);
+    }
     if let Some(usd) = media_cost(record, table) {
         return Some(usd);
     }
@@ -63,21 +66,13 @@ fn voice_billing_key(record: &UsageRecord) -> Option<&'static str> {
 fn media_cost(record: &UsageRecord, table: &pricing::PricingMap) -> Option<f64> {
     match record.kind.as_deref().map(str::trim).unwrap_or("") {
         "image" => {
-            let model = record
-                .model
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())?;
+            let model = record.model.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
             let p = table.get(model)?;
             let n = record.quantity.unwrap_or(1).max(1);
             return Some(n as f64 * p.cost_per_image?);
         }
         "video" => {
-            let model = record
-                .model
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())?;
+            let model = record.model.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
             let p = table.get(model)?;
             let ms = match record.unit.as_deref() {
                 Some("video_ms") => record.quantity.unwrap_or(0),
@@ -259,6 +254,22 @@ mod tests {
             ..UsageRecord::default()
         };
         assert!(list_cost_usd(&rec).is_none());
+    }
+
+    #[test]
+    fn open_mail_synthetic_usage_has_a_positive_go_price() {
+        let mut record = UsageRecord {
+            provider: Some("opencode-go".into()),
+            model: Some("deepseek-v4.1-flash".into()),
+            ts_ms: 1_789_409_220_431,
+            input_tokens: 177,
+            output_tokens: 44,
+            status: Some(200),
+            ..Default::default()
+        };
+        assert!((list_cost_usd(&record).unwrap() - 0.00005295).abs() < 1e-12);
+        record.status = Some(500);
+        assert!(list_cost_usd(&record).is_none());
     }
 
     fn close(got: Option<f64>, expected: f64) {

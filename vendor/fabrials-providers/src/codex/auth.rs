@@ -6,6 +6,8 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+/// Catalog probe version. GPT-6 Sol and Luna are omitted below 0.155.0.
+pub const MODELS_METADATA_PATH: &str = "/backend-api/codex/models?client_version=0.155.1";
 pub const ISSUER: &str = "https://auth.openai.com";
 
 pub fn claims(token: &str) -> Option<Value> {
@@ -150,12 +152,10 @@ impl Client {
         token_document(value, now, Some(document))
     }
     pub fn get(&self, path: &str, document: &Value) -> Result<Value, String> {
-        if !matches!(
-            path,
-            "/backend-api/codex/models?client_version=0.153.4"
-                | "/backend-api/wham/usage"
-                | "/backend-api/wham/rate-limit-reset-credits"
-        ) {
+        if path != MODELS_METADATA_PATH
+            && path != "/backend-api/wham/usage"
+            && path != "/backend-api/wham/rate-limit-reset-credits"
+        {
             return Err("Unsupported Codex metadata operation".into());
         }
         let access = required(document, "access_token")?;
@@ -171,6 +171,71 @@ impl Client {
                 .send()
                 .map_err(|_| "Codex metadata unavailable")?,
         )
+    }
+
+    /// Spend one banked Codex limit-reset credit. `redeem_request_id` is the
+    /// idempotency key for this confirmation; retries must reuse it.
+    pub fn consume_reset(
+        &self,
+        document: &Value,
+        redeem_request_id: &str,
+    ) -> Result<(), &'static str> {
+        if !valid_redeem_request_id(redeem_request_id) {
+            return Err("invalid reset request");
+        }
+        let access =
+            required(document, "access_token").map_err(|_| "Incomplete Codex authorization")?;
+        let response = self
+            .http
+            .post("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume")
+            .bearer_auth(access)
+            .header(
+                "ChatGPT-Account-Id",
+                account_id(document).ok_or("Codex account missing")?,
+            )
+            .header("originator", "codex_cli_rs")
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .json(&json!({ "redeem_request_id": redeem_request_id }))
+            .send()
+            .map_err(|_| "Codex reset unavailable")?;
+        if !response.status().is_success() {
+            return Err("Codex reset unavailable");
+        }
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        response
+            .take(1_048_577)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "Could not read Codex reset")?;
+        if bytes.len() > 1_048_576 {
+            return Err("Codex reset response too large");
+        }
+        let value =
+            serde_json::from_slice::<Value>(&bytes).map_err(|_| "Codex did not redeem a reset")?;
+        interpret_consume(&value)
+    }
+}
+
+pub fn valid_redeem_request_id(value: &str) -> bool {
+    let mut parts = value.split('-');
+    for width in [8, 4, 4, 4, 12] {
+        let Some(part) = parts.next() else {
+            return false;
+        };
+        if part.len() != width || !part.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    parts.next().is_none()
+}
+
+pub fn interpret_consume(value: &Value) -> Result<(), &'static str> {
+    match value.get("code").and_then(Value::as_str) {
+        Some("reset" | "already_redeemed") => Ok(()),
+        Some("nothing_to_reset") => Err("No rate-limit window can be reset right now"),
+        Some("no_credit") => Err("No limit reset credit is available"),
+        _ => Err("Codex did not redeem a reset"),
     }
 }
 fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -228,5 +293,41 @@ mod tests {
         )
         .is_err());
         assert!(validate(&first, 2_000_001).is_err());
+    }
+
+    #[test]
+    fn consume_results_use_the_status_code_and_drop_credit_identifiers() {
+        assert!(interpret_consume(
+            &json!({"code":"reset","credit":{"id":"RateLimitResetCredit_secret"}})
+        )
+        .is_ok());
+        assert!(interpret_consume(&json!({"code":"already_redeemed"})).is_ok());
+        assert_eq!(
+            interpret_consume(
+                &json!({"code":"no_credit","credit":{"id":"RateLimitResetCredit_secret"}})
+            ),
+            Err("No limit reset credit is available")
+        );
+        assert_eq!(
+            interpret_consume(&json!({"code":"nothing_to_reset"})),
+            Err("No rate-limit window can be reset right now")
+        );
+        assert_eq!(
+            interpret_consume(&json!({"code":"reset","detail":"RateLimitResetCredit_secret"}))
+                .is_ok(),
+            true
+        );
+        let rejected = interpret_consume(
+            &json!({"code":"other","credit":{"id":"RateLimitResetCredit_secret"}}),
+        )
+        .unwrap_err();
+        assert!(!rejected.contains("RateLimitResetCredit"));
+        assert!(valid_redeem_request_id(
+            "55cbe0c1-71ab-4c52-b855-80746f73ff52"
+        ));
+        assert!(!valid_redeem_request_id("not-a-request"));
+        assert!(!valid_redeem_request_id(
+            "55cbe0c1-71ab-4c52-b855-80746f73ff52-extra"
+        ));
     }
 }

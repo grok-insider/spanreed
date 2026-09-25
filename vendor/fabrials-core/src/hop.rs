@@ -101,6 +101,12 @@ pub fn core_request_allowed(method: &str, raw: &str) -> bool {
         || (method.eq_ignore_ascii_case("GET") && path == "/v1/models")
 }
 
+/// Anthropic Messages hops. Adapters opt in only when their upstream serves a
+/// model on that protocol (OpenCode Go serves `union-alpha` there).
+pub fn messages_request_allowed(method: &str, raw: &str) -> bool {
+    method.eq_ignore_ascii_case("POST") && hop_path(raw) == "/v1/messages"
+}
+
 fn hop_path(raw: &str) -> &str {
     raw.split('?').next().unwrap_or(raw).trim_end_matches('/')
 }
@@ -220,6 +226,17 @@ mod tests {
         );
         assert!(HopKind::Tts.always_record());
         assert!(!HopKind::Chat.always_record());
+    }
+
+    #[test]
+    fn messages_surface_is_post_only_and_exact() {
+        assert!(messages_request_allowed("POST", "/v1/messages"));
+        assert!(!messages_request_allowed("GET", "/v1/messages"));
+        assert!(!messages_request_allowed(
+            "POST",
+            "/v1/messages/count_tokens"
+        ));
+        assert!(!core_request_allowed("POST", "/v1/messages"));
     }
 
     #[test]

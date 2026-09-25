@@ -7,6 +7,8 @@ pub struct SynchronizedAccount {
     #[serde(default)]
     pub linked_account_id: Option<String>,
     pub device: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
     pub source: String,
     pub observed_at_ms: i64,
     pub output: crate::ProviderOutput,

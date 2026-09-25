@@ -125,6 +125,9 @@ pub fn parse_fabric_path(raw: &str) -> FabricRoute {
                     upstream: "https://api2.cursor.sh",
                 };
             }
+            if let Some(route) = catalog_route(&after, query, Some(alias.into())) {
+                return route;
+            }
             return grok_fabric(with_query(&after, query), Some(alias.into()));
         }
     }
@@ -183,7 +186,32 @@ pub fn parse_fabric_path(raw: &str) -> FabricRoute {
         };
     }
 
+    if let Some(route) = catalog_route(path_only, query, None) {
+        return route;
+    }
+
     grok_fabric(raw.to_string(), None)
+}
+
+fn catalog_route(
+    path_only: &str,
+    query: Option<&str>,
+    account_alias: Option<String>,
+) -> Option<FabricRoute> {
+    let rest = path_only.strip_prefix('/')?;
+    let (id, suffix) = rest.split_once('/').unwrap_or((rest, ""));
+    let spec = crate::catalog::by_id(id)?;
+    let path = if suffix.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{suffix}")
+    };
+    Some(FabricRoute {
+        path: with_query(&path, query),
+        account_alias,
+        route: spec.id,
+        upstream: spec.upstream,
+    })
 }
 
 fn grok_fabric(path: String, account_alias: Option<String>) -> FabricRoute {
@@ -385,6 +413,23 @@ mod tests {
         assert_eq!(r.route, "opencode-go");
         assert_eq!(r.path, "/v1/responses");
         assert_eq!(r.upstream, UPSTREAM_OPENCODE_GO);
+    }
+
+    #[test]
+    fn catalog_provider_prefixes_do_not_fall_through_to_grok() {
+        let route = parse_fabric_path("/openrouter/v1/chat/completions?beta=1");
+        assert_eq!(route.route, "openrouter");
+        assert_eq!(route.path, "/v1/chat/completions?beta=1");
+        assert_eq!(route.upstream, "https://openrouter.ai/api");
+        assert!(route.account_alias.is_none());
+        let pinned = parse_fabric_path("/acct/work/claude/v1/messages");
+        assert_eq!(pinned.account_alias.as_deref(), Some("work"));
+        assert_eq!(pinned.route, "claude");
+        assert_eq!(pinned.path, "/v1/messages");
+        assert_eq!(pinned.upstream, "https://api.anthropic.com");
+        let glued = parse_fabric_path("/openrouter@attacker.invalid/v1/models");
+        assert_eq!(glued.route, "grok");
+        assert_eq!(glued.path, "/openrouter@attacker.invalid/v1/models");
     }
 
     #[test]
