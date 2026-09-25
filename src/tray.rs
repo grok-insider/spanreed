@@ -1092,10 +1092,15 @@ fn user_notify(title: &str, body: &str, modal: bool) {
         if handed_to_desktop && cfg!(target_os = "linux") {
             return;
         }
-        if let Err(error) = crate::notifications::deliver_os(&title, &body) {
-            log::warn!("tray notify failed: {error}");
+        let delivered = crate::notifications::deliver_os(&title, &body);
+        if !crate::notifications::notification_confirmed(std::env::consts::OS, delivered.is_ok()) {
+            if let Err(error) = &delivered {
+                log::warn!("tray notify failed: {error}");
+            }
             #[cfg(windows)]
-            show_windows_message(&title, &body);
+            if delivered.is_err() {
+                show_windows_message(&title, &body);
+            }
             #[cfg(target_os = "macos")]
             show_macos_dialog(&title, &body);
         }

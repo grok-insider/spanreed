@@ -122,6 +122,13 @@ pub fn deliver_background(outputs: &[crate::model::ProviderOutput]) -> Result<u3
     deliver_outputs(outputs, deliver_os)
 }
 
+/// `display notification` exits successfully even when Notification Center drops
+/// the banner. macOS therefore never treats that command as proof of delivery.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn notification_confirmed(platform: &str, command_ok: bool) -> bool {
+    platform != "macos" && command_ok
+}
+
 pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
@@ -510,6 +517,15 @@ loop.run()
             "notification service did not receive the alert: {text} service: {service_err}"
         );
         assert!(text.contains("Ensure capture before new hops."));
+    }
+
+    #[test]
+    fn macos_banner_does_not_count_as_delivered() {
+        assert!(!notification_confirmed("macos", true));
+        assert!(!notification_confirmed("macos", false));
+        assert!(notification_confirmed("linux", true));
+        assert!(notification_confirmed("windows", true));
+        assert!(!notification_confirmed("windows", false));
     }
 
     #[test]
