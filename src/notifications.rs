@@ -278,6 +278,7 @@ pub(crate) fn windows_dialog_args(script: &str) -> Vec<String> {
 }
 
 /// Modal fallback when Notification Center rejects the banner.
+/// System Events presents the dialog while the tray stays in the background.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn osascript_dialog(title: &str, body: &str) -> String {
     fn escape(value: &str) -> String {
@@ -287,7 +288,7 @@ pub(crate) fn osascript_dialog(title: &str, body: &str) -> String {
             .replace(['\n', '\r'], " ")
     }
     format!(
-        "display dialog \"{}\" with title \"{}\" buttons {{\"OK\"}} default button \"OK\"",
+        "tell application \"System Events\" to display dialog \"{}\" with title \"{}\" buttons {{\"OK\"}} default button \"OK\"",
         escape(body),
         escape(title)
     )
@@ -642,7 +643,9 @@ loop.run()
         assert!(script.contains("with title \"Capture \\\"down\\\"\""));
         let dialog = osascript_dialog("Capture \"down\"", "Line one\nLine two");
         assert!(!dialog.contains('\n'));
-        assert!(dialog.starts_with("display dialog \"Line one Line two\""));
+        assert!(dialog.starts_with(
+            "tell application \"System Events\" to display dialog \"Line one Line two\""
+        ));
         let zenity = zenity_dialog_args("Capture down", "Ensure capture");
         assert_eq!(
             zenity,
