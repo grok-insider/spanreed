@@ -14,8 +14,14 @@ use crate::output;
 
 /// Action results such as "Reset used" leave the card and tooltip on their own.
 /// A reset that is still running keeps its line until it finishes.
-pub fn status_expired(status_at: Option<Instant>, reset_in_flight: bool, now: Instant) -> bool {
-    !reset_in_flight
+pub fn status_expired(
+    status: Option<&str>,
+    status_at: Option<Instant>,
+    reset_in_flight: bool,
+    now: Instant,
+) -> bool {
+    status != Some("Capture proxy is DOWN")
+        && !reset_in_flight
         && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(8))
 }
 
@@ -225,10 +231,26 @@ mod tests {
     fn status_lines_expire_without_another_action() {
         let now = Instant::now();
         let earlier = now.checked_sub(Duration::from_secs(9)).expect("instant");
-        assert!(!status_expired(Some(now), false, now));
-        assert!(status_expired(Some(earlier), false, now));
-        assert!(!status_expired(Some(earlier), true, now));
-        assert!(!status_expired(None, false, now));
+        assert!(!status_expired(Some("Reset used"), Some(now), false, now));
+        assert!(status_expired(
+            Some("Refreshing usage…"),
+            Some(earlier),
+            false,
+            now
+        ));
+        assert!(!status_expired(
+            Some("Reset used"),
+            Some(earlier),
+            true,
+            now
+        ));
+        assert!(!status_expired(None, None, false, now));
+        assert!(!status_expired(
+            Some("Capture proxy is DOWN"),
+            Some(earlier),
+            false,
+            now
+        ));
         let hung = now.checked_sub(Duration::from_secs(61)).expect("instant");
         assert!(!reset_hung(Some(now), true, now));
         assert!(reset_hung(Some(hung), true, now));

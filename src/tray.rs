@@ -262,7 +262,12 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     guard.status_at = Some(now);
                     guard.dirty = true;
                 }
-            } else if tray_format::status_expired(guard.status_at, guard.reset_in_flight, now) {
+            } else if tray_format::status_expired(
+                guard.status_note.as_deref(),
+                guard.status_at,
+                guard.reset_in_flight,
+                now,
+            ) {
                 guard.status_note = None;
                 guard.status_at = None;
                 guard.dirty = true;
