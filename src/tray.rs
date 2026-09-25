@@ -1075,8 +1075,8 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
 /// User-visible notification.
 ///
 /// Every alert goes through the platform path: notify-send, a Windows toast,
-/// or macOS Notification Center. A Windows dialog is only the fallback when
-/// that delivery fails for a long message.
+/// or macOS Notification Center. If that delivery fails, macOS and Windows
+/// show a dialog so the alert is not dropped.
 fn user_notify(title: &str, body: &str, modal: bool) {
     log::info!("tray notify: {title}: {body}");
     if modal {
@@ -1095,9 +1095,9 @@ fn user_notify(title: &str, body: &str, modal: bool) {
         if let Err(error) = crate::notifications::deliver_os(&title, &body) {
             log::warn!("tray notify failed: {error}");
             #[cfg(windows)]
-            if modal {
-                show_windows_message(&title, &body);
-            }
+            show_windows_message(&title, &body);
+            #[cfg(target_os = "macos")]
+            show_macos_dialog(&title, &body);
         }
     });
 }
@@ -1112,7 +1112,7 @@ fn show_windows_message(title: &str, body: &str) {
         "Add-Type -AssemblyName PresentationFramework; \
          [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
     );
-    let _ = Command::new("powershell")
+    let _ = Command::new(crate::notifications::powershell_program())
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -1122,6 +1122,14 @@ fn show_windows_message(title: &str, body: &str) {
             &script,
         ])
         .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
+}
+
+#[cfg(target_os = "macos")]
+fn show_macos_dialog(title: &str, body: &str) {
+    let script = crate::notifications::osascript_dialog(title, body);
+    let _ = Command::new(crate::notifications::osascript_program())
+        .args(["-e", &script])
         .spawn();
 }
 

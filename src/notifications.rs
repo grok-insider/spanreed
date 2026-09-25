@@ -166,12 +166,12 @@ pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn osascript_program() -> &'static str {
+pub(crate) fn osascript_program() -> &'static str {
     "/usr/bin/osascript"
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn powershell_program() -> std::path::PathBuf {
+pub(crate) fn powershell_program() -> std::path::PathBuf {
     let root = std::env::var_os("SystemRoot")
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from)
@@ -190,6 +190,22 @@ fn osascript_notification(title: &str, body: &str) -> String {
     }
     format!(
         "display notification \"{}\" with title \"{}\"",
+        escape(body),
+        escape(title)
+    )
+}
+
+/// Modal fallback when Notification Center rejects the banner.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn osascript_dialog(title: &str, body: &str) -> String {
+    fn escape(value: &str) -> String {
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace(['\n', '\r'], " ")
+    }
+    format!(
+        "display dialog \"{}\" with title \"{}\" buttons {{\"OK\"}} default button \"OK\"",
         escape(body),
         escape(title)
     )
@@ -488,5 +504,8 @@ loop.run()
         assert!(!script.contains('\n'));
         assert!(script.contains("display notification \"Line one Line two\""));
         assert!(script.contains("with title \"Capture \\\"down\\\"\""));
+        let dialog = osascript_dialog("Capture \"down\"", "Line one\nLine two");
+        assert!(!dialog.contains('\n'));
+        assert!(dialog.starts_with("display dialog \"Line one Line two\""));
     }
 }
