@@ -510,7 +510,7 @@ mod tests {
         ))));
         let fixture = std::env::temp_dir().join(format!(
             "spanreed-unmanaged-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::write(&fixture, b"fixture").unwrap();
         assert!(!exe_is_under_nix_store(Some(&fixture)));

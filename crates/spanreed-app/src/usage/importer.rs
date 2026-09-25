@@ -1,9 +1,9 @@
 use super::discovery;
-use fabrials_providers::usage::{catalog, files};
-use fabrials_runtime::local_usage::{ImportBatch, UsageStore};
+use fabrials_store_sqlite::local_usage::{ImportBatch, SqliteUsageStore as UsageStore};
 #[cfg(test)]
 use fabrials_types::consumption::UsageFilter;
 use fabrials_types::consumption::{ImportCheckpoint, ImportState, SourceStatus, UsageParser};
+use fabrials_usage_import::{catalog, files};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Seek, SeekFrom};
@@ -86,7 +86,7 @@ fn import_file(
     }
     let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let parser: Option<Box<dyn UsageParser>> = match client {
-        "codex" => Some(Box::new(fabrials_providers::usage::codex::Codex)),
+        "codex" => Some(Box::new(fabrials_usage_import::codex::Codex)),
         // Other formats can revise earlier messages or consult sibling files;
         // replacement imports retain their native update semantics.
         _ => None,

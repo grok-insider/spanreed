@@ -1,7 +1,7 @@
 //! Model pricing for local-log and hop cost estimation.
 //!
 //! The engine, the embedded snapshot and the published list-price overlays
-//! live in `fabrials-metrics`. This host module supplies the other layers
+//! live in `fabrials-pricing`. This host module supplies the other layers
 //! (later wins):
 //! 1. the runtime-refreshed LiteLLM + models.dev tables cached at
 //!    `~/.cache/spanreed/pricing-remote.json` (prices) and
@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
-pub use fabrials_metrics::pricing::{PricingMap, Usage};
-use fabrials_metrics::{LimitsMap, UpstreamTables, build_limits, compose_upstream};
+pub use fabrials_pricing::pricing::{PricingMap, Usage};
+use fabrials_pricing::{LimitsMap, UpstreamTables, build_limits, compose_upstream};
 
 use crate::creds;
 use crate::http::Request;
@@ -94,12 +94,12 @@ fn load_limits() -> LimitsMap {
 }
 
 pub fn table_from(remote: Option<&str>, user: Option<&str>) -> PricingMap {
-    fabrials_metrics::pricing::build_table(fabrials_metrics::pricing::embedded_json(), remote, user)
+    fabrials_pricing::pricing::build_table(fabrials_pricing::pricing::embedded_json(), remote, user)
 }
 
 /// List-price USD for a captured hop.
 pub fn hop_cost_usd(record: &fabrials_types::HopRecord, table: &PricingMap) -> Option<f64> {
-    fabrials_metrics::cost::list_cost_usd_with(record, table)
+    fabrials_pricing::cost::list_cost_usd_with(record, table)
 }
 
 fn remote_cache_path() -> PathBuf {

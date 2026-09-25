@@ -1,8 +1,6 @@
 //! Private native pairing state. Persist proof before consuming an invitation.
-use fabrials_runtime::{
-    file_set::{Change, FileSet},
-    migration::client::Client,
-};
+use fabrials_fabric::migration::client::Client;
+use fabrials_store_sqlite::file_set::{Change, FileSet};
 use fabrials_types::migration::MigrationSessionView;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -181,7 +179,7 @@ fn pair_at(
         None => Record {
             id: id.into(),
             origin: origin.into(),
-            proof: fabrials_runtime::migration::client::new_proof()?,
+            proof: fabrials_fabric::migration::client::new_proof()?,
             local_environment: local.into(),
             view: None,
             transfer: None,
@@ -437,13 +435,15 @@ impl Execution<'_> {
                     }
                     client.import(id, &record.proof, confirmed_revision, entries)?
                 }
-                MigrationDirection::HostedToLocal => fabrials_runtime::migration::import_files(
-                    self.accounts,
-                    &record.local_environment,
-                    id,
-                    &review,
-                    entries,
-                )?,
+                MigrationDirection::HostedToLocal => {
+                    fabrials_store_sqlite::migration::import_files(
+                        self.accounts,
+                        &record.local_environment,
+                        id,
+                        &review,
+                        entries,
+                    )?
+                }
             };
             #[cfg(test)]
             if self.exit_before_receipt {
@@ -662,7 +662,7 @@ mod tests {
         Fixture {
             root: std::env::temp_dir().join(format!(
                 "spanreed-pair-{}",
-                fabrials_runtime::migration::client::new_proof().unwrap()
+                fabrials_fabric::migration::client::new_proof().unwrap()
             )),
             paired: Cell::new(false),
             calls: Cell::new(0),

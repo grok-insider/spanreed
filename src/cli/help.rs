@@ -39,7 +39,7 @@ pub(super) fn print() {
          \tspanreed auth logout copilot  Remove the stored Copilot credential\n\
          \tspanreed update-pricing [out] Fetch LiteLLM prices plus the OpenCode Go\n\
          \t                               channel from models.dev (writes to stdout, or to [out];\n\
-         \t                               used to refresh the fabrials-metrics price snapshot)\n\
+         \t                               used to refresh the fabrials-pricing price snapshot)\n\
          \tspanreed share               Upload plan/quota metrics (requires X login)\n\
          \tspanreed share login         Link CLI via device code on fabrials.com\n\
          \tspanreed share logout|status Session management\n\

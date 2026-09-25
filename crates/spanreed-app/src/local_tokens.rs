@@ -1,5 +1,6 @@
 //! Local Grok credential access with complete-document rotation recovery.
-use fabrials_runtime::credential_journal::{Recovery, Rotation, Scope};
+use fabrials_fabric::ports::{Recovery, Scope};
+use fabrials_store_sqlite::credential_journal::Rotation;
 use fabrials_types::recovery::{PendingCredential, RecoveryQueue};
 use serde_json::Value;
 use std::io::Read;
@@ -45,7 +46,7 @@ fn save(alias: Option<&str>, value: &Value, vault: &crate::accounts::Vault) -> R
     let text = serde_json::to_string(value).map_err(|_| "Invalid authorization")?;
     match alias {
         Some(alias) => vault.write_secret("grok", alias, &text),
-        None => fabrials_runtime::files::atomic_write_private(
+        None => fabrials_store_sqlite::files::atomic_write_private(
             &crate::creds::expand("~/.grok/auth.json"),
             text.as_bytes(),
         )

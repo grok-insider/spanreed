@@ -12,7 +12,7 @@ use std::fs;
 fn account_lifecycle_in_isolated_process() {
     let root = std::env::temp_dir().join(format!(
         "spanreed-vault-{}",
-        fabrials_runtime::accounting::new_request_id()
+        fabrials_fabric::accounting::new_request_id()
     ));
     fs::create_dir_all(&root).unwrap();
     let result = std::process::Command::new(std::env::current_exe().unwrap())
@@ -113,7 +113,7 @@ fn account_lifecycle_fixture() {
         vault
             .register(account.clone(), &original.to_string(), None)
             .unwrap();
-        assert!(fabrials_runtime::file_set::FileSet::acquire(&dir()).is_err());
+        assert!(fabrials_store_sqlite::file_set::FileSet::acquire(&dir()).is_err());
     }
     let journal = rotation("nous", "work").unwrap();
     journal.begin(&original).unwrap();

@@ -95,7 +95,7 @@ impl Controller {
         let thread = std::thread::Builder::new()
             .name("spanreed-local-proxy".into())
             .spawn(move || {
-                let result = fabrials_runtime::listener::serve_embedded(
+                let result = fabrials_fabric::listener::serve_embedded(
                     Arc::new(host),
                     worker_stop,
                     64,

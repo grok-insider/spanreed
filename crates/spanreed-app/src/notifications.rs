@@ -33,7 +33,7 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
         reset_expiry: enabled,
     })
     .map_err(|_| "Invalid notification settings")?;
-    fabrials_runtime::files::atomic_write_private(
+    fabrials_store_sqlite::files::atomic_write_private(
         &crate::product::config_dir().join("notifications.json"),
         &bytes,
     )
@@ -78,7 +78,7 @@ pub fn deliver_outputs(
     if !settings()?.reset_expiry {
         return Ok(0);
     }
-    let store = fabrials_runtime::notifications::DeliveryStore::open(
+    let store = fabrials_store_sqlite::SqliteDeliveryStore::open(
         &crate::product::data_dir().join("runtime.sqlite3"),
     )?;
     let now = crate::util::now_ms();

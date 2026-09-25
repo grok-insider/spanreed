@@ -1,5 +1,5 @@
 //! Local source inventory for reviewed migration. No credential material crosses IPC.
-use fabrials_runtime::migration::credential_kind;
+use fabrials_fabric::migration::credential_kind;
 use fabrials_types::migration::CredentialKind;
 pub use fabrials_types::migration::{MigrationCandidate, MigrationSelection};
 use serde_json::Value;
@@ -82,7 +82,7 @@ fn prepare_from_registry(
             api_key,
         });
     }
-    fabrials_runtime::migration::validate_transfer(
+    fabrials_fabric::migration::validate_transfer(
         review,
         &review.destination_environment,
         &entries,

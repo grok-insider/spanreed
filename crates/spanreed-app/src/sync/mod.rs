@@ -114,7 +114,7 @@ pub fn save_settings(mut settings: SyncSettings) -> Result<(), String> {
         identities,
     })
     .map_err(|_| "Invalid sync selection")?;
-    fabrials_runtime::files::atomic_write_private(
+    fabrials_store_sqlite::files::atomic_write_private(
         &crate::product::config_dir().join("sync-selection.json"),
         &bytes,
     )
@@ -139,7 +139,7 @@ fn save_status(owner: &str, status: SyncStatus) {
         owner: owner.to_owned(),
         status,
     }) {
-        let _ = fabrials_runtime::files::atomic_write_private(
+        let _ = fabrials_store_sqlite::files::atomic_write_private(
             &crate::product::data_dir().join("sync-status.json"),
             &bytes,
         );

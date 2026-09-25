@@ -236,7 +236,7 @@ fn prepare_change(path: PathBuf, change: Change<'_>) -> Result<Pending, String> 
     }
     Ok(Pending {
         view: Preview {
-            id: fabrials_runtime::accounting::new_request_id(),
+            id: fabrials_fabric::accounting::new_request_id(),
             path: path.display().to_string(),
             provider_id,
             addition,
@@ -392,7 +392,7 @@ fn prepare_grok_change(
     }
     Ok(Pending {
         view: Preview {
-            id: fabrials_runtime::accounting::new_request_id(),
+            id: fabrials_fabric::accounting::new_request_id(),
             path: path.display().to_string(),
             provider_id: format!("grok/{alias}"),
             addition,
@@ -562,7 +562,7 @@ fn apply(plan: Pending, backup_dir: &Path) -> Result<Option<String>, String> {
         .path
         .parent()
         .ok_or("Invalid client configuration path")?;
-    let _lease = fabrials_runtime::file_set::FileSet::acquire_wait(parent)?;
+    let _lease = fabrials_store_sqlite::file_set::FileSet::acquire_wait(parent)?;
     if read(&plan.path)? != plan.before {
         return Err("Configuration changed since review; preview it again".into());
     }
@@ -578,7 +578,7 @@ fn apply(plan: Pending, backup_dir: &Path) -> Result<Option<String>, String> {
             plan.view.id,
             extension
         ));
-        fabrials_runtime::files::atomic_write_private(&path, bytes)
+        fabrials_store_sqlite::files::atomic_write_private(&path, bytes)
             .map_err(|_| "Cannot back up client configuration")?;
         Some(path.display().to_string())
     } else {
@@ -587,7 +587,7 @@ fn apply(plan: Pending, backup_dir: &Path) -> Result<Option<String>, String> {
     if read(&plan.path)? != plan.before {
         return Err("Configuration changed during backup; preview it again".into());
     }
-    fabrials_runtime::files::atomic_write_private(&plan.path, &plan.after)
+    fabrials_store_sqlite::files::atomic_write_private(&plan.path, &plan.after)
         .map_err(|_| "Cannot save client configuration")?;
     Ok(backup)
 }
@@ -602,7 +602,7 @@ mod tests {
         assert!(Path::new(&executable).is_absolute());
         let root = std::env::temp_dir().join(format!(
             "spanreed-opencode-client-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         let config = root.join("config/opencode");
         std::fs::create_dir_all(&config).unwrap();
@@ -673,7 +673,7 @@ mod tests {
     fn jsonc_edits_preserve_surrounding_comments_and_exact_backup() {
         let root = std::env::temp_dir().join(format!(
             "spanreed-jsonc-review-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("opencode.jsonc");
@@ -711,7 +711,7 @@ mod tests {
     fn removal_rejects_referenced_models_and_preserves_other_providers() {
         let root = std::env::temp_dir().join(format!(
             "spanreed-remove-review-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("opencode.json");
@@ -792,7 +792,7 @@ mod tests {
     fn update_managed_connection_preserves_other_settings_and_rejects_customization() {
         let root = std::env::temp_dir().join(format!(
             "spanreed-update-review-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("opencode.json");
@@ -858,7 +858,7 @@ mod tests {
     fn grok_review_preserves_comments_models_and_private_backup() {
         let root = std::env::temp_dir().join(format!(
             "spanreed-grok-review-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("config.toml");
@@ -923,7 +923,7 @@ mod tests {
     fn refuses_expired_reviews_invalid_routes_and_non_json_configuration() {
         let root = std::env::temp_dir().join(format!(
             "spanreed-review-guards-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("opencode.json");
@@ -963,7 +963,7 @@ mod tests {
     fn reviewed_write_preserves_settings_and_rejects_changed_source() {
         let root = std::env::temp_dir().join(format!(
             "spanreed-review-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("opencode.json");

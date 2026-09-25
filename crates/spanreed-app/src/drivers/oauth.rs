@@ -1,5 +1,6 @@
 use crate::{accounts, util};
-use fabrials_runtime::credential_journal::{Recovery, Rotation, Scope};
+use fabrials_fabric::ports::{Recovery, Scope};
+use fabrials_store_sqlite::credential_journal::Rotation;
 
 type PendingQueue = fabrials_types::recovery::RecoveryQueue<String, serde_json::Value>;
 

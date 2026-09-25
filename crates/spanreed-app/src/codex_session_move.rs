@@ -1,7 +1,7 @@
 //! Exclusive handoff of a file-backed Codex grant. The server cancellation
 //! receipt, never a timeout or an absent receipt, authorizes local restoration.
 use crate::remote_workspace::{RemoteOperation, request};
-use fabrials_runtime::{file_set::FileSet, files::atomic_write_private};
+use fabrials_store_sqlite::{file_set::FileSet, files::atomic_write_private};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -232,7 +232,7 @@ pub fn preview(owner: &str, alias: &str) -> Result<SessionMoveView, String> {
     let key_hash = format!("{:x}", Sha256::digest(key.as_bytes()));
     let replacement_config = client_config(original_config.as_deref().unwrap_or(""), alias, &key)?;
     let view = SessionMoveView {
-        id: fabrials_runtime::accounting::new_request_id(),
+        id: fabrials_fabric::accounting::new_request_id(),
         state: "prepared".into(),
         alias: alias.into(),
         source_path: source.to_string_lossy().into_owned(),
@@ -415,7 +415,7 @@ mod tests {
     fn fixture() -> (PathBuf, Journal) {
         let storage = std::env::temp_dir().join(format!(
             "spanreed-move-fixture-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::create_dir_all(&storage).unwrap();
         let source = storage.join("auth.json");

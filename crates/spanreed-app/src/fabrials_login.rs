@@ -1,6 +1,7 @@
 //! Fabrials linking state. Device proofs and session tokens stay in the native host.
 use crate::share_session::{self, PendingLogin, ShareSession};
-use fabrials_runtime::credential_journal::{Rotation, Scope};
+use fabrials_fabric::ports::Scope;
+use fabrials_store_sqlite::credential_journal::Rotation;
 use std::path::PathBuf;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -100,7 +101,7 @@ fn load() -> Result<Option<Pending>, String> {
 }
 fn save(pending: &Pending) -> Result<(), String> {
     let bytes = serde_json::to_vec(pending).map_err(|_| "Invalid Fabrials connection")?;
-    fabrials_runtime::files::atomic_write_private(&path(), &bytes)
+    fabrials_store_sqlite::files::atomic_write_private(&path(), &bytes)
         .map_err(|_| "Could not save Fabrials connection".into())
 }
 fn remove() -> Result<(), String> {

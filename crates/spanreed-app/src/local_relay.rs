@@ -1,9 +1,16 @@
 //! Local composition root for the public Fabrials proxy runtime.
-use fabrials_runtime::{accounting, forward, http, listener, provider::Provider, routes};
+use fabrials_fabric::{accounting, forward, http, listener, provider::Provider, routes};
 use fabrials_types::hop::{HopKind, Transport};
 use fabrials_upstreams as upstreams;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
+
+/// Health and control endpoints live under `/__spanreed` (the engine default).
+const CONTROL_PATH: &str = "/__spanreed/";
+
+fn control() -> routes::ControlPrefix {
+    routes::ControlPrefix::new(CONTROL_PATH.trim_end_matches('/')).unwrap_or_default()
+}
 
 pub struct LocalRelay {
     bind: String,
@@ -64,13 +71,16 @@ impl listener::ConnectionHost for LocalRelay {
     fn bind(&self) -> &str {
         &self.bind
     }
+    fn control_prefix(&self) -> routes::ControlPrefix {
+        control()
+    }
     fn log(&self, message: &str) {
         crate::capture_log::append(message);
     }
     fn classify(&self, path: &str) -> listener::AdmissionClass {
-        if routes::is_health_path(path) {
+        if control().is_health(path) {
             listener::AdmissionClass::Health
-        } else if path.starts_with("/__spanreed/") {
+        } else if path.starts_with(CONTROL_PATH) {
             listener::AdmissionClass::Control
         } else {
             listener::AdmissionClass::Provider
@@ -119,11 +129,11 @@ impl listener::ConnectionHost for LocalRelay {
         if let Err(reject) = self.admit(&head) {
             return reject.write(&mut client);
         }
-        if routes::is_health_path(&head.path) {
+        if control().is_health(&head.path) {
             return http::write_status(&mut client, 200, "{\"ok\":true,\"service\":\"spanreed\"}");
         }
         let control_path = head.path.split('?').next().unwrap_or(&head.path);
-        if control_path.starts_with("/__spanreed/") {
+        if control_path.starts_with(CONTROL_PATH) {
             return match self.control(&mut reader, &head, control_path) {
                 Ok(value) => http::write_status(&mut client, 200, &value.to_string()),
                 Err(reject) => reject.write(&mut client),
@@ -154,7 +164,7 @@ impl LocalRelay {
         if head.headers.get("host") != Some(&self.bind) {
             return Err(Reject(400, "{\"error\":\"invalid_local_host\"}"));
         }
-        if routes::is_health_path(&head.path) {
+        if control().is_health(&head.path) {
             return if head.method == "GET" {
                 Ok(())
             } else {
@@ -217,8 +227,7 @@ impl LocalRelay {
         else {
             return Err(Reject(404, "{\"error\":\"unknown_route\"}"));
         };
-        let upgrade =
-            fabrials_runtime::ws_tunnel::is_websocket_upgrade(&head.method, &head.headers);
+        let upgrade = fabrials_fabric::ws_tunnel::is_websocket_upgrade(&head.method, &head.headers);
         if !provider.allows_request(&head.method, &routed, upgrade) {
             return Err(Reject(404, "{\"error\":\"unsupported_provider_route\"}"));
         }
@@ -238,7 +247,8 @@ impl LocalRelay {
         let mut body = http::read_http_request_body(reader, &head, limit)
             .map_err(|error| Reject(error.status_code(), "{\"error\":\"invalid_body\"}"))?;
         if provider.id() == "grok"
-            && let Some(rewritten) = fabrials_runtime::models::rewrite_grok_request_model(&body)
+            && let Some(rewritten) =
+                fabrials_upstreams::grok::models::rewrite_grok_request_model(&body)
         {
             body = rewritten;
         }
@@ -273,7 +283,7 @@ impl LocalRelay {
 /// An authorized hop waiting for its connection.
 struct PendingHop<'a> {
     prov: &'a dyn Provider,
-    routed: fabrials_runtime::provider::Upstream,
+    routed: fabrials_fabric::provider::Upstream,
     method: String,
     headers: std::collections::HashMap<String, String>,
     body: Vec<u8>,
@@ -505,7 +515,7 @@ impl forward::HopObserver for LocalUsage {
     }
 
     fn models_response(&self, body: Vec<u8>) -> Vec<u8> {
-        fabrials_runtime::models::rewrite_grok_models_body(&body).unwrap_or(body)
+        fabrials_upstreams::grok::models::rewrite_grok_models_body(&body).unwrap_or(body)
     }
     fn log(&self, message: &str) {
         crate::capture_log::append(message);
@@ -529,6 +539,15 @@ mod tests {
         fn log(&self, _: &str) {}
         fn record(&self, record: fabrials_types::HopRecord) {
             self.0.lock().unwrap().push(record);
+        }
+        fn authorize_response(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&serde_json::Value>,
+        ) -> Result<(), String> {
+            Err("not authorized in tests".into())
         }
     }
 

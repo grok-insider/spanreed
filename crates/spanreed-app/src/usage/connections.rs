@@ -1,5 +1,5 @@
 //! Host-owned credentials and bounded, read-only remote consumption collection.
-use fabrials_runtime::local_usage::{ImportBatch, UsageStore};
+use fabrials_store_sqlite::local_usage::{ImportBatch, SqliteUsageStore as UsageStore};
 use fabrials_types::consumption::ImportCheckpoint;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -21,11 +21,11 @@ fn load() -> Result<BTreeMap<String, Connection>, String> {
         Err(_) => Err("Cannot read usage connections".into()),
     }
 }
-fn connection_lock() -> Result<fabrials_runtime::credential_journal::Rotation, String> {
+fn connection_lock() -> Result<fabrials_store_sqlite::credential_journal::Rotation, String> {
     let environment = crate::product::config_dir().to_string_lossy().into_owned();
-    fabrials_runtime::credential_journal::Rotation::acquire(
+    fabrials_store_sqlite::credential_journal::Rotation::acquire(
         &crate::product::data_dir().join("credential-recovery"),
-        fabrials_runtime::credential_journal::Scope {
+        fabrials_fabric::ports::Scope {
             environment: &environment,
             owner: "local",
             provider: "usage-connections",
@@ -57,7 +57,7 @@ pub fn save(connection: Connection) -> Result<(), String> {
     let _lock = connection_lock()?;
     let mut connections = load()?;
     connections.insert(connection.client.clone(), connection);
-    fabrials_runtime::files::atomic_write_private(
+    fabrials_store_sqlite::files::atomic_write_private(
         &path(),
         &serde_json::to_vec(&connections).map_err(|_| "Invalid connection")?,
     )
@@ -84,7 +84,7 @@ pub fn collect(client: &str, store: &mut UsageStore, force: bool) -> Result<bool
     let started = std::time::Instant::now();
     let mut remaining = 32 * 1024 * 1024;
     let records =
-        fabrials_providers::usage::remote::collect(client, &connection.account, now, |request| {
+        fabrials_usage_import::remote::collect(client, &connection.account, now, |request| {
             if started.elapsed() > std::time::Duration::from_secs(45) {
                 return Err("Usage collection exceeded its time budget".into());
             }
@@ -169,7 +169,7 @@ fn collect_antigravity(store: &mut UsageStore, force: bool) -> Result<bool, Stri
     }
     let started = std::time::Instant::now();
     let mut remaining = 32 * 1024 * 1024;
-    let records = fabrials_providers::usage::remote::antigravity(|method, body| {
+    let records = fabrials_usage_import::remote::antigravity(|method, body| {
         if started.elapsed() > std::time::Duration::from_secs(45) {
             return Err("Antigravity collection exceeded its time budget".into());
         }
@@ -215,7 +215,7 @@ pub fn disconnect(client: &str) -> Result<(), String> {
     let _lock = connection_lock()?;
     let mut connections = load()?;
     connections.remove(client);
-    fabrials_runtime::files::atomic_write_private(
+    fabrials_store_sqlite::files::atomic_write_private(
         &path(),
         &serde_json::to_vec(&connections).map_err(|_| "Invalid connections")?,
     )

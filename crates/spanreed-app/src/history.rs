@@ -19,17 +19,17 @@ const DAY_MS: i64 = 86_400_000;
 /// Soft size cap before rewrite (bytes).
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-pub use fabrials_runtime::history::{HistorySample, prepare_sample};
+pub use fabrials_fabric::history::{HistorySample, prepare_sample};
 
 /// Default history path under XDG data.
 pub fn history_path() -> PathBuf {
     crate::product::data_dir().join("runtime.sqlite3")
 }
 
-fn sqlite_store(path: &Path) -> Result<fabrials_runtime::history::HistoryStore, String> {
+fn sqlite_store(path: &Path) -> Result<fabrials_store_sqlite::SqliteHistoryStore, String> {
     use std::io::Read;
     const SOURCE: &str = "usage-history.jsonl.v1";
-    let mut store = fabrials_runtime::history::HistoryStore::open(path)?;
+    let mut store = fabrials_store_sqlite::SqliteHistoryStore::open(path)?;
     if !store.imported("local", SOURCE)? {
         let legacy = path.with_file_name("usage-history.jsonl");
         let mut samples = Vec::new();
@@ -262,13 +262,13 @@ fn maybe_rotate(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::model::MetricLine;
-    use fabrials_runtime::history::{is_duplicate, is_reset_event};
+    use fabrials_fabric::history::{is_duplicate, is_reset_event};
 
     #[test]
     fn sqlite_import_preserves_source_and_survives_repeated_reads() {
         let directory = std::env::temp_dir().join(format!(
             "spanreed-history-import-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let legacy = directory.join("usage-history.jsonl");

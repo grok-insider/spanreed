@@ -3,7 +3,7 @@ pub mod connections;
 pub mod discovery;
 mod importer;
 
-use fabrials_runtime::local_usage::UsageStore;
+use fabrials_store_sqlite::SqliteUsageStore as UsageStore;
 use fabrials_types::consumption::{
     ConsumptionRecord, CostOrigin, SourceStatus, UsageCost, UsageFilter,
 };
@@ -154,7 +154,7 @@ pub fn report(
 }
 
 pub fn catalog_view() -> serde_json::Value {
-    serde_json::Value::Array(fabrials_providers::usage::catalog::clients().iter().map(|client|serde_json::json!({
+    serde_json::Value::Array(fabrials_usage_import::catalog::clients().iter().map(|client|serde_json::json!({
         "id":client.id,"name":client.name,"remote_collection":client.remote_collection(),"aggregate_only":client.aggregate_only()
     })).collect())
 }

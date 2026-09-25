@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use crate::creds;
 use crate::http::Request;
 use crate::share_state as share;
-use fabrials_runtime::credential_journal::{Recovery, Rotation, Scope};
+use fabrials_fabric::ports::{Recovery, Scope};
+use fabrials_store_sqlite::credential_journal::Rotation;
 
 const SESSION_FILE: &str = "share_session.json";
 
@@ -65,7 +66,7 @@ fn session_lock() -> Result<Rotation, String> {
 
 fn save_unlocked(session: &ShareSession) -> Result<(), String> {
     let body = serde_json::to_vec_pretty(session).map_err(|_| "Invalid Fabrials session")?;
-    fabrials_runtime::files::atomic_write_private(&session_path(), &body)
+    fabrials_store_sqlite::files::atomic_write_private(&session_path(), &body)
         .map_err(|_| "Could not persist Fabrials session".into())
 }
 

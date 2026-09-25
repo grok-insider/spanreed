@@ -1,4 +1,4 @@
-use fabrials_providers::usage::catalog::ClientDefinition;
+use fabrials_usage_import::catalog::ClientDefinition;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -21,7 +21,7 @@ pub fn settings() -> Result<UsageSettings, String> {
 }
 
 pub fn save(value: &UsageSettings) -> Result<(), String> {
-    let clients = fabrials_providers::usage::catalog::clients();
+    let clients = fabrials_usage_import::catalog::clients();
     for id in value
         .additional_roots
         .keys()
@@ -37,7 +37,7 @@ pub fn save(value: &UsageSettings) -> Result<(), String> {
         }
     }
     let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
-    fabrials_runtime::files::atomic_write_private(
+    fabrials_store_sqlite::files::atomic_write_private(
         &crate::product::config_dir().join("usage-sources.json"),
         &bytes,
     )

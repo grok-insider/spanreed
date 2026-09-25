@@ -162,7 +162,7 @@ impl HostedReviews {
             opencode(before.as_deref(), alias, &endpoint, key, model)?
         };
         let view = HostedClientReview {
-            id: fabrials_runtime::accounting::new_request_id(),
+            id: fabrials_fabric::accounting::new_request_id(),
             client: client.into(),
             path: path.to_string_lossy().into_owned(),
             account_id: id,
@@ -203,14 +203,14 @@ impl HostedReviews {
         if plan.view.client == "codex" && session_home().join("config.toml") != path {
             return Err("Codex home changed; preview again".into());
         }
-        let _lock = fabrials_runtime::file_set::FileSet::acquire_wait(
+        let _lock = fabrials_store_sqlite::file_set::FileSet::acquire_wait(
             path.parent().ok_or("Invalid client path")?,
         )?;
         if read_regular(&path)? != plan.before {
             return Err("Client configuration changed; preview again".into());
         }
         if let Some(before) = &plan.before {
-            fabrials_runtime::files::atomic_write_private(
+            fabrials_store_sqlite::files::atomic_write_private(
                 &crate::product::data_dir()
                     .join("backups")
                     .join(format!("{}-{}.config", plan.view.client, id)),
@@ -221,7 +221,7 @@ impl HostedReviews {
         if read_regular(&path)? != plan.before {
             return Err("Client configuration changed during backup; preview again".into());
         }
-        fabrials_runtime::files::atomic_write_private(&path, plan.after.as_bytes())
+        fabrials_store_sqlite::files::atomic_write_private(&path, plan.after.as_bytes())
             .map_err(|_| "Could not save client configuration")?;
         Ok(if plan.view.client == "codex" {
             "Configuration saved. Start a new Codex session; profile, project or command-line overrides may take precedence.".into()

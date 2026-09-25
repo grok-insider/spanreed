@@ -12,12 +12,12 @@ use crate::product;
 use crate::secret;
 
 pub(crate) struct Vault {
-    files: fabrials_runtime::file_set::FileSet,
+    files: fabrials_store_sqlite::file_set::FileSet,
 }
 
 pub(crate) fn lock_vault() -> Result<Vault, String> {
     Ok(Vault {
-        files: fabrials_runtime::file_set::FileSet::acquire_wait(&dir())?,
+        files: fabrials_store_sqlite::file_set::FileSet::acquire_wait(&dir())?,
     })
 }
 
@@ -28,9 +28,9 @@ impl Vault {
     pub(crate) fn commit(
         &self,
         registry: &Registry,
-        mut changes: Vec<fabrials_runtime::file_set::Change>,
+        mut changes: Vec<fabrials_store_sqlite::file_set::Change>,
     ) -> Result<(), String> {
-        changes.push(fabrials_runtime::file_set::Change {
+        changes.push(fabrials_store_sqlite::file_set::Change {
             path: "index.json".into(),
             contents: Some(serde_json::to_string_pretty(registry).map_err(|_| "Invalid registry")?),
         });
@@ -138,8 +138,8 @@ pub(super) fn secret_change(
     provider: &str,
     alias: &str,
     contents: Option<String>,
-) -> fabrials_runtime::file_set::Change {
-    fabrials_runtime::file_set::Change {
+) -> fabrials_store_sqlite::file_set::Change {
+    fabrials_store_sqlite::file_set::Change {
         path: format!("{provider}/{alias}.json"),
         contents,
     }
@@ -158,7 +158,7 @@ pub fn put_secret(provider: &str, alias: &str, blob: &str) -> Result<(), String>
 pub fn replace_secret(account: &Account, blob: &str) -> Result<(), String> {
     replace_authorization(
         account,
-        &fabrials_runtime::accounting::new_request_id(),
+        &fabrials_fabric::accounting::new_request_id(),
         blob,
     )
 }
@@ -258,10 +258,10 @@ pub fn read_secret_document(
 pub(crate) fn rotation(
     provider: &str,
     alias: &str,
-) -> Result<fabrials_runtime::credential_journal::Rotation, String> {
-    fabrials_runtime::credential_journal::Rotation::acquire(
+) -> Result<fabrials_store_sqlite::credential_journal::Rotation, String> {
+    fabrials_store_sqlite::credential_journal::Rotation::acquire(
         &product::data_dir().join("credential-recovery"),
-        fabrials_runtime::credential_journal::Scope {
+        fabrials_fabric::ports::Scope {
             environment: &product::data_dir().to_string_lossy(),
             owner: "local",
             provider,

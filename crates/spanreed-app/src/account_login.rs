@@ -103,7 +103,7 @@ impl Logins {
             _ => fabrials_providers::nous::Client::new(None)?.begin()?,
         };
         let flow = DeviceFlow::new(authorization, crate::util::now_ms());
-        let id = fabrials_runtime::accounting::new_request_id();
+        let id = fabrials_fabric::accounting::new_request_id();
         let view = LoginView {
             id: id.clone(),
             alias: alias.clone(),

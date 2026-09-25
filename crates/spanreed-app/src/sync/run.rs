@@ -1,7 +1,8 @@
 //! One synchronization run: enqueue fresh observations, push pending ones,
 //! pull remote history, then publish local consumption snapshots.
 
-use fabrials_runtime::credential_journal::{Rotation, Scope};
+use fabrials_fabric::ports::Scope;
+use fabrials_store_sqlite::credential_journal::Rotation;
 use fabrials_types::private_sync::{
     LocalUsageAggregate, LocalUsageDay, LocalUsageSnapshot, LocalUsageSnapshotV2, PrivateEvent,
     PrivateObservation, PrivatePage, PrivatePush,
@@ -210,7 +211,7 @@ fn publish_usage_v2(run: &Run<'_>) -> Result<(), String> {
     let remote = run.request(RemoteOperation::Consumption, serde_json::json!({}))?;
     let snapshots: Vec<LocalUsageSnapshotV2> = serde_json::from_value(remote["snapshots"].clone())
         .map_err(|_| "Invalid synchronized consumption response")?;
-    for client in fabrials_providers::usage::catalog::clients() {
+    for client in fabrials_usage_import::catalog::clients() {
         if !allowed(&client.id)? {
             continue;
         }
@@ -270,13 +271,12 @@ fn usage_snapshot_v2(
         .map(|s| s.revision)
         .max()
         .unwrap_or(0);
-    let revision =
-        fabrials_runtime::local_usage::UsageStore::open(&crate::history::history_path())?
-            .export_revision_after(
-                &format!("{}:{}:{}", run.owner, run.device, client),
-                &digest,
-                last_published,
-            )?;
+    let revision = fabrials_store_sqlite::SqliteUsageStore::open(&crate::history::history_path())?
+        .export_revision_after(
+            &format!("{}:{}:{}", run.owner, run.device, client),
+            &digest,
+            last_published,
+        )?;
     Ok(LocalUsageSnapshotV2 {
         device: run.device.clone(),
         source: client.to_string(),

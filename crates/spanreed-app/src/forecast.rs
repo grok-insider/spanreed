@@ -13,12 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::model::{MetricKind, MetricLine};
 use crate::util;
 
-/// Minimum Weekly % increase between samples before we recompute density.
-pub const MIN_PCT_DELTA: f64 = 3.0;
-/// Minimum Weekly % for one-shot density (tokens/pct_now) when no band yet.
-pub const MIN_PCT_ONESHOT: f64 = 5.0;
-/// First sample at or below this % is treated as week origin (oneshot ok).
-pub const NEAR_ORIGIN_PCT: f64 = 5.0;
+pub use fabrials_share::probed::{
+    MIN_PCT_DELTA, WeekProjection, density_oneshot, origin_is_near_zero, project_week_to_full,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PctSample {
@@ -36,13 +33,6 @@ pub struct WeekSnapshot {
     pub week_end_ms: i64,
     pub tokens: u64,
     pub cost_usd: f64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WeekProjection {
-    pub tokens: u64,
-    pub cost_usd: f64,
-    pub low_confidence: bool,
 }
 
 /// Pure: density from two samples on the same week (pct2 > pct1).
@@ -65,65 +55,6 @@ pub fn density_from_band(a: &PctSample, b: &PctSample) -> Option<(f64, f64)> {
     let d_tok = (b.tokens - a.tokens) as f64;
     let d_cost = b.cost_usd - a.cost_usd;
     Some((d_tok / d_pct, d_cost / d_pct))
-}
-
-/// One-shot tokens/cost per % from origin (only when pct is high enough).
-///
-/// Callers must only use this when observation started near 0% pool. A mid-week
-/// capture start (e.g. first sample at 70%) must use [`density_from_band`].
-pub fn density_oneshot(tokens: u64, cost_usd: f64, weekly_pct: f64) -> Option<(f64, f64)> {
-    if weekly_pct < MIN_PCT_ONESHOT {
-        return None;
-    }
-    Some((tokens as f64 / weekly_pct, cost_usd / weekly_pct))
-}
-
-/// Scale observed $ across a pool span `[pct_lo, pct_hi]` up to 100%.
-pub fn scale_span_to_full(obs: f64, pct_lo: f64, pct_hi: f64) -> Option<f64> {
-    if !obs.is_finite() || obs < 0.0 {
-        return None;
-    }
-    let d = pct_hi - pct_lo;
-    if !d.is_finite() || d < MIN_PCT_DELTA - f64::EPSILON {
-        return None;
-    }
-    Some(obs * (100.0 / d))
-}
-
-/// True when the earliest sample this week is close enough to 0% to oneshot.
-pub fn origin_is_near_zero(first_weekly_pct: f64) -> bool {
-    first_weekly_pct.is_finite() && first_weekly_pct <= NEAR_ORIGIN_PCT
-}
-
-/// Project full week to 100% pool using density.
-/// Usage so far this week and its density per pool percent.
-#[derive(Debug, Clone, Copy)]
-pub struct WeekSoFar {
-    pub tokens_now: u64,
-    pub cost_now: f64,
-    pub weekly_pct: f64,
-    pub tokens_per_pct: f64,
-    pub cost_per_pct: f64,
-    pub low_confidence: bool,
-}
-
-pub fn project_week_to_full(so_far: WeekSoFar) -> WeekProjection {
-    let WeekSoFar {
-        tokens_now,
-        cost_now,
-        weekly_pct,
-        tokens_per_pct,
-        cost_per_pct,
-        low_confidence,
-    } = so_far;
-    let remaining = (100.0 - weekly_pct).max(0.0);
-    let add_tok = (tokens_per_pct * remaining).max(0.0).round() as u64;
-    let add_cost = (cost_per_pct * remaining).max(0.0);
-    WeekProjection {
-        tokens: tokens_now.saturating_add(add_tok),
-        cost_usd: cost_now + add_cost,
-        low_confidence,
-    }
 }
 
 /// Smart month: completed weeks + current projection + future weeks × median cost.
@@ -332,14 +263,14 @@ pub fn forecast_lines(input: ForecastInput<'_>) -> Vec<MetricLine> {
         return Vec::new();
     };
 
-    let week = project_week_to_full(WeekSoFar {
-        tokens_now: tokens_week,
-        cost_now: cost_week,
-        weekly_pct: sample.weekly_pct,
-        tokens_per_pct: tok_per,
-        cost_per_pct: cost_per,
-        low_confidence: low,
-    });
+    let week = project_week_to_full(
+        tokens_week,
+        cost_week,
+        sample.weekly_pct,
+        tok_per,
+        cost_per,
+        low,
+    );
 
     let mut lines = vec![format_expected("Expected this week", &week)];
 
@@ -508,22 +439,6 @@ mod tests {
     }
 
     #[test]
-    fn project_week_extrapolates_to_full_pool() {
-        // 50% used, 50M tokens, density 1M/%
-        let w = project_week_to_full(WeekSoFar {
-            tokens_now: 50_000_000,
-            cost_now: 100.0,
-            weekly_pct: 50.0,
-            tokens_per_pct: 1_000_000.0,
-            cost_per_pct: 2.0,
-            low_confidence: false,
-        });
-        assert_eq!(w.tokens, 100_000_000);
-        assert!((w.cost_usd - 200.0).abs() < 0.01);
-        assert!(!w.low_confidence);
-    }
-
-    #[test]
     fn smart_month_uses_completed_not_4x() {
         // Finished weeks $100, $80, $80 + current proj $80, no remaining full weeks
         let current = WeekProjection {
@@ -538,21 +453,5 @@ mod tests {
         // One remaining full week: median of [100,80,80,80] = 80
         let (_, cost2) = project_month(&[(1, 100.0), (1, 80.0), (1, 80.0)], &current, 1);
         assert!((cost2 - 420.0).abs() < 0.01); // 340 + 80
-    }
-
-    #[test]
-    fn oneshot_requires_min_pct() {
-        assert!(density_oneshot(1_000_000, 10.0, 2.0).is_none());
-        let (t, c) = density_oneshot(10_000_000, 50.0, 10.0).unwrap();
-        assert!((t - 1_000_000.0).abs() < 1.0);
-        assert!((c - 5.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn scale_span_uses_delta_not_origin() {
-        // $20 observed while pool moved 70% → 80% ⇒ $200 @ 100%, not $25.
-        let v = scale_span_to_full(20.0, 70.0, 80.0).unwrap();
-        assert!((v - 200.0).abs() < 1e-9);
-        assert!(scale_span_to_full(20.0, 78.0, 80.0).is_none()); // Δ < 3
     }
 }

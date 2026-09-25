@@ -596,7 +596,8 @@ pub fn pick_autosteer(
 }
 
 fn grok_burn_rank(slug: &str) -> u8 {
-    5u8.saturating_sub(fabrials_accounts::grok_plan_rank(slug))
+    use fabrials_accounts::PlanRanking;
+    fabrials_upstreams::rankings::GROK_BURN.rank(slug)
 }
 
 fn deadline_first_score(used: f64, hours: Option<f64>, rank: u8) -> f64 {

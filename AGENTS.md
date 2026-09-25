@@ -14,7 +14,7 @@ each provider's usage API, and renders the result.
   crates in `~/dev/fabrials/libs/fabrials-libs`, then run `scripts/sync-fabrials-libs.sh`; CI runs
   `scripts/check-fabrials-libs.sh` and rejects direct edits to the copy.
   `spanreed_domain::model` re-exports the `fabrials-types` output model.
-- `spanreed capture serve` runs the shared `fabrials-runtime` directly; no ai-relay executable is required. The optional xAI compatibility listener shares the runtime.
+- `spanreed capture serve` runs the shared `fabrials-fabric` engine (provider adapters from `fabrials-upstreams`, SQLite stores from `fabrials-store-sqlite`) directly; no ai-relay executable is required. The optional xAI compatibility listener shares the runtime.
 - The Cargo workspace excludes `vendor/fabrials-libs` from its own members; CI tests it with `--manifest-path`. The binary target `spanreed` (`src/main.rs`) is the root package; `default-members` include every Spanreed crate, so plain `cargo test`/`cargo clippy` cover them all.
 - Probes are blocking I/O fanned out over threads. The shared runtime contains Tokio transport; Tauri runs blocking probes off the renderer thread.
 - Providers are **native Rust** modules implementing one trait. There is no
@@ -49,7 +49,7 @@ goes through the `app` facade with an `AppContext`.
 | `crates/spanreed-tray` | `spanreed tray` (feature `tray`; empty without it, so workspace builds need no GTK): `menu`, `state`, `actions`, `visual`, `popover`, `platform`. Nix package builds this; musl GH zips do not. |
 | `desktop/` | Tauri + React local console (`src-tauri/src/{main,commands,notifications,shell}.rs`); shared styles/components from `@fabrials/ui`. |
 | `privacy.rs` | Independent, default-off metrics publication and history synchronization consent. |
-| `history.rs` | Quota observations in `runtime.sqlite3` through shared `fabrials-runtime::history`; one-time import preserves `usage-history.jsonl`. CLI and desktop read the same store. |
+| `history.rs` | Quota observations in `runtime.sqlite3` through shared `fabrials-store-sqlite` (`SqliteHistoryStore`; reset/duplicate rules in `fabrials_fabric::history`); one-time import preserves `usage-history.jsonl`. CLI and desktop read the same store. |
 | `local_tokens.rs` | Grok refresh through shared durable rotation journal and scoped advisory locks; journal is separate from usage data. Nous uses the same journal from its driver. |
 | `profiles.rs` | Built-in Waybar, Eww and SketchyBar fragments; explicit new-file installation. |
 | `desktop_runtime/` | Controllers owned by a GUI process: the local proxy (`ProxyControl`) and the embedded agent host (`agent.rs`, `AgentControl`: `spanreed agent serve` on its own thread/runtime and its own port, never 18736). |
@@ -70,7 +70,8 @@ goes through the `app` facade with an `AppContext`.
 | `tray_card/` | Tray usage card: model (`mod.rs`), HTML sections (`html.rs`), `card.css`, `card.js`. |
 | `capture_log.rs` | Capture/watchdog log file (`…/spanreed/logs/capture.log`) with size rotation. |
 | `capture_watchdog.rs` | `capture serve --watchdog`: restart worker when ports die / process exits. |
-| `forecast.rs` | Week/month Expected lines from pool-% density samples. |
+| `forecast.rs` | Week/month Expected lines from pool-% density samples (projection math from `fabrials_share::probed`). |
+| `share_economics.rs` | Share economics: `fabrials_share::probed::from_output` with Spanreed's pool baseline, plus `model_breakdown_for` from the ledger and local logs. |
 | `epoch.rs` | Early weekly reset detection (gift/outage) vs scheduled rollover. |
 | `pool_baseline.rs` | First-seen Weekly % per provider/week for span scaling. |
 | `pricing.rs` | Model price `Catalog`: embedded LiteLLM snapshot + runtime refresh (LiteLLM families, then models.dev for the OpenCode Go channel) cached 7 days + user override. The same refresh stores context windows in `limits-remote.json`. |
@@ -187,8 +188,8 @@ Logic is split so it's testable without network or real credentials:
 - `tests/cli.rs` runs the built binary in an isolated `HOME`/XDG for `list` /
   `json` / `waybar` / `help`, and asserts the SIGPIPE fix (no panic on a closed
   pipe). Keep it std-only (no extra dev-deps).
-- Pricing layers (later wins): the embedded `fabrials-metrics` snapshot
-  (`vendor/fabrials-libs/crates/fabrials-metrics/src/pricing-data.json`) → remote cache
+- Pricing layers (later wins): the embedded `fabrials-pricing` snapshot and overlays
+  (`vendor/fabrials-libs/crates/fabrials-pricing/src/pricing-data.json`, `pricing-overlays.json`) → remote cache
   `~/.cache/spanreed/pricing-remote.json` (refreshed at most weekly by
   `pricing::ensure_fresh()` through `Catalog::refresh`, silent on failure, disabled by
   `SPANREED_OFFLINE`) → user `~/.config/spanreed/pricing.json`. `AppContext` owns the
@@ -202,7 +203,7 @@ Logic is split so it's testable without network or real credentials:
   cached/$6 per MTok, ×2 above 200k prompt — same as xAI docs and OpenRouter
   `x-ai/grok-4.5`). SuperGrok `cost_in_usd_ticks` are stored but not shown.
 - The embedded snapshot is the offline fallback; refresh it occasionally with
-  `spanreed update-pricing crates/fabrials-metrics/src/pricing-data.json` in
+  `spanreed update-pricing crates/fabrials-pricing/src/pricing-data.json` in
   `~/dev/fabrials/libs/fabrials-libs` (same compose as the runtime refresh, so the
   snapshot picks up the OpenCode Go channel), commit it there and sync the vendor
   copy (no build-time network — Nix-sandbox safe). `tests/cli.rs` sets

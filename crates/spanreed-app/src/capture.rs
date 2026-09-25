@@ -1,6 +1,6 @@
 //! Local capture command configuration and runtime composition.
 use crate::local_relay::LocalRelay;
-use fabrials_runtime::listener::{self, ConnectionHost};
+use fabrials_fabric::listener::{self, ConnectionHost};
 use std::net::SocketAddr;
 use std::sync::{Arc, atomic::AtomicBool};
 

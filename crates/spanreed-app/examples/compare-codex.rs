@@ -2,11 +2,11 @@ use fabrials_types::consumption::{ImportCheckpoint, UsageParser};
 fn main() {
     for path in std::env::args().skip(1) {
         let bytes = std::fs::read(&path).unwrap();
-        let ours = fabrials_providers::usage::codex::Codex
+        let ours = fabrials_usage_import::codex::Codex
             .parse(&bytes, "fixture", &ImportCheckpoint::default())
             .unwrap();
         let reference =
-            fabrials_providers::usage::files::read("codex", std::path::Path::new(&path)).unwrap();
+            fabrials_usage_import::files::read("codex", std::path::Path::new(&path)).unwrap();
         let sum = |records: &[fabrials_types::consumption::ConsumptionRecord]| {
             records
                 .iter()

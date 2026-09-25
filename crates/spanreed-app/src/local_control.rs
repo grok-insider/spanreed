@@ -71,7 +71,7 @@ pub fn set_policy(provider: &str, on: bool, threshold: Option<f64>) -> Result<()
         config["accounts"][provider]["exhausted_pct"] = json!(threshold);
     }
     let bytes = serde_json::to_vec_pretty(&config).map_err(|_| "Invalid settings")?;
-    fabrials_runtime::files::atomic_write_private(
+    fabrials_store_sqlite::files::atomic_write_private(
         &crate::product::config_dir().join("config.json"),
         &bytes,
     )
@@ -207,14 +207,15 @@ pub fn limits() -> Result<Value, String> {
 }
 
 pub(crate) fn environment_id() -> Result<String, String> {
-    let _guard = fabrials_runtime::file_set::FileSet::acquire_wait(&crate::product::data_dir())?;
+    let _guard =
+        fabrials_store_sqlite::file_set::FileSet::acquire_wait(&crate::product::data_dir())?;
     let path = crate::product::data_dir().join("environment-id");
     let id = match std::fs::read_to_string(&path) {
         Ok(id) if id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) => id,
         Ok(_) => return Err("Invalid local environment identity".into()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let id = fabrials_runtime::accounting::new_request_id();
-            fabrials_runtime::files::atomic_write_private(&path, id.as_bytes())
+            let id = fabrials_fabric::accounting::new_request_id();
+            fabrials_store_sqlite::files::atomic_write_private(&path, id.as_bytes())
                 .map_err(|_| "Environment identity unavailable")?;
             id
         }

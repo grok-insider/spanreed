@@ -33,7 +33,7 @@ pub use fabrials_accounts::{Account, Registry, parse_id, unique_alias_among, val
 /// A new account with a fresh generation, so a re-added alias is a new identity.
 pub fn new_account(provider: &str, alias: &str) -> Result<Account, String> {
     let mut account = Account::new(provider, alias)?;
-    account.generation = Some(fabrials_runtime::accounting::new_request_id());
+    account.generation = Some(fabrials_fabric::accounting::new_request_id());
     Ok(account)
 }
 
@@ -284,16 +284,14 @@ pub fn rename(provider: &str, old_alias: &str, new_alias: &str) -> Result<Accoun
     let mut document = read_secret_document(provider, old_alias)?;
     if let Some(current) = &document {
         match journal.recover(current)? {
-            fabrials_runtime::credential_journal::Recovery::Clean => {}
-            fabrials_runtime::credential_journal::Recovery::Interrupted => {
+            fabrials_fabric::ports::Recovery::Clean => {}
+            fabrials_fabric::ports::Recovery::Interrupted => {
                 return Err(
                     "Authorize this account again before renaming; its refresh was interrupted"
                         .into(),
                 );
             }
-            fabrials_runtime::credential_journal::Recovery::Replacement(value) => {
-                document = Some(value)
-            }
+            fabrials_fabric::ports::Recovery::Replacement(value) => document = Some(value),
         }
     }
     let acc = reg
@@ -309,7 +307,7 @@ pub fn rename(provider: &str, old_alias: &str, new_alias: &str) -> Result<Accoun
     }
     let out = acc.clone();
     reg.removed
-        .insert(old_id, fabrials_runtime::accounting::new_request_id());
+        .insert(old_id, fabrials_fabric::accounting::new_request_id());
     let mut changes = Vec::new();
     if let Some(document) = &document {
         changes.push(secret_change(
@@ -381,7 +379,7 @@ fn remove_inner(id: &str, expected: Option<Option<&str>>) -> Result<(), String> 
     }
     let journal = rotation(&acc.provider, &acc.alias)?;
     reg.removed
-        .insert(id.into(), fabrials_runtime::accounting::new_request_id());
+        .insert(id.into(), fabrials_fabric::accounting::new_request_id());
     vault.commit(&reg, vec![secret_change(&acc.provider, &acc.alias, None)])?;
     journal.complete()?;
     let _ = secret::delete_user(&format!("{KEYRING_PREFIX}:{}", acc.provider), &acc.alias);
@@ -415,7 +413,7 @@ mod tests {
     fn routing_registry_rejects_corruption_orphans_and_ambiguous_identity() {
         let directory = std::env::temp_dir().join(format!(
             "spanreed-registry-{}",
-            fabrials_runtime::accounting::new_request_id()
+            fabrials_fabric::accounting::new_request_id()
         ));
         fs::create_dir_all(directory.join("grok")).unwrap();
         assert!(routing_registry_at(&directory).unwrap().accounts.is_empty());

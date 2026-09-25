@@ -6,9 +6,9 @@ The Usage screen and `spanreed usage --client codex --days 31` query the same lo
 
 ## Architecture
 
-- `fabrials-core::usage`: validated records, token subsets, provenance and report contracts.
-- `fabrials-providers::usage`: pure format normalization and read-only remote protocols.
-- `fabrials-runtime::local_usage`: SQLite transactions, source checkpoints, stable identities and projection revisions.
+- `fabrials-types::consumption`: validated records, token subsets, provenance and report contracts.
+- `fabrials-usage-import`: pure format normalization and read-only remote protocols.
+- `fabrials-store-sqlite::local_usage` (`SqliteUsageStore`, the `fabrials_fabric::ports::UsageStore` implementation): SQLite transactions, source checkpoints, stable identities and projection revisions.
 - `crates/spanreed-app/src/usage`: host discovery, credentials, imports, pricing and queries.
 - `@fabrials/ui`: shared local and synchronized consumption components.
 

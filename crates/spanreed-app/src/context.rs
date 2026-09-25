@@ -45,7 +45,7 @@ struct Inner {
     cost: crate::cost::LocalCost,
     history_sync: crate::sync::HistorySync,
     notifier: Arc<dyn Notifier>,
-    snapshot: fabrials_runtime::Snapshot<Vec<ProviderOutput>>,
+    snapshot: fabrials_fabric::Snapshot<Vec<ProviderOutput>>,
 }
 
 impl Default for AppContext {
@@ -69,7 +69,7 @@ impl AppContext {
                 reviews: Default::default(),
                 hosted_reviews: Default::default(),
                 notifier: Arc::new(crate::notifications::ResetExpiryNotifier),
-                snapshot: fabrials_runtime::Snapshot::new(SNAPSHOT_TTL),
+                snapshot: fabrials_fabric::Snapshot::new(SNAPSHOT_TTL),
             }),
         }
     }
