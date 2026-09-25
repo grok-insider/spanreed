@@ -81,7 +81,7 @@ export function App() {
       void invoke<string | null>("take_desktop_route").then((href) => {
         if (!active || !href) return;
         if (location.hash !== href) location.hash = href;
-        else dispatchEvent(new HashChangeEvent("hashchange"));
+        else window.dispatchEvent(new HashChangeEvent("hashchange"));
         const window = getCurrentWindow();
         void window.unminimize();
         void window.show();

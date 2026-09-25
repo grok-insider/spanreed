@@ -117,7 +117,7 @@ pub fn route_location_script(href: &str) -> Option<String> {
     match href {
         "#/local/overview" | "#/local/usage" | "#/local/accounts" | "#/local/routing"
         | "#/local/connect" | "#/local/settings" => Some(format!(
-            "location.hash = {href:?}; dispatchEvent(new HashChangeEvent(\"hashchange\"))"
+            "location.hash = {href:?}; window.dispatchEvent(new HashChangeEvent(\"hashchange\"))"
         )),
         _ => None,
     }
@@ -518,13 +518,13 @@ mod tests {
         assert_eq!(
             route_location_script("#/local/overview").as_deref(),
             Some(
-                "location.hash = \"#/local/overview\"; dispatchEvent(new HashChangeEvent(\"hashchange\"))"
+                "location.hash = \"#/local/overview\"; window.dispatchEvent(new HashChangeEvent(\"hashchange\"))"
             )
         );
         assert_eq!(
             route_location_script("#/local/settings").as_deref(),
             Some(
-                "location.hash = \"#/local/settings\"; dispatchEvent(new HashChangeEvent(\"hashchange\"))"
+                "location.hash = \"#/local/settings\"; window.dispatchEvent(new HashChangeEvent(\"hashchange\"))"
             )
         );
         assert!(route_location_script("#/local/overview'; alert(1)").is_none());
