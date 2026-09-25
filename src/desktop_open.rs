@@ -458,13 +458,16 @@ mod tests {
 
     #[test]
     fn request_reuses_a_running_desktop_for_both_pages() {
-        with_data_home(|_| {
-            mark_running();
+        with_data_home(|dir| {
+            let mut desktop = park_desktop_process(dir);
+            write_lock(desktop.id());
             request("overview").expect("running desktop accepts overview");
             assert_eq!(take().as_deref(), Some("#/local/overview"));
             request("settings").expect("running desktop accepts settings");
             assert_eq!(take().as_deref(), Some("#/local/settings"));
             assert!(take().is_none());
+            let _ = desktop.kill();
+            let _ = desktop.wait();
         });
     }
 
@@ -531,9 +534,10 @@ mod tests {
 
     #[test]
     fn running_desktop_accepts_an_alert() {
-        with_data_home(|_| {
+        with_data_home(|dir| {
             assert!(!hand_off_alert("Capture proxy is DOWN", "Ensure capture"));
-            mark_running();
+            let mut desktop = park_desktop_process(dir);
+            write_lock(desktop.id());
             let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let stop_worker = stop.clone();
             let worker = std::thread::spawn(move || {
@@ -551,7 +555,69 @@ mod tests {
             ));
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
             worker.join().unwrap();
+            let _ = desktop.kill();
+            let _ = desktop.wait();
         });
+    }
+
+    fn write_lock(pid: u32) {
+        let dir = crate::app::data_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(LOCK), format!("{pid}\n")).unwrap();
+    }
+
+    fn park_desktop_process(dir: &std::path::Path) -> std::process::Child {
+        let bin = dir.join("park");
+        std::fs::create_dir_all(&bin).unwrap();
+        #[cfg(unix)]
+        {
+            let stub = bin.join("spanreed-desktop");
+            copy_named_stub(&stub, "sleep");
+            Command::new(&stub).arg("30").spawn().expect("park desktop")
+        }
+        #[cfg(windows)]
+        {
+            let stub = bin.join("Spanreed.exe");
+            copy_named_stub(&stub, "ping.exe");
+            Command::new(&stub)
+                .args(["-n", "31", "127.0.0.1"])
+                .spawn()
+                .expect("park desktop")
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = bin;
+            panic!("no desktop process to park");
+        }
+    }
+
+    fn copy_named_stub(destination: &std::path::Path, name: &str) {
+        let from_path = std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path).find_map(|dir| {
+                let candidate = dir.join(name);
+                candidate.is_file().then_some(candidate)
+            })
+        });
+        #[cfg(unix)]
+        let fallbacks = [format!("/bin/{name}"), format!("/usr/bin/{name}")];
+        #[cfg(windows)]
+        let fallbacks = [format!(r"C:\Windows\System32\{name}")];
+        #[cfg(not(any(unix, windows)))]
+        let fallbacks: [String; 0] = [];
+        let source = fallbacks
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .find(|path| path.is_file())
+            .or(from_path)
+            .unwrap_or_else(|| panic!("{name}"));
+        std::fs::copy(&source, destination).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(destination).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(destination, permissions).unwrap();
+        }
     }
 
     #[cfg(unix)]
