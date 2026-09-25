@@ -1104,8 +1104,6 @@ fn user_notify(title: &str, body: &str, modal: bool) {
 
 #[cfg(windows)]
 fn show_windows_message(title: &str, body: &str) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let t = title.replace('\'', "''");
     let b = body.replace('\'', "''");
     let script = format!(
@@ -1113,15 +1111,7 @@ fn show_windows_message(title: &str, body: &str) {
          [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
     );
     let _ = Command::new(crate::notifications::powershell_program())
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            &script,
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-Command", &script])
         .spawn();
 }
 
