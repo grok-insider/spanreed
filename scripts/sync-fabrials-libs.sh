@@ -9,8 +9,9 @@ prefix=vendor/fabrials-libs
 source_file=$prefix.source
 
 default_repo=https://github.com/grok-insider/fabrials-libs
-if [ -d "$root/../libs/fabrials-libs/.git" ]; then
-  default_repo=$root/../libs/fabrials-libs
+main_root=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+if [ -d "$main_root/../libs/fabrials-libs/.git" ]; then
+  default_repo=$main_root/../libs/fabrials-libs
 fi
 repo=${1:-${FABRIALS_LIBS_REPO:-$default_repo}}
 ref=${2:-master}

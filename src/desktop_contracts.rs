@@ -54,7 +54,7 @@ mod tests {
         );
         assert_eq!(
             generated,
-            include_str!("../vendor/fabrials-model/bindings/contracts.ts")
+            include_str!("../vendor/fabrials-libs/crates/fabrials-model/bindings/contracts.ts")
         );
     }
 
