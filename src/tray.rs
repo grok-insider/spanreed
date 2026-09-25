@@ -1005,8 +1005,8 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
 /// User-visible notification.
 ///
 /// Every alert goes through the platform path: notify-send, a Windows toast,
-/// or macOS Notification Center. If that delivery fails, macOS and Windows
-/// show a dialog so the alert is not dropped.
+/// or macOS Notification Center. macOS and Windows also show a dialog, because
+/// a successful command does not prove the banner was shown.
 fn user_notify(title: &str, body: &str, modal: bool) {
     log::info!("tray notify: {title}: {body}");
     if modal {
@@ -1024,9 +1024,7 @@ fn user_notify(title: &str, body: &str, modal: bool) {
                 log::warn!("tray notify failed: {error}");
             }
             #[cfg(windows)]
-            if delivered.is_err() {
-                show_windows_message(&title, &body);
-            }
+            show_windows_message(&title, &body);
             #[cfg(target_os = "macos")]
             show_macos_dialog(&title, &body);
         }

@@ -122,11 +122,11 @@ pub fn deliver_background(outputs: &[crate::model::ProviderOutput]) -> Result<u3
     deliver_outputs(outputs, deliver_os)
 }
 
-/// `display notification` exits successfully even when Notification Center drops
-/// the banner. macOS therefore never treats that command as proof of delivery.
+/// macOS `display notification` and a Windows toast both exit successfully when
+/// the banner is dropped. Neither command is proof the user saw the alert.
 #[cfg_attr(not(feature = "tray"), allow(dead_code))]
 pub(crate) fn notification_confirmed(platform: &str, command_ok: bool) -> bool {
-    platform != "macos" && command_ok
+    !matches!(platform, "macos" | "windows") && command_ok
 }
 
 pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
@@ -524,7 +524,7 @@ loop.run()
         assert!(!notification_confirmed("macos", true));
         assert!(!notification_confirmed("macos", false));
         assert!(notification_confirmed("linux", true));
-        assert!(notification_confirmed("windows", true));
+        assert!(!notification_confirmed("windows", true));
         assert!(!notification_confirmed("windows", false));
     }
 
