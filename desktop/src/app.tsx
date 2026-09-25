@@ -23,6 +23,7 @@ function useHashRoute() {
   React.useEffect(() => {
     const sync = () => setRoute(parseRoute(location.hash, storedWorkspace()));
     if (!location.hash) history.replaceState(null, "", routeHref(parseRoute("", storedWorkspace())));
+    sync();
     addEventListener("hashchange", sync);
     return () => removeEventListener("hashchange", sync);
   }, []);
@@ -80,6 +81,7 @@ export function App() {
       void invoke<string | null>("take_desktop_route").then((href) => {
         if (!active || !href) return;
         if (location.hash !== href) location.hash = href;
+        else dispatchEvent(new HashChangeEvent("hashchange"));
         const window = getCurrentWindow();
         void window.unminimize();
         void window.show();
