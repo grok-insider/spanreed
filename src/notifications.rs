@@ -202,6 +202,19 @@ fn osascript_notification(title: &str, body: &str) -> String {
     )
 }
 
+/// Modal fallback when the Linux notification service is missing or rejects the alert.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn zenity_dialog_args(title: &str, body: &str) -> Vec<String> {
+    vec![
+        "--warning".into(),
+        "--no-wrap".into(),
+        "--title".into(),
+        title.into(),
+        "--text".into(),
+        body.into(),
+    ]
+}
+
 /// Modal fallback when Notification Center rejects the banner.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn osascript_dialog(title: &str, body: &str) -> String {
@@ -544,5 +557,17 @@ loop.run()
         let dialog = osascript_dialog("Capture \"down\"", "Line one\nLine two");
         assert!(!dialog.contains('\n'));
         assert!(dialog.starts_with("display dialog \"Line one Line two\""));
+        let zenity = zenity_dialog_args("Capture down", "Ensure capture");
+        assert_eq!(
+            zenity,
+            vec![
+                "--warning".to_string(),
+                "--no-wrap".to_string(),
+                "--title".to_string(),
+                "Capture down".to_string(),
+                "--text".to_string(),
+                "Ensure capture".to_string(),
+            ]
+        );
     }
 }

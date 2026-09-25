@@ -1027,6 +1027,8 @@ fn user_notify(title: &str, body: &str, modal: bool) {
             show_windows_message(&title, &body);
             #[cfg(target_os = "macos")]
             show_macos_dialog(&title, &body);
+            #[cfg(all(unix, not(target_os = "macos")))]
+            show_linux_dialog(&title, &body);
         }
     });
 }
@@ -1042,6 +1044,12 @@ fn show_windows_message(title: &str, body: &str) {
     let _ = Command::new(crate::notifications::powershell_program())
         .args(["-NoProfile", "-Command", &script])
         .spawn();
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn show_linux_dialog(title: &str, body: &str) {
+    let args = crate::notifications::zenity_dialog_args(title, body);
+    let _ = Command::new("zenity").args(&args).spawn();
 }
 
 #[cfg(target_os = "macos")]
