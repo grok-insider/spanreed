@@ -4,8 +4,8 @@ use std::process::ExitCode;
 
 use crate::app::{AppContext, sharing};
 
-pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
-    let mut consent = sharing::consent();
+pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
+    let mut consent = sharing::consent(ctx);
     match args {
         [] => {
             println!(
@@ -31,7 +31,7 @@ pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    match sharing::save_consent(&consent) {
+    match sharing::save_consent(ctx, &consent) {
         Ok(()) => {
             println!("Sharing preference saved.");
             ExitCode::SUCCESS

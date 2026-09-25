@@ -65,9 +65,10 @@ def expected_assets(version):
 
 
 # Workspace packages released with the CLI version, and those the desktop
-# host locks (it depends on spanreed-app, which depends on spanreed-domain).
-LOCAL_PACKAGES = ("spanreed", "spanreed-domain", "spanreed-app", "spanreed-tray")
-DESKTOP_PACKAGES = ("spanreed-domain", "spanreed-app", "spanreed-desktop")
+# host locks (it depends on spanreed-app and spanreed-adapters, which depend
+# on spanreed-domain).
+LOCAL_PACKAGES = ("spanreed", "spanreed-domain", "spanreed-app", "spanreed-adapters", "spanreed-tray")
+DESKTOP_PACKAGES = ("spanreed-domain", "spanreed-app", "spanreed-adapters", "spanreed-desktop")
 
 
 def package_version():

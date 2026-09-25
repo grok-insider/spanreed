@@ -10,7 +10,7 @@ use super::menu::{Action, TrayMenu};
 use super::platform::{open_path, open_url, user_notify};
 use super::popover::{Popover, allowed_buy_url};
 use super::state::{
-    Shared, begin_refresh, refresh_state, run_update_check, set_status, stamp_status,
+    Shared, begin_refresh, context, refresh_state, run_update_check, set_status, stamp_status,
 };
 use spanreed_app::app;
 use spanreed_domain::tray_format;
@@ -58,7 +58,7 @@ pub(super) fn menu_action(action: Action, state: &Shared, menu: &TrayMenu) {
 }
 
 fn open_window(state: &Shared, page: &str) {
-    match app::window::open(page) {
+    match app::window::open(&context(state), page) {
         Ok(()) => set_status(state, "Opened Spanreed"),
         Err(error) => set_status(state, &format!("Could not open Spanreed: {error}")),
     }
@@ -69,7 +69,7 @@ fn ensure_capture(state: &Shared, from_menu: bool) {
     set_status(state, "Ensuring capture…");
     let state = state.clone();
     thread::spawn(move || {
-        let message = match app::capture::ensure(false) {
+        let message = match app::capture::ensure(&context(&state), false) {
             Ok(m) => {
                 if from_menu {
                     log::info!("ensure: {m}");
@@ -86,14 +86,14 @@ fn ensure_capture(state: &Shared, from_menu: bool) {
         set_status(&state, &message);
         refresh_state(&state);
         if from_menu {
-            user_notify("spanreed — capture", &message, false);
+            user_notify(&state, "spanreed — capture", &message, false);
         }
     });
 }
 
 /// `from_menu` reports a failure with a dialog instead of only the status.
 fn open_log(state: &Shared, from_menu: bool) {
-    let path = app::capture::log_path();
+    let path = app::capture::log_path(&context(state));
     match open_path(&path) {
         Ok(()) => {
             set_status(state, "Opened capture log");
@@ -104,7 +104,7 @@ fn open_log(state: &Shared, from_menu: bool) {
         Err(e) if from_menu => {
             let message = format!("Could not open log:\n{}\n\n{}", path.display(), e);
             set_status(state, "Failed to open capture log");
-            user_notify("spanreed — capture log", &message, true);
+            user_notify(state, "spanreed — capture log", &message, true);
         }
         Err(e) => set_status(state, &format!("Could not open log: {e}")),
     }
@@ -117,11 +117,10 @@ fn share(state: &Shared) {
         set_status(state, "Sharing usage…");
         let state = state.clone();
         thread::spawn(move || {
-            let ctx = state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
-            let message = app::sharing::share_now(&ctx, false).unwrap_or_else(|e| e);
+            let message = app::sharing::share_now(&context(&state), false).unwrap_or_else(|e| e);
             set_status(&state, &message);
             refresh_state(&state);
-            user_notify("spanreed — share", &message, true);
+            user_notify(&state, "spanreed — share", &message, true);
         });
         return;
     }
@@ -131,11 +130,12 @@ fn share(state: &Shared) {
 }
 
 fn link_share(state: &Shared) {
-    let pending = match app::sharing::begin_link() {
+    let ctx = context(state);
+    let pending = match app::sharing::begin_link(&ctx) {
         Ok(pending) => pending,
         Err(e) => {
             set_status(state, &e);
-            user_notify("spanreed — share login", &e, true);
+            user_notify(state, "spanreed — share login", &e, true);
             return;
         }
     };
@@ -145,12 +145,13 @@ fn link_share(state: &Shared) {
         pending.user_code, pending.verification_uri
     );
     set_status(state, &format!("Share code: {}", pending.user_code));
-    user_notify("spanreed — share login", &code_message, true);
-    match app::sharing::finish_link(&pending) {
+    user_notify(state, "spanreed — share login", &code_message, true);
+    match app::sharing::finish_link(&ctx, &pending) {
         Ok(()) => {
             set_status(state, "Share linked");
             refresh_state(state);
             user_notify(
+                state,
                 "spanreed — share",
                 "Linked. Daily share can run without the browser.",
                 true,
@@ -158,21 +159,26 @@ fn link_share(state: &Shared) {
         }
         Err(e) => {
             set_status(state, &e);
-            user_notify("spanreed — share login", &e, true);
+            user_notify(state, "spanreed — share login", &e, true);
         }
     }
 }
 
 fn unlink(state: &Shared) {
-    match app::sharing::unlink() {
+    match app::sharing::unlink(&context(state)) {
         Ok(()) => {
             set_status(state, "Share unlinked");
             refresh_state(state);
-            user_notify("spanreed — share", "Local share session removed.", false);
+            user_notify(
+                state,
+                "spanreed — share",
+                "Local share session removed.",
+                false,
+            );
         }
         Err(e) => {
             set_status(state, &e);
-            user_notify("spanreed — share", &e, true);
+            user_notify(state, "spanreed — share", &e, true);
         }
     }
 }
@@ -183,15 +189,14 @@ fn check_updates(state: &Shared) {
     thread::spawn(move || {
         let summary = run_update_check(&state);
         set_status(&state, &summary);
-        user_notify("spanreed — updates", &summary, true);
+        user_notify(&state, "spanreed — updates", &summary, true);
     });
 }
 
 /// Start the agent host for desktop.grok.me on its own port, or stop it.
 fn toggle_agent_host(state: &Shared) {
-    let ctx = state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
-    let running = app::agent::status(&ctx)
-        .is_ok_and(|status| status.state == app::proxy::ProxyState::Running);
+    let ctx = context(state);
+    let running = app::agent::running(&ctx);
     set_status(
         state,
         if running {
@@ -212,14 +217,14 @@ fn toggle_agent_host(state: &Shared) {
         }
         .unwrap_or_else(|error| format!("Agent host: {error}"));
         set_status(&state, &message);
-        user_notify("spanreed — agent host", &message, false);
+        user_notify(&state, "spanreed — agent host", &message, false);
     });
 }
 
 fn install_update(state: &Shared) {
-    if let Some(why) = app::updates::apply_blocked_reason() {
+    if let Some(why) = app::updates::apply_blocked_reason(&context(state)) {
         set_status(state, why);
-        user_notify("spanreed — updates", why, true);
+        user_notify(state, "spanreed — updates", why, true);
         return;
     }
     set_status(state, "Starting self-update…");
@@ -233,6 +238,7 @@ fn install_update(state: &Shared) {
                     "Self-update finished — restart tray if the icon dies",
                 );
                 user_notify(
+                    &state,
                     "spanreed — updates",
                     "Self-update finished.\n\
                      Capture was restarted when needed. Restart the tray if the icon is gone.",
@@ -244,7 +250,7 @@ fn install_update(state: &Shared) {
             Err(e) => format!("Could not start self-update: {e}"),
         };
         set_status(&state, &message);
-        user_notify("spanreed — updates", &message, true);
+        user_notify(&state, "spanreed — updates", &message, true);
     });
 }
 
@@ -254,7 +260,11 @@ fn redeem_from_card(state: &Shared) {
         if guard.reset_in_flight {
             return;
         }
-        if !guard.outputs.iter().any(app::usage::can_use_reset) {
+        if !guard
+            .outputs
+            .iter()
+            .any(|output| app::usage::can_use_reset(&guard.ctx, output))
+        {
             stamp_status(&mut guard, "No limit reset credit is available");
             return;
         }
@@ -274,7 +284,7 @@ fn redeem_from_card(state: &Shared) {
             .clone()
             .unwrap_or_else(|| "invalid".into())
     };
-    if !app::accounts::valid_reset_request(&request_id) {
+    if !app::accounts::valid_reset_request(&context(state), &request_id) {
         let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
         guard.reset_in_flight = false;
         guard.reset_request_id = None;
@@ -286,7 +296,7 @@ fn redeem_from_card(state: &Shared) {
         let _reset = ResetFlight {
             state: state.clone(),
         };
-        let result = app::accounts::redeem_codex_reset(&request_id);
+        let result = app::accounts::redeem_codex_reset(&context(&state), &request_id);
         {
             let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
             guard.reset_in_flight = false;

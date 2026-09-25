@@ -1,47 +1,71 @@
 //! Reviewed client configuration: local proxy wiring, hosted relay keys and
 //! Codex session moves.
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
 use crate::context::AppContext;
 
-pub use crate::client_configuration::Preview;
-pub use crate::codex_session_move::SessionMoveView;
-pub use crate::hosted_client_configuration::HostedClientReview;
-
-pub fn preview_grok(ctx: &AppContext, alias: &str, model: Option<&str>) -> Result<Preview, String> {
-    ctx.reviews()
-        .preview_grok_with_model(ctx.proxy(), alias, model)
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    pub warnings: Vec<String>,
+    pub id: String,
+    pub path: String,
+    pub provider_id: String,
+    #[cfg_attr(feature = "contracts", ts(type = "unknown"))]
+    pub addition: Value,
+    pub client: ConfigurationClient,
+    pub operation: Operation,
 }
 
-pub fn preview_opencode(
-    ctx: &AppContext,
-    provider: &str,
-    alias: &str,
-    model: &str,
-) -> Result<Preview, String> {
-    ctx.reviews()
-        .preview_opencode(ctx.proxy(), provider, alias, model)
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfigurationClient {
+    Opencode,
+    Grok,
 }
 
-pub fn preview_opencode_update(
-    ctx: &AppContext,
-    provider: &str,
-    alias: &str,
-    model: &str,
-) -> Result<Preview, String> {
-    ctx.reviews()
-        .preview_opencode_change(ctx.proxy(), provider, alias, model, true)
+impl ConfigurationClient {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Opencode => "opencode",
+            Self::Grok => "grok",
+        }
+    }
 }
 
-pub fn preview_opencode_remove(
-    ctx: &AppContext,
-    provider: &str,
-    alias: &str,
-) -> Result<Preview, String> {
-    ctx.reviews()
-        .preview_opencode_remove(ctx.proxy(), provider, alias)
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Operation {
+    Create,
+    Update,
+    Remove,
 }
 
-pub fn apply(ctx: &AppContext, id: &str) -> Result<Option<String>, String> {
-    ctx.reviews().apply_configuration(ctx.proxy(), id)
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SessionMoveView {
+    pub id: String,
+    pub state: String,
+    pub alias: String,
+    pub source_path: String,
+    pub config_path: String,
+    pub endpoint: String,
+    pub account_id: Option<String>,
+}
+
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
+#[derive(Serialize, Clone)]
+pub struct HostedClientReview {
+    pub id: String,
+    pub client: String,
+    pub path: String,
+    pub account_id: String,
+    pub model: String,
+    pub endpoint: String,
 }
 
 /// A hosted relay key for a local client (`codex` or `opencode`).
@@ -53,42 +77,102 @@ pub struct HostedRequest<'a> {
     pub model: &'a str,
 }
 
+/// Port: reviewed writes of client configuration files (Grok Build,
+/// OpenCode, Codex) and Codex session moves.
+pub trait ClientConfigurator: Send + Sync {
+    fn preview_grok(&self, alias: &str, model: Option<&str>) -> Result<Preview, String>;
+    fn preview_opencode(&self, provider: &str, alias: &str, model: &str)
+    -> Result<Preview, String>;
+    fn preview_opencode_update(
+        &self,
+        provider: &str,
+        alias: &str,
+        model: &str,
+    ) -> Result<Preview, String>;
+    fn preview_opencode_remove(&self, provider: &str, alias: &str) -> Result<Preview, String>;
+    fn apply(&self, id: &str) -> Result<Option<String>, String>;
+    fn preview_hosted(&self, request: HostedRequest<'_>) -> Result<HostedClientReview, String>;
+    fn apply_hosted(&self, owner: &str, id: &str) -> Result<String, String>;
+    fn session_current(&self, owner: &str) -> Result<Option<SessionMoveView>, String>;
+    fn session_preview(&self, owner: &str, alias: &str) -> Result<SessionMoveView, String>;
+    fn session_apply(&self, owner: &str, id: &str) -> Result<SessionMoveView, String>;
+    fn session_recover(
+        &self,
+        owner: &str,
+        id: &str,
+        cancel: bool,
+    ) -> Result<SessionMoveView, String>;
+    fn session_dismiss(&self, owner: &str, id: &str) -> Result<(), String>;
+}
+
+fn clients(ctx: &AppContext) -> &dyn ClientConfigurator {
+    ctx.services().clients.as_ref()
+}
+
+pub fn preview_grok(ctx: &AppContext, alias: &str, model: Option<&str>) -> Result<Preview, String> {
+    clients(ctx).preview_grok(alias, model)
+}
+
+pub fn preview_opencode(
+    ctx: &AppContext,
+    provider: &str,
+    alias: &str,
+    model: &str,
+) -> Result<Preview, String> {
+    clients(ctx).preview_opencode(provider, alias, model)
+}
+
+pub fn preview_opencode_update(
+    ctx: &AppContext,
+    provider: &str,
+    alias: &str,
+    model: &str,
+) -> Result<Preview, String> {
+    clients(ctx).preview_opencode_update(provider, alias, model)
+}
+
+pub fn preview_opencode_remove(
+    ctx: &AppContext,
+    provider: &str,
+    alias: &str,
+) -> Result<Preview, String> {
+    clients(ctx).preview_opencode_remove(provider, alias)
+}
+
+pub fn apply(ctx: &AppContext, id: &str) -> Result<Option<String>, String> {
+    clients(ctx).apply(id)
+}
+
 pub fn preview_hosted(
     ctx: &AppContext,
     request: HostedRequest<'_>,
 ) -> Result<HostedClientReview, String> {
-    ctx.hosted_reviews().preview(
-        request.owner,
-        request.client,
-        request.alias,
-        request.key,
-        request.model,
-    )
+    clients(ctx).preview_hosted(request)
 }
 
 pub fn apply_hosted(ctx: &AppContext, owner: &str, id: &str) -> Result<String, String> {
-    ctx.hosted_reviews().apply(owner, id)
+    clients(ctx).apply_hosted(owner, id)
 }
 
 /// Codex session move operations; `None` when there is nothing to show.
 pub fn session_move(
+    ctx: &AppContext,
     owner: &str,
     operation: &str,
     id: Option<&str>,
     alias: Option<&str>,
 ) -> Result<Option<SessionMoveView>, String> {
-    use crate::codex_session_move as session;
+    let session = clients(ctx);
     let selected = || id.ok_or_else(|| "Select a saved session move".to_string());
     Ok(match operation {
-        "current" => session::current(owner)?,
-        "preview" => Some(session::preview(
-            owner,
-            alias.ok_or("Choose an account name")?,
-        )?),
-        "apply" => Some(session::apply(owner, selected()?)?),
-        "recover" | "cancel" => Some(session::recover(owner, selected()?, operation == "cancel")?),
+        "current" => session.session_current(owner)?,
+        "preview" => Some(session.session_preview(owner, alias.ok_or("Choose an account name")?)?),
+        "apply" => Some(session.session_apply(owner, selected()?)?),
+        "recover" | "cancel" => {
+            Some(session.session_recover(owner, selected()?, operation == "cancel")?)
+        }
         "dismiss" => {
-            session::dismiss(owner, selected()?)?;
+            session.session_dismiss(owner, selected()?)?;
             None
         }
         _ => return Err("Unknown session move operation".into()),

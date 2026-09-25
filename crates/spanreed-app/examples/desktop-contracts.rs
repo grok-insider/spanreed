@@ -1,3 +1,3 @@
 fn main() {
-    print!("{}", spanreed::desktop_contracts::typescript());
+    print!("{}", spanreed_app::desktop_contracts::typescript());
 }

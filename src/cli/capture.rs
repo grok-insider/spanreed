@@ -4,15 +4,15 @@ use std::process::ExitCode;
 
 use crate::app::{AppContext, capture};
 
-pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
+pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
-        Some("serve") => serve(&args[1..]),
-        None => serve(args),
+        Some("serve") => serve(ctx, &args[1..]),
+        None => serve(ctx, args),
         Some("ensure") => {
             let dry = super::args::has(args, "--dry-run");
-            super::report("capture ensure", capture::ensure(dry))
+            super::report("capture ensure", capture::ensure(ctx, dry))
         }
-        Some("status") => status(),
+        Some("status") => status(ctx),
         Some(other) => {
             eprintln!("unknown capture subcommand: {other}");
             eprintln!(
@@ -30,7 +30,7 @@ pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
 }
 
 /// Optional overrides: --grok-cli-bind, --xai-api-bind, --watchdog.
-fn serve(args: &[String]) -> ExitCode {
+fn serve(ctx: &AppContext, args: &[String]) -> ExitCode {
     let options = match capture::Options::parse(args) {
         Ok(options) => options,
         Err(error) => {
@@ -43,7 +43,7 @@ fn serve(args: &[String]) -> ExitCode {
         .filter(|a| a.as_str() != "--watchdog")
         .cloned()
         .collect();
-    match capture::serve(&options, &worker_args) {
+    match capture::serve(ctx, &options, &worker_args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             let prefix = if options.watchdog {
@@ -57,8 +57,8 @@ fn serve(args: &[String]) -> ExitCode {
     }
 }
 
-fn status() -> ExitCode {
-    let up = capture::is_up();
+fn status(ctx: &AppContext) -> ExitCode {
+    let up = capture::is_up(ctx);
     println!(
         "capture: {}",
         if up {
@@ -67,7 +67,7 @@ fn status() -> ExitCode {
             "DOWN — run `spanreed capture ensure`"
         }
     );
-    println!("log:     {}", capture::log_path().display());
+    println!("log:     {}", capture::log_path(ctx).display());
     if up {
         ExitCode::SUCCESS
     } else {

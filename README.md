@@ -187,10 +187,11 @@ A Cargo workspace; dependencies point one way:
 | Path | Role |
 |------|------|
 | `crates/spanreed-domain` | Output model, pure formatting and statistics, ports. No I/O. |
-| `crates/spanreed-app` | `AppContext` and the `app` facade, plus providers, accounts, stores, pricing, the capture relay, setup, sharing and sync. |
+| `crates/spanreed-app` | `AppContext`, the `app` facade and the ports it calls. No I/O. |
+| `crates/spanreed-adapters` | The port implementations: providers, accounts and secrets, stores, pricing, the capture relay, setup, sharing, sync, the agent host. |
 | `crates/spanreed-tray` | The system tray (`--features tray`). |
-| `src/` | The `spanreed` binary: `src/cli/` has one file per subcommand. |
-| `desktop/` | Tauri desktop app; its host depends on `spanreed-app` only. |
+| `src/` | The `spanreed` binary: `src/cli/` has one file per subcommand; `src/compose.rs` builds the context. |
+| `desktop/` | Tauri desktop app; its host depends on `spanreed-app` and composes it with `spanreed-adapters`. |
 
 The CLI, the tray, the desktop app and the local HTTP API all call the same
 `app` functions. See `AGENTS.md` for the module map.

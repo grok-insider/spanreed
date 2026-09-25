@@ -45,12 +45,12 @@ Release PR.
 A provider is one file implementing the `Provider` trait. Use an existing one as
 a template:
 
-- **Simplest** (env/file API key): `crates/spanreed-app/src/providers/zai.rs`
-- **OAuth file + refresh**: `crates/spanreed-app/src/providers/codex.rs`
-- **SQLite-backed token**: `crates/spanreed-app/src/providers/cursor.rs`
-- **Local process discovery**: `crates/spanreed-app/src/providers/antigravity.rs`
+- **Simplest** (env/file API key): `crates/spanreed-adapters/src/providers/zai.rs`
+- **OAuth file + refresh**: `crates/spanreed-adapters/src/providers/codex.rs`
+- **SQLite-backed token**: `crates/spanreed-adapters/src/providers/cursor.rs`
+- **Local process discovery**: `crates/spanreed-adapters/src/providers/antigravity.rs`
 
-### 1. Create `crates/spanreed-app/src/providers/<id>.rs`
+### 1. Create `crates/spanreed-adapters/src/providers/<id>.rs`
 
 ```rust
 use crate::creds;
@@ -105,7 +105,7 @@ impl Provider for Example {
 }
 ```
 
-### 2. Register it in `crates/spanreed-app/src/providers/mod.rs`
+### 2. Register it in `crates/spanreed-adapters/src/providers/mod.rs`
 
 ```rust
 pub mod example;

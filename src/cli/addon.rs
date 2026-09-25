@@ -4,10 +4,10 @@ use std::process::ExitCode;
 
 use crate::app::{self, AppContext};
 
-pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
+pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         None | Some("list") => {
-            for row in app::addons::list() {
+            for row in app::addons::list(ctx) {
                 let on = if row.enabled { "on" } else { "off" };
                 let cmds = if row.commands.is_empty() {
                     String::new()

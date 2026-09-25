@@ -1,41 +1,113 @@
 //! Usage: probes, the shared snapshot, history and local consumption.
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
 use crate::context::AppContext;
 
 pub use crate::model::{self, ProbeView, ProviderOutput};
-pub use crate::output::{plain, plain_with_view, waybar};
-pub use crate::usage::{UsageReport, catalog_view, connections, discovery};
+pub use crate::output::{plain, plain_with_view};
 pub use crate::util::now_ms;
+pub use fabrials_fabric::history::HistorySample;
+pub use fabrials_pricing::PricingMap;
+pub use fabrials_types::HopRecord;
+pub use fabrials_types::consumption::{ConsumptionReport as UsageReport, UsageFilter};
 
-pub fn format_history(samples: &[crate::history::HistorySample]) -> String {
-    crate::history::format_table(samples)
+#[derive(Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Connection {
+    pub client: String,
+    pub account: String,
+    pub credential: String,
 }
 
-/// LiteLLM prices plus the models.dev OpenCode Go channel, as JSON.
-pub fn fetch_price_table() -> Result<String, String> {
-    crate::pricing::fetch_filtered()
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UsageSettings {
+    pub additional_roots: BTreeMap<String, Vec<String>>,
+    pub disabled_clients: Vec<String>,
 }
 
-pub fn history() -> Result<Vec<crate::history::HistorySample>, String> {
-    crate::history::local_samples(None, 500)
+pub struct CardInput<'a> {
+    pub outputs: &'a [ProviderOutput],
+    pub capture_up: bool,
+    pub status: Option<&'a str>,
 }
 
-pub fn hops() -> Result<Vec<fabrials_types::HopRecord>, String> {
-    crate::grok_ledger::recent_hops()
+/// Port: usage ledgers and stores (quota history, capture hops, local
+/// consumption) and the renderers that read them.
+pub trait UsageStore: Send + Sync {
+    fn record_history(&self, outputs: &[ProviderOutput]);
+    /// `SPANREED_HISTORY` asks `probe` to record too.
+    fn should_record_on_probe(&self) -> bool;
+    fn history_samples(
+        &self,
+        provider: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<HistorySample>, String>;
+    fn format_history(&self, samples: &[HistorySample]) -> String;
+    fn recent_hops(&self) -> Result<Vec<HopRecord>, String>;
+    fn report(
+        &self,
+        filter: UsageFilter,
+        force: bool,
+        pricing: &PricingMap,
+    ) -> Result<UsageReport, String>;
+    /// Client catalog, discovery settings and connections, as JSON.
+    fn sources(&self) -> Result<serde_json::Value, String>;
+    fn save_connection(&self, connection: Connection) -> Result<(), String>;
+    fn disconnect(&self, client: &str) -> Result<(), String>;
+    fn discovery_settings(&self) -> Result<UsageSettings, String>;
+    fn save_discovery(&self, settings: &UsageSettings) -> Result<(), String>;
+    /// The tray card document, with local-log cost priced by `pricing`.
+    fn card_html(&self, card: CardInput<'_>, pricing: &PricingMap) -> String;
+    fn can_use_reset(&self, output: &ProviderOutput) -> bool;
+    /// Waybar JSON; the primary provider is the most recently used one.
+    fn waybar(&self, outputs: &[ProviderOutput]) -> serde_json::Value;
+}
+
+/// Port: price and context-window tables.
+pub trait PricingSource: Send + Sync {
+    fn table(&self) -> Arc<PricingMap>;
+    /// Re-read the cached and user tables.
+    fn reload(&self);
+    /// Refresh the remote cache when stale, then reload if it changed.
+    fn refresh(&self);
+    /// LiteLLM prices plus the models.dev OpenCode Go channel, as JSON.
+    fn fetch_upstream(&self) -> Result<String, String>;
+}
+
+fn store(ctx: &AppContext) -> &dyn UsageStore {
+    ctx.services().usage.as_ref()
+}
+
+pub fn format_history(ctx: &AppContext, samples: &[HistorySample]) -> String {
+    store(ctx).format_history(samples)
+}
+
+pub fn fetch_price_table(ctx: &AppContext) -> Result<String, String> {
+    ctx.pricing().fetch_upstream()
+}
+
+pub fn history(ctx: &AppContext) -> Result<Vec<HistorySample>, String> {
+    store(ctx).history_samples(None, 500)
+}
+
+pub fn samples(
+    ctx: &AppContext,
+    provider: Option<&str>,
+    limit: usize,
+) -> Result<Vec<HistorySample>, String> {
+    store(ctx).history_samples(provider, limit)
+}
+
+pub fn hops(ctx: &AppContext) -> Result<Vec<HopRecord>, String> {
+    store(ctx).recent_hops()
 }
 
 pub fn snapshot(ctx: &AppContext, force: bool) -> Vec<ProviderOutput> {
     ctx.snapshot(force)
-}
-
-/// Reset-expiry alerts for the current snapshot; probes only when enabled.
-pub fn deliver_notifications(
-    ctx: &AppContext,
-    send: impl FnMut(&str, &str) -> Result<(), String>,
-) -> Result<u32, String> {
-    if !crate::notifications::settings()?.reset_expiry {
-        return Ok(0);
-    }
-    crate::notifications::deliver_outputs(&ctx.snapshot(false), send)
 }
 
 /// Probe the detected providers, all of them (`force`), or one id.
@@ -45,30 +117,24 @@ pub fn probe(ctx: &AppContext, id: Option<&str>, force: bool) -> Option<Vec<Prov
         None if force => ctx.probe_all(),
         None => ctx.probe_detected(),
     };
-    if crate::history::should_record_on_probe() {
-        crate::history::record(&outputs);
+    if store(ctx).should_record_on_probe() {
+        store(ctx).record_history(&outputs);
     }
     Some(outputs)
 }
 
 /// The tray usage card for `outputs`, with local-log cost priced by the context.
 pub fn card_html(ctx: &AppContext, card: CardInput<'_>) -> String {
-    crate::tray_card::present(
-        card.outputs,
-        card.capture_up,
-        card.status,
-        crate::util::now_ms(),
-        &ctx.pricing().table(),
-    )
+    store(ctx).card_html(card, &ctx.pricing().table())
 }
 
-pub struct CardInput<'a> {
-    pub outputs: &'a [ProviderOutput],
-    pub capture_up: bool,
-    pub status: Option<&'a str>,
+pub fn can_use_reset(ctx: &AppContext, output: &ProviderOutput) -> bool {
+    store(ctx).can_use_reset(output)
 }
 
-pub use crate::tray_card::can_use_reset;
+pub fn waybar(ctx: &AppContext, outputs: &[ProviderOutput]) -> serde_json::Value {
+    store(ctx).waybar(outputs)
+}
 
 /// Daemon cache when a local API is up, else a fresh probe.
 pub fn cached_or_probe(ctx: &AppContext) -> Vec<ProviderOutput> {
@@ -79,27 +145,28 @@ pub fn detected(ctx: &AppContext) -> Vec<ProviderOutput> {
     ctx.probe_detected()
 }
 
-pub fn report(
-    ctx: &AppContext,
-    filter: fabrials_types::consumption::UsageFilter,
-    force: bool,
-) -> Result<UsageReport, String> {
-    crate::usage::report(filter, force, &ctx.pricing().table())
+pub fn report(ctx: &AppContext, filter: UsageFilter, force: bool) -> Result<UsageReport, String> {
+    store(ctx).report(filter, force, &ctx.pricing().table())
 }
 
-pub fn sources() -> Result<serde_json::Value, String> {
-    Ok(serde_json::json!({
-        "clients": catalog_view(),
-        "settings": discovery::settings()?,
-        "connections": connections::status()?,
-    }))
+pub fn sources(ctx: &AppContext) -> Result<serde_json::Value, String> {
+    store(ctx).sources()
 }
 
-pub fn samples(
-    provider: Option<&str>,
-    limit: usize,
-) -> Result<Vec<crate::history::HistorySample>, String> {
-    crate::history::local_samples(provider, limit)
+pub fn save_connection(ctx: &AppContext, connection: Connection) -> Result<(), String> {
+    store(ctx).save_connection(connection)
+}
+
+pub fn disconnect(ctx: &AppContext, client: &str) -> Result<(), String> {
+    store(ctx).disconnect(client)
+}
+
+pub fn discovery_settings(ctx: &AppContext) -> Result<UsageSettings, String> {
+    store(ctx).discovery_settings()
+}
+
+pub fn save_discovery(ctx: &AppContext, settings: &UsageSettings) -> Result<(), String> {
+    store(ctx).save_discovery(settings)
 }
 
 /// A provider row of `spanreed list`.
@@ -110,8 +177,10 @@ pub struct Listed {
 }
 
 /// Built-in providers, host accounts and addon providers.
-pub fn list() -> Vec<Listed> {
-    let mut rows: Vec<Listed> = crate::providers::all()
+pub fn list(ctx: &AppContext) -> Vec<Listed> {
+    let catalog = ctx.services().providers.as_ref();
+    let mut rows: Vec<Listed> = catalog
+        .providers()
         .into_iter()
         .map(|p| Listed {
             id: p.id().into(),
@@ -119,24 +188,11 @@ pub fn list() -> Vec<Listed> {
             state: if p.detect() { "detected" } else { "—" },
         })
         .collect();
-    rows.extend(
-        crate::accounts::list_provider("grok")
-            .into_iter()
-            .map(|acc| Listed {
-                name: format!("Grok ({})", acc.alias),
-                state: if acc.active { "active" } else { "account" },
-                id: acc.id,
-            }),
-    );
-    rows.extend(
-        crate::addons::extra_provider_ids()
-            .into_iter()
-            .map(|(id, name, detected)| Listed {
-                id,
-                name: format!("{name} (addon)"),
-                state: if detected { "detected" } else { "—" },
-            }),
-    );
+    rows.extend(catalog.listed().into_iter().map(|row| Listed {
+        id: row.id,
+        name: row.name,
+        state: row.state,
+    }));
     rows
 }
 
@@ -148,8 +204,10 @@ pub struct Detection {
     pub detected: bool,
 }
 
-pub fn detection() -> Vec<Detection> {
-    crate::providers::all()
+pub fn detection(ctx: &AppContext) -> Vec<Detection> {
+    ctx.services()
+        .providers
+        .providers()
         .into_iter()
         .map(|provider| Detection {
             id: provider.id().into(),

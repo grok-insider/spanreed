@@ -5,6 +5,7 @@
 //! `spanreed-tray` (feature `tray`).
 
 mod cli;
+mod compose;
 
 use spanreed_app::app;
 use spanreed_domain::util;

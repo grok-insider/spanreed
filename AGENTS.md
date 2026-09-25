@@ -19,8 +19,8 @@ each provider's usage API, and renders the result.
 - Probes are blocking I/O fanned out over threads. The shared runtime contains Tokio transport; Tauri runs blocking probes off the renderer thread.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.
-- **Accounts** are host-owned (`crates/spanreed-app/src/accounts/`, `spanreed account`). Drivers
-  (`crates/spanreed-app/src/drivers/`) implement login/refresh/billing. Grok uses native device-code.
+- **Accounts** are host-owned (`crates/spanreed-adapters/src/accounts/`, `spanreed account`). Drivers
+  (`crates/spanreed-adapters/src/drivers/`) implement login/refresh/billing. Grok uses native device-code.
 - **Addons** are a session-shaped protocol (today still one-shot JSON + inproc
   trait) for extra CLI prefixes. See `docs/addons.md`.
 - Credentials are read from where each CLI stores them: XDG paths, plaintext
@@ -33,19 +33,27 @@ each provider's usage API, and renders the result.
 
 ## Module layout
 
-Dependency direction: `spanreed-domain` ← `spanreed-app` ← `spanreed-tray` and the
-CLI (root package). `desktop/src-tauri` depends on `spanreed-app` only (renamed
-`spanreed` in its manifest). Front ends parse input and present results; the work
-goes through the `app` facade with an `AppContext`.
+Dependency direction: `spanreed-domain` ← `spanreed-app` ← `spanreed-adapters` and
+`spanreed-tray`; the CLI (root package) and `desktop/src-tauri` are the
+composition roots. `spanreed-app` performs no I/O: every outbound dependency is a
+port trait (`crates/spanreed-app/src/ports.rs` and one port per facade area), and
+`spanreed-adapters` implements them. The roots build
+`AppContext::new(spanreed_adapters::services::standard())` (`src/compose.rs`,
+`desktop/src-tauri/src/main.rs`); the tray and the CLI subcommands only call
+`spanreed_app::app`. `cargo tree -e normal -p spanreed-app | grep spanreed-adapters`
+must stay empty.
 
 | Crate / path | Owns |
 |------|------|
-| `src/main.rs`, `src/lib.rs` | The `spanreed` binary: `run_cli`. Root package `spanreed` (release version, `tray` and `contracts` features forwarding to the crates, `tests/`). |
+| `src/main.rs`, `src/lib.rs`, `src/compose.rs` | The `spanreed` binary: `run_cli`, composition root. Root package `spanreed` (release version, `tray` and `contracts` features forwarding to the crates, `tests/`). |
 | `src/cli/` | Command line: `mod.rs` (SIGPIPE, logging, the `COMMANDS` table, addon prefix fallback, `grok-bridge` argv0 alias), `args.rs`, `help.rs`, and one file per subcommand (`probe`, `capture`, `agent`, `setup`, `share`, `usage`, `sync`, …). Hand-written parsing; no clap/lexopt in the lock. |
 | `crates/spanreed-domain` | No I/O: `model` (re-exports `fabrials-types`), `output` (plain/Waybar renderers), `tray_format`, `usage_stats`, `provider_icons`, `util` (time, formatting, JWT), `ports` (`CostSource`, `AfterProbe`, `Notifier`, `SnapshotProvider`, `ProbePorts`). |
-| `crates/spanreed-app/src/context.rs` | `AppContext`, the composition root built once per process (CLI, tray, Tauri managed state): paths, pricing `Catalog` (explicit `reload`/`refresh`), cost source, history-sync hook, notifier, snapshot cache, device-login sessions, proxy and agent-host controllers, pending client reviews. |
-| `crates/spanreed-app/src/app/` | The application facade used by the CLI, the tray, the desktop host and the local API: `usage`, `accounts`, `agent`, `routing`, `proxy`, `clients`, `migration`, `sharing`, `sync`, `fabrials`, `notifications`, `capture`, `setup`, `updates`, `addons`, `profiles`, `window`, `local_api`. |
-| `crates/spanreed-app/src/*` | Adapters behind the facade (not yet a separate crate): the rest of this table. |
+| `crates/spanreed-app/src/context.rs` | `AppContext`, built once per process from a `ports::Services` bundle; owns the probe snapshot cache and runs probes with the cost port and probe hooks. |
+| `crates/spanreed-app/src/ports.rs` | `Provider`, `ProviderCatalog` (provider drivers/probes), `Services`, `AppPaths`, and re-exports of the domain probe ports and of each area port. |
+| `crates/spanreed-app/src/probe.rs` | Probe orchestration over `ProviderCatalog` (tested with fakes). |
+| `crates/spanreed-app/src/app/` | The facade used by the CLI, the tray, the desktop host and the local API. Each area owns its DTOs and its port: `usage` (`UsageStore`, `PricingSource`), `accounts` (`AccountStore`, `DeviceLogins`), `routing` (`RoutingStore`), `notifications` (settings, delivery, OS notifier), `sharing`, `sync`, `fabrials` (HTTP), `migration`, `clients` (`ClientConfigurator`), `proxy`/`agent` (in-process runtimes), `capture` and `setup` (`Installer`: OS service managers), `updates`, `window` (`DesktopBridge`), `addons`, `profiles`, `local_api`. `desktop_contracts.rs` generates the renderer types. |
+| `crates/spanreed-adapters/src/services.rs` | One implementation per port and `standard()`, the production `Services`. |
+| `crates/spanreed-adapters/src/*` | The adapters: the rest of this table. |
 | `crates/spanreed-tray` | `spanreed tray` (feature `tray`; empty without it, so workspace builds need no GTK): `menu`, `state`, `actions`, `visual`, `popover`, `platform`. Nix package builds this; musl GH zips do not. |
 | `desktop/` | Tauri + React local console (`src-tauri/src/{main,commands,notifications,shell}.rs`); shared styles/components from `@fabrials/ui`. |
 | `privacy.rs` | Independent, default-off metrics publication and history synchronization consent. |
@@ -82,7 +90,7 @@ Process-wide statics are limited to: the local UTC offset captured before thread
 
 ## The `Provider` trait
 
-Every provider implements `crates/spanreed-app/src/providers/mod.rs::Provider`:
+Every provider implements `crates/spanreed-adapters/src/providers/mod.rs::Provider`:
 
 ```rust
 pub trait Provider: Send + Sync {
@@ -155,9 +163,9 @@ bypassed.
 
 ## Adding a provider (quick version)
 
-1. Create `crates/spanreed-app/src/providers/<id>.rs`; implement `Provider`. Use `zai.rs` (env-key,
+1. Create `crates/spanreed-adapters/src/providers/<id>.rs`; implement `Provider`. Use `zai.rs` (env-key,
    simplest) or `codex.rs` (OAuth file + refresh) as templates.
-2. Register it in `crates/spanreed-app/src/providers/mod.rs`: add `pub mod <id>;` and a
+2. Register it in `crates/spanreed-adapters/src/providers/mod.rs`: add `pub mod <id>;` and a
    `Box::new(<id>::Type)` entry in `all()`.
 3. `cargo build` then `spanreed probe <id>` to test against your account.
 
@@ -286,12 +294,12 @@ the website.
 - **Requires Grok Insider account** (Sign in with X once via device flow).
 - **Login:** `spanreed share login` → browser `/spanreed/link` → approve.
 - **Opt-in:** `spanreed setup` can enable **once-per-day** auto-share only after an affirmative choice; `--yes` keeps sharing and client wiring disabled. `spanreed privacy metrics on` explicitly enables publication consent. The schedule uses
-  (`crates/spanreed-app/src/setup/share_schedule.rs`): preferred evening timer (**23:00 Europe/Madrid** /
+  (`crates/spanreed-adapters/src/setup/share_schedule.rs`): preferred evening timer (**23:00 Europe/Madrid** /
   local) **plus** login / missed-run catch-up (systemd `Persistent` + login
   oneshot; macOS `RunAtLoad`; Windows `StartWhenAvailable` + logon).
 - **Due-gate:** client records `last_share_day` (product day UTC+1 Madrid);
   server **upserts** same day. Manual: `spanreed share` (`--force` retries).
 - Optional `SPANREED_API_BASE`. Payload: quota/plan/cost/error + economics
-  (`crates/spanreed-app/src/share.rs`). Vote = server `user_id`; install id is device-only.
+  (`crates/spanreed-adapters/src/share.rs`). Vote = server `user_id`; install id is device-only.
 - Site `/spanreed` is **metrics only** (public summary). Link page for CLI.
 - Workspace notes: `grok-insider/docs/spanreed.md`.

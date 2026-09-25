@@ -5,7 +5,14 @@
 
 use std::process::ExitCode;
 
-use crate::app::agent::defaults;
+use fabrials_agent_host::{CliDefaults, HostIdentity};
+
+use crate::app::agent::{COMMAND, HOST_NAME, HOST_VERSION};
+
+/// How the agent host names itself (`/healthz`, messages) and its command.
+pub(super) fn defaults() -> CliDefaults {
+    CliDefaults::new(HostIdentity::new(HOST_NAME, HOST_VERSION), COMMAND)
+}
 
 /// Program names that run straight into `spanreed agent` (installed as links
 /// so existing `grok-bridge …` scripts and autostart entries keep working).

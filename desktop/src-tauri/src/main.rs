@@ -4,9 +4,13 @@ mod notifications;
 mod shell;
 
 fn main() {
+    // Composition root: the production adapters behind the app ports.
+    let ctx = spanreed::app::AppContext::new(spanreed_adapters::services::standard());
+    let setup_ctx = ctx.clone();
+    let exit_ctx = ctx.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .manage(spanreed::app::AppContext::new())
+        .manage(ctx)
         .invoke_handler(tauri::generate_handler![
             commands::take_desktop_route,
             commands::disconnect_usage_source,
@@ -82,10 +86,10 @@ fn main() {
             commands::cancel_device_login,
             commands::open_device_login,
         ])
-        .setup(|app| {
-            spanreed::app::window::mark_running();
-            shell::watch_routes(app.handle().clone());
-            shell::build_tray(app)?;
+        .setup(move |app| {
+            spanreed::app::window::mark_running(&setup_ctx);
+            shell::watch_routes(setup_ctx.clone(), app.handle().clone());
+            shell::build_tray(setup_ctx.clone(), app)?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -96,9 +100,9 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("could not start Spanreed desktop")
-        .run(|_app, event| {
+        .run(move |_app, event| {
             if let tauri::RunEvent::Exit = event {
-                spanreed::app::window::unmark_running();
+                spanreed::app::window::unmark_running(&exit_ctx);
             }
         });
 }

@@ -90,7 +90,7 @@ pub fn run_cli() -> ExitCode {
     if agent::invoked_as_legacy_bridge(&argv0) {
         return agent::cmd(&args);
     }
-    dispatch(&AppContext::new(), &args)
+    dispatch(&crate::compose::context(), &args)
 }
 
 fn dispatch(ctx: &AppContext, args: &[String]) -> ExitCode {
@@ -103,7 +103,7 @@ fn dispatch(ctx: &AppContext, args: &[String]) -> ExitCode {
     if let Some((_, handler)) = COMMANDS.iter().find(|(name, _)| *name == cmd) {
         return handler(ctx, rest);
     }
-    if let Some(code) = crate::app::addons::dispatch_prefix(cmd, rest) {
+    if let Some(code) = crate::app::addons::dispatch_prefix(ctx, cmd, rest) {
         return code;
     }
     eprintln!("unknown command: {cmd}\n");

@@ -1,7 +1,7 @@
 //! Application facade: the use cases shared by the CLI, the tray, the Tauri
-//! desktop host and the local HTTP API. Entry points take `&AppContext`
-//! where they need process state; front ends only parse input and present
-//! results.
+//! desktop host and the local HTTP API. Every entry point takes the
+//! `AppContext` and reaches I/O only through its ports; front ends only
+//! parse input and present results.
 
 pub mod accounts;
 pub mod addons;
@@ -24,4 +24,5 @@ pub mod window;
 
 pub use crate::context::AppContext;
 
-pub const PRODUCT_NAME: &str = crate::product::APP_NAME;
+pub const PRODUCT_ID: &str = "spanreed";
+pub const PRODUCT_NAME: &str = "Spanreed";

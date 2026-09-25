@@ -4,7 +4,7 @@ use image::RgbaImage;
 use tray_icon::{Icon, TrayIcon};
 
 use super::menu::TrayMenu;
-use super::state::Shared;
+use super::state::{Shared, context};
 use super::{MENU_AGENT_START, MENU_AGENT_STOP, MENU_CHECK, MENU_LINK_SHARE, MENU_SHARE_NOW};
 use spanreed_app::app;
 use spanreed_domain::tray_format::{self, TraySeverity};
@@ -16,6 +16,7 @@ pub(super) fn apply_visual(state: &Shared, tray: &mut TrayIcon, menu: &TrayMenu)
     let item_check = &menu.check;
     let item_share_primary = &menu.share;
     let item_unlink = &menu.unlink;
+    let ctx = context(state);
     let (sev, tip, title, update_enabled, check_label, share_logged_in) = {
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.dirty = false;
@@ -26,7 +27,7 @@ pub(super) fn apply_visual(state: &Shared, tray: &mut TrayIcon, menu: &TrayMenu)
             &g.share_line,
             &tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref()),
         );
-        let update_enabled = app::updates::can_apply_self_update()
+        let update_enabled = app::updates::can_apply_self_update(&ctx)
             && g.update_note
                 .as_deref()
                 .map(|n| n.contains("available"))
@@ -55,9 +56,7 @@ pub(super) fn apply_visual(state: &Shared, tray: &mut TrayIcon, menu: &TrayMenu)
     if current != "Checking for updates…" {
         item_check.set_text(check_label);
     }
-    let ctx = state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
-    let agent_running = app::agent::status(&ctx)
-        .is_ok_and(|status| status.state == app::proxy::ProxyState::Running);
+    let agent_running = app::agent::running(&ctx);
     menu.agent.set_text(if agent_running {
         MENU_AGENT_STOP
     } else {

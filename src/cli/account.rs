@@ -4,8 +4,8 @@ use std::process::ExitCode;
 
 use crate::app::{self, AppContext};
 
-pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
-    match app::accounts::command(args) {
+pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
+    match app::accounts::command(ctx, args) {
         Ok(out) => {
             if !out.is_empty() {
                 print!("{out}");

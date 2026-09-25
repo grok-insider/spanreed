@@ -3958,13 +3958,14 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "spanreed-adapters",
  "spanreed-app",
  "spanreed-domain",
  "spanreed-tray",
 ]
 
 [[package]]
-name = "spanreed-app"
+name = "spanreed-adapters"
 version = "0.6.1"
 dependencies = [
  "dirs 5.0.1",
@@ -3990,14 +3991,28 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spanreed-app",
  "spanreed-domain",
  "tar",
  "time",
  "tokio",
  "toml",
  "toml_edit 0.20.2",
- "ts-rs",
  "zip",
+]
+
+[[package]]
+name = "spanreed-app"
+version = "0.6.1"
+dependencies = [
+ "fabrials-fabric",
+ "fabrials-pricing",
+ "fabrials-providers",
+ "fabrials-types",
+ "serde",
+ "serde_json",
+ "spanreed-domain",
+ "ts-rs",
 ]
 
 [[package]]

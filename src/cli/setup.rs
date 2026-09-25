@@ -41,12 +41,12 @@ impl SetupFlags {
     }
 }
 
-pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
+pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
     let (sub, flags) = SetupFlags::parse(args);
     match sub.as_deref() {
-        None | Some("install") => install(&flags),
-        Some("status") => status(),
-        Some("uninstall") => uninstall(&flags),
+        None | Some("install") => install(ctx, &flags),
+        Some("status") => status(ctx),
+        Some("uninstall") => uninstall(ctx, &flags),
         Some(other) => {
             eprintln!("unknown setup subcommand: {other}");
             eprintln!(
@@ -67,10 +67,10 @@ fn print_line(line: Line) {
     }
 }
 
-fn install(flags: &SetupFlags) -> ExitCode {
+fn install(ctx: &AppContext, flags: &SetupFlags) -> ExitCode {
     println!("{} setup\n", crate::app::PRODUCT_NAME);
     let plan = if flags.yes {
-        let plan = SetupPlan::non_interactive(flags.service);
+        let plan = setup::non_interactive(ctx, flags.service);
         println!(
             "Non-interactive: install={} ledger={} service={} tray={} share_schedule={} \
              wire_grok={} wire_opencode={} dry_run={}\n",
@@ -85,7 +85,7 @@ fn install(flags: &SetupFlags) -> ExitCode {
         );
         plan
     } else {
-        let Some(plan) = ask_plan(flags) else {
+        let Some(plan) = ask_plan(ctx, flags) else {
             println!("Aborted.");
             return ExitCode::SUCCESS;
         };
@@ -96,7 +96,7 @@ fn install(flags: &SetupFlags) -> ExitCode {
         dry_run: flags.dry_run,
         from_current_exe: flags.from_current_exe,
     };
-    let outcome = setup::apply(&plan, options, &mut print_line);
+    let outcome = setup::apply(ctx, &plan, options, &mut print_line);
     if outcome.aborted {
         return ExitCode::FAILURE;
     }
@@ -120,8 +120,8 @@ fn install(flags: &SetupFlags) -> ExitCode {
 }
 
 /// Interactive questions; `None` when the user declines to apply.
-fn ask_plan(flags: &SetupFlags) -> Option<SetupPlan> {
-    let hints = setup::prompt_hints();
+fn ask_plan(ctx: &AppContext, flags: &SetupFlags) -> Option<SetupPlan> {
+    let hints = setup::prompt_hints(ctx);
     let install = prompt_yn("Install CLI to user PATH?", true, Some(hints.install_path));
     let ledger = prompt_yn("Create ledger directory?", true, None);
     let service = prompt_yn(
@@ -134,7 +134,7 @@ fn ask_plan(flags: &SetupFlags) -> Option<SetupPlan> {
     );
     let tray = prompt_yn(
         "Start system tray icon at login (usage + capture status)?",
-        setup::tray_default(service),
+        setup::tray_default(ctx, service),
         Some(
             "Spanreed icon; shows remaining quotas and whether Grok proxy is up \
              (needs a binary built with --features tray)"
@@ -174,7 +174,7 @@ fn ask_plan(flags: &SetupFlags) -> Option<SetupPlan> {
     })
 }
 
-fn uninstall(flags: &SetupFlags) -> ExitCode {
+fn uninstall(ctx: &AppContext, flags: &SetupFlags) -> ExitCode {
     if !flags.yes
         && !flags.dry_run
         && !prompt_yn(
@@ -190,7 +190,7 @@ fn uninstall(flags: &SetupFlags) -> ExitCode {
         dry_run: flags.dry_run,
         purge_all: flags.purge_all,
     };
-    if setup::uninstall(options, &mut print_line).errors == 0 {
+    if setup::uninstall(ctx, options, &mut print_line).errors == 0 {
         println!("Uninstall complete.");
         ExitCode::SUCCESS
     } else {
@@ -198,8 +198,8 @@ fn uninstall(flags: &SetupFlags) -> ExitCode {
     }
 }
 
-fn status() -> ExitCode {
-    let status = setup::status();
+fn status(ctx: &AppContext) -> ExitCode {
+    let status = setup::status(ctx);
     println!("spanreed setup status\n");
     println!("  CLI install path: {}", status.install_path);
     println!("  Binary present:   {}", yes_no(status.binary_present));

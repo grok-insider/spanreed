@@ -4149,7 +4149,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "spanreed-app"
+name = "spanreed-adapters"
 version = "0.6.1"
 dependencies = [
  "dirs 5.0.1",
@@ -4175,6 +4175,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spanreed-app",
  "spanreed-domain",
  "tar",
  "time",
@@ -4185,12 +4186,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "spanreed-app"
+version = "0.6.1"
+dependencies = [
+ "fabrials-fabric",
+ "fabrials-pricing",
+ "fabrials-providers",
+ "fabrials-types",
+ "serde",
+ "serde_json",
+ "spanreed-domain",
+]
+
+[[package]]
 name = "spanreed-desktop"
 version = "0.6.1"
 dependencies = [
  "fabrials-types",
  "serde",
  "serde_json",
+ "spanreed-adapters",
  "spanreed-app",
  "tauri",
  "tauri-build",

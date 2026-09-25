@@ -16,15 +16,16 @@ name = "spanreed"
 path = "src/main.rs"
 
 [features]
-contracts = ["spanreed-app/contracts"]
+contracts = ["spanreed-app/contracts", "spanreed-adapters/contracts"]
 default = []
 # System tray companion (Windows/macOS primary; Linux needs a SNI host).
 # Release desktop builds pass `--features tray`. Linux musl stays without tray
 # so the static binary check still holds.
-tray = ["dep:spanreed-tray", "spanreed-tray/tray", "spanreed-app/tray"]
+tray = ["dep:spanreed-tray", "spanreed-tray/tray", "spanreed-adapters/tray"]
 
 [dependencies]
 spanreed-app = { path = "crates/spanreed-app" }
+spanreed-adapters = { path = "crates/spanreed-adapters" }
 spanreed-domain = { path = "crates/spanreed-domain" }
 spanreed-tray = { path = "crates/spanreed-tray", optional = true }
 fabrials-types = { path = "vendor/fabrials-libs/crates/fabrials-types" }
@@ -41,13 +42,14 @@ libc = "0.2"
 opt-level = 2
 strip = true
 
-# domain (pure types and logic) <- app (use cases, AppContext, ports and the
-# adapters behind them) <- tray / the CLI in this package. desktop/src-tauri
-# depends on spanreed-app only.
+# domain (pure types and logic) <- app (use cases, ports, AppContext; no I/O)
+# <- adapters (port implementations) and tray. This package (the CLI) and
+# desktop/src-tauri are the composition roots: they build AppContext from the
+# adapters. The tray and the CLI commands only call spanreed-app.
 [workspace]
-members = [".", "crates/spanreed-domain", "crates/spanreed-app", "crates/spanreed-tray"]
+members = [".", "crates/spanreed-domain", "crates/spanreed-app", "crates/spanreed-adapters", "crates/spanreed-tray"]
 # Plain `cargo test` / `cargo clippy` cover every Spanreed crate.
-default-members = [".", "crates/spanreed-domain", "crates/spanreed-app", "crates/spanreed-tray"]
+default-members = [".", "crates/spanreed-domain", "crates/spanreed-app", "crates/spanreed-adapters", "crates/spanreed-tray"]
 exclude = ["desktop/src-tauri", "vendor/fabrials-libs"]
 resolver = "2"
 

@@ -201,19 +201,20 @@ pub(super) fn open_path(path: &std::path::Path) -> Result<(), String> {
 /// Every alert goes through the platform path: notify-send, a Windows toast,
 /// or macOS Notification Center. macOS and Windows also show a dialog, because
 /// a successful command does not prove the banner was shown.
-pub(super) fn user_notify(title: &str, body: &str, modal: bool) {
+pub(super) fn user_notify(state: &super::state::Shared, title: &str, body: &str, modal: bool) {
     log::info!("tray notify: {title}: {body}");
     if modal {
         eprintln!("spanreed tray: {title}: {body}");
     }
     let title = title.to_string();
     let body = body.to_string();
+    let ctx = super::state::context(state);
     thread::spawn(move || {
         // Deliver before asking the desktop. The desktop handshake waits, and a
         // successful plugin show can still drop the banner.
-        if let Err(error) = app::notifications::deliver_user_visible(&title, &body) {
+        if let Err(error) = app::notifications::deliver_user_visible(&ctx, &title, &body) {
             log::warn!("tray notify failed: {error}");
         }
-        let _handed_to_desktop = app::window::hand_off_alert(&title, &body);
+        let _handed_to_desktop = app::window::hand_off_alert(&ctx, &title, &body);
     });
 }

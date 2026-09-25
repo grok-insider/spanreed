@@ -4,9 +4,9 @@ use std::process::ExitCode;
 
 use crate::app::{self, AppContext};
 
-pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
+pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
-        Some("copilot") => match app::accounts::link_copilot(&args[1..]) {
+        Some("copilot") => match app::accounts::link_copilot(ctx, &args[1..]) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("auth copilot: {e}");
@@ -14,7 +14,7 @@ pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
             }
         },
         Some("logout") => match args.get(1).map(String::as_str) {
-            Some("copilot") => match app::accounts::unlink_copilot() {
+            Some("copilot") => match app::accounts::unlink_copilot(ctx) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("auth logout copilot: {e}");

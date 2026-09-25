@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use crate::app::usage::{self, connections};
+use crate::app::usage;
 use crate::app::{self, AppContext};
 use fabrials_types::consumption::UsageFilter;
 
@@ -18,18 +18,18 @@ pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
             if bytes.len() > 65536 {
                 return Err("Usage connection exceeds size limit".into());
             }
-            let connection = serde_json::from_slice::<connections::Connection>(&bytes).map_err(
+            let connection = serde_json::from_slice::<usage::Connection>(&bytes).map_err(
                 |_| "Expected JSON containing client, account and credential on standard input",
             )?;
-            connections::save(connection)?;
+            usage::save_connection(ctx, connection)?;
             return Ok(serde_json::json!({"saved":true}));
         }
         if args.first().is_some_and(|s| s == "disconnect") {
-            connections::disconnect(args.get(1).ok_or("Missing client")?)?;
+            usage::disconnect(ctx, args.get(1).ok_or("Missing client")?)?;
             return Ok(serde_json::json!({"disconnected":true}));
         }
         if args.first().is_some_and(|s| s == "sources") {
-            return usage::sources();
+            return usage::sources(ctx);
         }
         let mut filter = UsageFilter::default();
         let mut force = false;

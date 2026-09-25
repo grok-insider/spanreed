@@ -12,7 +12,7 @@ pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let result = if args.first().is_some_and(|arg| arg == "link-codex") {
-        sync::link_codex()
+        sync::link_codex(ctx)
     } else {
         sync::run(ctx)
     };

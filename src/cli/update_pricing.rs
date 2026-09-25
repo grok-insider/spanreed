@@ -4,8 +4,8 @@ use std::process::ExitCode;
 
 use crate::app::{self, AppContext};
 
-pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
-    let json = match app::usage::fetch_price_table() {
+pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
+    let json = match app::usage::fetch_price_table(ctx) {
         Ok(j) => j,
         Err(e) => {
             eprintln!("update-pricing failed: {e}");

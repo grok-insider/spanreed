@@ -225,7 +225,6 @@ impl CardView {
 #[cfg(test)]
 mod tests {
     use super::platform::open_path;
-    use std::path::PathBuf;
 
     #[test]
     fn open_path_creates_missing_file() {
@@ -241,15 +240,5 @@ mod tests {
             path.display()
         );
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn capture_log_path_is_under_spanreed_logs() {
-        let p: PathBuf = spanreed_app::app::capture::log_path();
-        let s = p.to_string_lossy();
-        assert!(
-            s.contains("spanreed") && s.contains("capture.log"),
-            "unexpected log path {s}"
-        );
     }
 }

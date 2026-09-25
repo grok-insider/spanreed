@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use crate::app::{AppContext, updates};
 
-pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
+pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
     let mut check_only = false;
     let mut json = false;
     let mut yes = false;
@@ -28,12 +28,12 @@ pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
         }
     }
 
-    if updates::offline() {
+    if updates::offline(ctx) {
         eprintln!("self-update: SPANREED_OFFLINE=1 — not checking GitHub");
         return ExitCode::FAILURE;
     }
 
-    let result = match updates::check_for_update() {
+    let result = match updates::check_for_update(ctx) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("self-update: {e}");
@@ -74,8 +74,8 @@ pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if !dry_run && !updates::can_apply_self_update() {
-        let why = updates::apply_blocked_reason().unwrap_or("self-update apply is disabled");
+    if !dry_run && !updates::can_apply_self_update(ctx) {
+        let why = updates::apply_blocked_reason(ctx).unwrap_or("self-update apply is disabled");
         eprintln!("self-update: {why}");
         return ExitCode::FAILURE;
     }
@@ -85,7 +85,7 @@ pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    match updates::apply_update(&result, dry_run) {
+    match updates::apply_update(ctx, &result, dry_run) {
         Ok(msg) => {
             println!("{msg}");
             ExitCode::SUCCESS

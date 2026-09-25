@@ -12,6 +12,11 @@ use spanreed_domain::util;
 
 pub(super) type Shared = Arc<Mutex<TrayState>>;
 
+/// The application context the tray was started with.
+pub(super) fn context(state: &Shared) -> AppContext {
+    state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone()
+}
+
 pub(super) struct TrayState {
     pub(super) ctx: AppContext,
     pub(super) outputs: Vec<ProviderOutput>,
@@ -90,8 +95,8 @@ pub(super) fn stamp_status(guard: &mut TrayState, note: impl Into<String>) {
 }
 
 pub(super) fn refresh_state(state: &Shared) {
-    let capture_up = app::capture::is_up();
-    let ctx = state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
+    let ctx = context(state);
+    let capture_up = app::capture::is_up(&ctx);
     let outputs = app::usage::cached_or_probe(&ctx);
     let max_used = tray_format::max_used_pct(&outputs);
 
@@ -105,11 +110,11 @@ pub(super) fn refresh_state(state: &Shared) {
     }
     g.outputs = outputs;
     g.max_used = max_used;
-    g.share_logged_in = app::sharing::is_linked();
+    g.share_logged_in = app::sharing::is_linked(&ctx);
     let today = util::today_day_key_madrid();
     g.share_line = tray_format::format_share_line(
         g.share_logged_in,
-        app::sharing::last_shared_day().as_deref(),
+        app::sharing::last_shared_day(&ctx).as_deref(),
         &today,
     );
     g.dirty = true;
@@ -127,6 +132,7 @@ pub(super) fn refresh_state(state: &Shared) {
             stamp_status(&mut g, "Capture proxy is DOWN");
             drop(g);
             user_notify(
+                state,
                 "spanreed — capture",
                 "Capture proxy is DOWN. Run Ensure capture or `spanreed capture ensure`.",
                 false,
@@ -151,23 +157,24 @@ pub(super) fn refresh_state(state: &Shared) {
             } else {
                 "Usage is at or above 80%."
             };
-            user_notify("spanreed — usage", body, false);
+            user_notify(state, "spanreed — usage", body, false);
         }
     }
 }
 
 /// Run GitHub Releases check; returns a user-facing summary string.
 pub(super) fn run_update_check(state: &Shared) -> String {
-    if app::updates::offline() {
+    let ctx = context(state);
+    if app::updates::offline(&ctx) {
         let msg = "Offline (SPANREED_OFFLINE=1) — not checking GitHub.".to_string();
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.update_note = Some("Update: offline".into());
         g.dirty = true;
         return msg;
     }
-    match app::updates::check_for_update() {
+    match app::updates::check_for_update(&ctx) {
         Ok(r) if r.newer => {
-            let how = if let Some(why) = app::updates::apply_blocked_reason() {
+            let how = if let Some(why) = app::updates::apply_blocked_reason(&ctx) {
                 format!("\n\nCannot auto-install: {why}")
             } else {
                 "\n\nUse “Install update…” to apply.".into()

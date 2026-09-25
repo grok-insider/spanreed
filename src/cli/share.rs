@@ -26,9 +26,9 @@ pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
 
     if let Some(sub) = args.first().map(String::as_str) {
         match sub {
-            "login" => return login(),
-            "logout" => return logout(),
-            "status" => return status(),
+            "login" => return login(ctx),
+            "logout" => return logout(ctx),
+            "status" => return status(ctx),
             _ => {}
         }
     }
@@ -55,8 +55,8 @@ pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
 }
 
 /// Device authorization login (RFC 8628-style).
-fn login() -> ExitCode {
-    let pending = match sharing::begin_link() {
+fn login(ctx: &AppContext) -> ExitCode {
+    let pending = match sharing::begin_link(ctx) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("share login: {e}");
@@ -74,7 +74,7 @@ fn login() -> ExitCode {
     println!("  3. Sign in with X and approve this CLI\n");
     println!("Waiting for approval (up to {}s)…", pending.expires_in);
 
-    match sharing::wait_link(&pending) {
+    match sharing::wait_link(ctx, &pending) {
         Ok(()) => {
             println!("Logged in. Daily share can run without the browser.");
             ExitCode::SUCCESS
@@ -86,8 +86,8 @@ fn login() -> ExitCode {
     }
 }
 
-fn logout() -> ExitCode {
-    match sharing::unlink() {
+fn logout(ctx: &AppContext) -> ExitCode {
+    match sharing::unlink(ctx) {
         Ok(()) => {
             println!("share: logged out (local session removed)");
             ExitCode::SUCCESS
@@ -99,13 +99,13 @@ fn logout() -> ExitCode {
     }
 }
 
-fn status() -> ExitCode {
-    if !sharing::has_refresh_session() {
+fn status(ctx: &AppContext) -> ExitCode {
+    if !sharing::has_refresh_session(ctx) {
         println!("share: not logged in — run: spanreed share login");
         return ExitCode::FAILURE;
     }
     println!("share: logged in (refresh present)");
-    if let Some(day) = sharing::last_shared_day() {
+    if let Some(day) = sharing::last_shared_day(ctx) {
         println!("share: last shared day {day}");
     } else {
         println!("share: last shared day: never");
