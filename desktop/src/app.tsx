@@ -82,10 +82,10 @@ export function App() {
         if (!active || !href) return;
         if (location.hash !== href) location.hash = href;
         else window.dispatchEvent(new HashChangeEvent("hashchange"));
-        const window = getCurrentWindow();
-        void window.unminimize();
-        void window.show();
-        void window.setFocus();
+        const host = getCurrentWindow();
+        void host.unminimize();
+        void host.show();
+        void host.setFocus();
       }).catch(() => undefined);
     };
     pull();
