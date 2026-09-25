@@ -32,6 +32,7 @@ pub mod codex_session_move;
 mod cost;
 mod creds;
 pub mod desktop;
+pub mod desktop_open;
 mod drivers;
 mod epoch;
 pub mod fabrials_login;
@@ -62,6 +63,7 @@ mod secret;
 mod self_update;
 mod setup;
 pub use setup::review as client_configuration;
+mod provider_icons;
 mod share;
 mod share_economics;
 mod share_schedule;
@@ -69,6 +71,7 @@ mod share_session;
 pub mod sharing_control;
 pub mod sync;
 mod sync_store;
+mod tray_card;
 mod tray_format;
 pub mod usage;
 mod usage_stats;
@@ -76,6 +79,8 @@ mod util;
 
 #[cfg(feature = "tray")]
 mod tray;
+#[cfg(feature = "tray")]
+mod tray_popover;
 
 use std::process::ExitCode;
 
@@ -126,20 +131,13 @@ pub fn run_cli() -> ExitCode {
         "privacy" => privacy::cmd(rest),
         "profile" => profiles::cmd(rest),
         "widget" => profiles::widget(rest),
-        "gui" => {
-            match std::process::Command::new("spanreed-desktop")
-                .args(rest)
-                .spawn()
-            {
-                Ok(_) => ExitCode::SUCCESS,
-                Err(error) => {
-                    eprintln!(
-                        "Could not open Spanreed Desktop: {error}. Install the desktop package."
-                    );
-                    ExitCode::FAILURE
-                }
+        "gui" => match crate::desktop_open::request("overview") {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
             }
-        }
+        },
         "sync" => crate::sync::cmd(rest),
         "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),

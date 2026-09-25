@@ -119,14 +119,162 @@ pub fn deliver_outputs(
 }
 
 pub fn deliver_background(outputs: &[crate::model::ProviderOutput]) -> Result<u32, String> {
-    deliver_outputs(outputs, system_notification)
+    deliver_outputs(outputs, deliver_user_visible)
 }
 
-fn system_notification(title: &str, body: &str) -> Result<(), String> {
+/// Deliver an alert, then show a dialog when the banner command is not proof
+/// the user saw it. Capture-down and other alerts share this path.
+pub fn deliver_user_visible(title: &str, body: &str) -> Result<(), String> {
+    let delivered = deliver_os(title, body);
+    if !notification_confirmed(std::env::consts::OS, delivered.is_ok()) {
+        show_unconfirmed_dialog(title, body);
+    }
+    delivered
+}
+
+fn show_unconfirmed_dialog(title: &str, body: &str) {
+    #[cfg(windows)]
+    {
+        let title = title.replace('\'', "''");
+        let body = body.replace('\'', "''");
+        let script = format!(
+            "Add-Type -AssemblyName PresentationFramework; \
+             [System.Windows.MessageBox]::Show('{body}','{title}') | Out-Null"
+        );
+        let _ = std::process::Command::new(powershell_program())
+            .args(["-NoProfile", "-Command", &script])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new(osascript_program())
+            .args(["-e", &osascript_dialog(title, body)])
+            .spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("zenity")
+            .args(zenity_dialog_args(title, body))
+            .spawn();
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = (title, body);
+    }
+}
+
+/// macOS `display notification` and a Windows toast both exit successfully when
+/// the banner is dropped. Neither command is proof the user saw the alert.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn notification_confirmed(platform: &str, command_ok: bool) -> bool {
+    !matches!(platform, "macos" | "windows") && command_ok
+}
+
+pub fn deliver_os(title: &str, body: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     use std::os::windows::process::CommandExt;
     #[cfg(target_os = "linux")]
-    let status = std::process::Command::new("notify-send")
+    let output = deliver_linux(title, body);
+    #[cfg(target_os = "windows")]
+    let output = std::process::Command::new(powershell_program())
+        .creation_flags(0x08000000)
+        .args(["-NoProfile", "-NonInteractive", "-Command", WINDOWS_NOTIFY])
+        .env("SPANREED_NOTIFICATION_TITLE", title)
+        .env("SPANREED_NOTIFICATION_BODY", body)
+        .stdin(std::process::Stdio::null())
+        .output();
+    #[cfg(target_os = "macos")]
+    let output = std::process::Command::new(osascript_program())
+        .args(["-e", &osascript_notification(title, body)])
+        .stdin(std::process::Stdio::null())
+        .output();
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (title, body);
+        return Err("Background notifications have not been qualified on this platform".into());
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    return match output {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            let detail = detail.trim();
+            if detail.is_empty() {
+                Err("Could not deliver the notification through the operating system".into())
+            } else {
+                Err(format!(
+                    "Could not deliver the notification through the operating system: {detail}"
+                ))
+            }
+        }
+        Err(error) => Err(format!(
+            "Could not deliver the notification through the operating system: {error}"
+        )),
+    };
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn osascript_program() -> &'static str {
+    "/usr/bin/osascript"
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn powershell_program() -> std::path::PathBuf {
+    let root = std::env::var_os("SystemRoot")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"));
+    root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe")
+}
+
+/// One AppleScript statement. Newlines would break the `-e` string.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn osascript_notification(title: &str, body: &str) -> String {
+    fn escape(value: &str) -> String {
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace(['\n', '\r'], " ")
+    }
+    format!(
+        "display notification \"{}\" with title \"{}\"",
+        escape(body),
+        escape(title)
+    )
+}
+
+/// Modal fallback when the Linux notification service is missing or rejects the alert.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn zenity_dialog_args(title: &str, body: &str) -> Vec<String> {
+    vec![
+        "--warning".into(),
+        "--no-wrap".into(),
+        "--title".into(),
+        title.into(),
+        "--text".into(),
+        body.into(),
+    ]
+}
+
+/// Modal fallback when Notification Center rejects the banner.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn osascript_dialog(title: &str, body: &str) -> String {
+    fn escape(value: &str) -> String {
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace(['\n', '\r'], " ")
+    }
+    format!(
+        "display dialog \"{}\" with title \"{}\" buttons {{\"OK\"}} default button \"OK\"",
+        escape(body),
+        escape(title)
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn deliver_linux(title: &str, body: &str) -> std::io::Result<std::process::Output> {
+    let sent = std::process::Command::new("notify-send")
         .args([
             "--app-name=Spanreed",
             "--icon=com.fabrials.spanreed",
@@ -135,38 +283,78 @@ fn system_notification(title: &str, body: &str) -> Result<(), String> {
             body,
         ])
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("powershell.exe")
-        .creation_flags(0x08000000)
-        .args(["-NoProfile", "-NonInteractive", "-Command", r#"
-$ErrorActionPreference = 'Stop'
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
-$document = New-Object Windows.Data.Xml.Dom.XmlDocument
-$document.LoadXml('<toast><visual><binding template="ToastGeneric"><text/><text/></binding></visual></toast>')
-$nodes = $document.GetElementsByTagName('text')
-$nodes.Item(0).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_TITLE)) > $null
-$nodes.Item(1).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_BODY)) > $null
-$toast = [Windows.UI.Notifications.ToastNotification]::new($document)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('com.fabrials.spanreed').Show($toast)
-"#])
-        .env("SPANREED_NOTIFICATION_TITLE", title).env("SPANREED_NOTIFICATION_BODY", body)
-        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null()).status();
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    return match status {
-        Ok(status) if status.success() => Ok(()),
-        _ => Err("Could not deliver the reset notification through the operating system".into()),
-    };
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        let _ = (title, body);
-        Err("Background notifications have not been qualified on this platform".into())
+        .output();
+    if sent.as_ref().is_ok_and(|output| output.status.success()) {
+        return sent;
+    }
+    let bus = std::process::Command::new("gdbus")
+        .args([
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.Notifications",
+            "--object-path",
+            "/org/freedesktop/Notifications",
+            "--method",
+            "org.freedesktop.Notifications.Notify",
+            "Spanreed",
+            "0",
+            "com.fabrials.spanreed",
+            title,
+            body,
+            "[]",
+            "{}",
+            "5000",
+        ])
+        .stdin(std::process::Stdio::null())
+        .output();
+    match &bus {
+        Ok(output) if output.status.success() => bus,
+        _ if sent.is_err() => bus,
+        _ => sent,
     }
 }
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const WINDOWS_NOTIFY: &str = r#"
+$ErrorActionPreference = 'Stop'
+function Show-SpanreedBalloon {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $notify = New-Object System.Windows.Forms.NotifyIcon
+  $notify.Icon = [System.Drawing.SystemIcons]::Information
+  $notify.Visible = $true
+  $notify.ShowBalloonTip(8000, $env:SPANREED_NOTIFICATION_TITLE, $env:SPANREED_NOTIFICATION_BODY, [System.Windows.Forms.ToolTipIcon]::Info)
+  $deadline = (Get-Date).AddSeconds(2)
+  while ((Get-Date) -lt $deadline) {
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 50
+  }
+  $notify.Dispose()
+}
+$toastShown = $false
+try {
+  [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+  [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+  $document = New-Object Windows.Data.Xml.Dom.XmlDocument
+  $document.LoadXml('<toast><visual><binding template="ToastGeneric"><text/><text/></binding></visual></toast>')
+  $nodes = $document.GetElementsByTagName('text')
+  $nodes.Item(0).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_TITLE)) > $null
+  $nodes.Item(1).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_BODY)) > $null
+  $toast = [Windows.UI.Notifications.ToastNotification]::new($document)
+  $script:toastFailed = $false
+  $toast.add_Failed({ $script:toastFailed = $true })
+  # PowerShell's own AppUserModelID is registered on Windows. An unregistered
+  # id such as com.fabrials.spanreed accepts Show and then drops the toast.
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)
+  Start-Sleep -Milliseconds 500
+  if (-not $script:toastFailed) { $toastShown = $true }
+} catch {}
+try {
+  Show-SpanreedBalloon
+} catch {}
+if ($script:toastFailed -or -not $toastShown) { throw "Spanreed notification was not shown" }
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -248,5 +436,183 @@ mod tests {
         observed.freshness = Freshness::Fresh;
         observed.observed_at_ms = None;
         assert_eq!(expiring(&observed, 1_000_000), None);
+    }
+
+    #[test]
+    fn windows_toast_uses_a_registered_app_id() {
+        assert!(WINDOWS_NOTIFY.contains(
+            r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+        ));
+        assert!(WINDOWS_NOTIFY.contains("Show-SpanreedBalloon"));
+        assert!(WINDOWS_NOTIFY.contains("Show($toast)"));
+        assert!(WINDOWS_NOTIFY.contains("add_Failed"));
+        assert!(WINDOWS_NOTIFY.contains("if (-not $script:toastFailed) { $toastShown = $true }"));
+        assert!(WINDOWS_NOTIFY.contains(
+            "if ($script:toastFailed -or -not $toastShown) { throw \"Spanreed notification was not shown\" }"
+        ));
+        assert!(WINDOWS_NOTIFY.contains("[System.Windows.Forms.Application]::DoEvents()"));
+        assert!(!WINDOWS_NOTIFY.contains("CreateToastNotifier('com.fabrials.spanreed')"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn capture_alert_reaches_a_linux_notification_service() {
+        use std::io::{BufRead, BufReader};
+        use std::sync::Mutex;
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let dir = std::env::temp_dir().join(format!("spanreed-notify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("received.txt");
+        let ready = dir.join("ready.txt");
+        let stderr_log = dir.join("service.err");
+        let script = dir.join("service.py");
+        std::fs::write(
+            &script,
+            r#"import sys
+from dbus.mainloop.glib import DBusGMainLoop
+DBusGMainLoop(set_as_default=True)
+import dbus
+import dbus.service
+from gi.repository import GLib
+class Notifications(dbus.service.Object):
+    @dbus.service.method("org.freedesktop.Notifications", in_signature="", out_signature="as")
+    def GetCapabilities(self):
+        return []
+    @dbus.service.method("org.freedesktop.Notifications", in_signature="", out_signature="ssss")
+    def GetServerInformation(self):
+        return ("Spanreed", "fabrials", "1", "1.2")
+    @dbus.service.method("org.freedesktop.Notifications", in_signature="susssasa{sv}i", out_signature="u")
+    def Notify(self, app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout):
+        with open(sys.argv[1], "w", encoding="utf-8") as handle:
+            handle.write(summary + "\n" + body)
+        GLib.idle_add(loop.quit)
+        return dbus.UInt32(1)
+loop = GLib.MainLoop()
+bus = dbus.SessionBus()
+name = dbus.service.BusName("org.freedesktop.Notifications", bus)
+Notifications(bus, "/org/freedesktop/Notifications")
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write("ready\n")
+loop.run()
+"#,
+        )
+        .unwrap();
+        let mut daemon = match std::process::Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(daemon) => daemon,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+            Err(error) => panic!("dbus-daemon: {error}"),
+        };
+        let mut address = String::new();
+        BufReader::new(daemon.stdout.take().expect("address"))
+            .read_line(&mut address)
+            .unwrap();
+        let address = address.trim().to_string();
+        let python = std::path::Path::new("/usr/bin/python3");
+        let python = if python.exists() {
+            python
+        } else {
+            std::path::Path::new("python3")
+        };
+        let stderr = std::fs::File::create(&stderr_log).unwrap();
+        let mut service = match std::process::Command::new(python)
+            .arg(&script)
+            .arg(&log)
+            .arg(&ready)
+            .env("DBUS_SESSION_BUS_ADDRESS", &address)
+            .stderr(stderr)
+            .spawn()
+        {
+            Ok(service) => service,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let _ = daemon.kill();
+                let _ = daemon.wait();
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+            Err(error) => panic!("notification service: {error}"),
+        };
+        for _ in 0..50 {
+            if ready.exists() || service.try_wait().ok().flatten().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let previous = std::env::var_os("DBUS_SESSION_BUS_ADDRESS");
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
+        let mut text = String::new();
+        for _ in 0..40 {
+            let _ = deliver_os("Capture proxy is DOWN", "Ensure capture before new hops.");
+            if let Ok(body) = std::fs::read_to_string(&log) {
+                text = body;
+                if text.contains("Capture proxy is DOWN") {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = service.kill();
+        let _ = service.wait();
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+        match previous {
+            Some(value) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", value),
+            None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
+        }
+        let service_err = std::fs::read_to_string(&stderr_log).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            text.contains("Capture proxy is DOWN"),
+            "notification service did not receive the alert: {text} service: {service_err}"
+        );
+        assert!(text.contains("Ensure capture before new hops."));
+    }
+
+    #[test]
+    fn macos_banner_does_not_count_as_delivered() {
+        assert!(!notification_confirmed("macos", true));
+        assert!(!notification_confirmed("macos", false));
+        assert!(notification_confirmed("linux", true));
+        assert!(!notification_confirmed("windows", true));
+        assert!(!notification_confirmed("windows", false));
+    }
+
+    #[test]
+    fn notification_programs_do_not_depend_on_path() {
+        assert_eq!(osascript_program(), "/usr/bin/osascript");
+        let powershell = powershell_program();
+        assert!(powershell.ends_with(r"System32\WindowsPowerShell\v1.0\powershell.exe"));
+    }
+
+    #[test]
+    fn macos_notification_script_stays_one_statement() {
+        let script = osascript_notification("Capture \"down\"", "Line one\nLine two");
+        assert!(!script.contains('\n'));
+        assert!(script.contains("display notification \"Line one Line two\""));
+        assert!(script.contains("with title \"Capture \\\"down\\\"\""));
+        let dialog = osascript_dialog("Capture \"down\"", "Line one\nLine two");
+        assert!(!dialog.contains('\n'));
+        assert!(dialog.starts_with("display dialog \"Line one Line two\""));
+        let zenity = zenity_dialog_args("Capture down", "Ensure capture");
+        assert_eq!(
+            zenity,
+            vec![
+                "--warning".to_string(),
+                "--no-wrap".to_string(),
+                "--title".to_string(),
+                "Capture down".to_string(),
+                "--text".to_string(),
+                "Ensure capture".to_string(),
+            ]
+        );
     }
 }

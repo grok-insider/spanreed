@@ -21,6 +21,8 @@ use crate::util;
 const ID: &str = "codex";
 const NAME: &str = "Codex";
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const RESET_CONSUME_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
 const REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const KEYCHAIN_SERVICE: &str = "Codex Auth";
@@ -110,6 +112,88 @@ pub(crate) fn local_identity() -> Option<String> {
                         .map(str::to_owned)
                 })
         })
+}
+
+/// Spend one banked Codex limit-reset credit. `redeem_request_id` is the
+/// idempotency key; retries must reuse it. Errors are static and never include
+/// tokens or credit identifiers.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn redeem_reset(redeem_request_id: &str) -> Result<(), &'static str> {
+    if !valid_redeem_request_id(redeem_request_id) {
+        return Err("invalid reset request");
+    }
+    let (mut auth, source, path) = load_auth().ok_or("No local Codex authorization found")?;
+    if refresh_if_needed(&mut auth, source, &path).is_err() {
+        return Err("Codex reset unavailable");
+    }
+    let access = auth["tokens"]["access_token"]
+        .as_str()
+        .filter(|token| !token.is_empty() && token.len() <= 16_384)
+        .ok_or("Incomplete Codex authorization")?;
+    let account = auth["tokens"]["account_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            util::jwt_payload(access).and_then(|claims| {
+                claims["https://api.openai.com/auth"]["chatgpt_account_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+            })
+        })
+        .ok_or("Codex account missing")?;
+    let body = format!(r#"{{"redeem_request_id":"{redeem_request_id}"}}"#);
+    let response = Request::post(RESET_CONSUME_URL)
+        .bearer(access)
+        .header("ChatGPT-Account-Id", &account)
+        .header("originator", "codex_cli_rs")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send_limited(1_048_576)
+        .map_err(|_| "Codex reset unavailable")?;
+    if !(200..300).contains(&response.status) {
+        return Err("Codex reset unavailable");
+    }
+    let value = response.json().ok_or("Codex did not redeem a reset")?;
+    interpret_consume(&value)
+}
+
+pub(crate) fn valid_redeem_request_id(value: &str) -> bool {
+    let mut parts = value.split('-');
+    for width in [8, 4, 4, 4, 12] {
+        let Some(part) = parts.next() else {
+            return false;
+        };
+        if part.len() != width || !part.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    parts.next().is_none()
+}
+
+pub(crate) fn interpret_consume(value: &serde_json::Value) -> Result<(), &'static str> {
+    match value.get("code").and_then(serde_json::Value::as_str) {
+        Some("reset" | "already_redeemed") => Ok(()),
+        Some("nothing_to_reset") => Err("No rate-limit window can be reset right now"),
+        Some("no_credit") => Err("No limit reset credit is available"),
+        _ => Err("Codex did not redeem a reset"),
+    }
+}
+
+/// Email shown on the tray card. Never returns a token.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn account_label() -> Option<String> {
+    let (document, _, _) = load_auth()?;
+    let proof = document["tokens"]["id_token"].as_str()?;
+    let claims = util::jwt_payload(proof)?;
+    claims
+        .get("email")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|email| !email.is_empty() && email.contains('@'))
+        .map(str::to_owned)
 }
 
 pub(crate) fn identity_proof() -> Result<String, String> {
@@ -570,6 +654,37 @@ mod tests {
         let new_start = weekly_epoch_start_ms(&forced, now).unwrap();
         assert!(new_start > old_start);
         assert_eq!(new_start, now * 1000);
+    }
+
+    #[test]
+    fn consume_results_use_the_status_code_and_drop_credit_identifiers() {
+        assert!(interpret_consume(
+            &serde_json::json!({"code":"reset","credit":{"id":"RateLimitResetCredit_secret"}})
+        )
+        .is_ok());
+        assert!(interpret_consume(&serde_json::json!({"code":"already_redeemed"})).is_ok());
+        assert_eq!(
+            interpret_consume(
+                &serde_json::json!({"code":"no_credit","credit":{"id":"RateLimitResetCredit_secret"}})
+            ),
+            Err("No limit reset credit is available")
+        );
+        assert_eq!(
+            interpret_consume(&serde_json::json!({"code":"nothing_to_reset"})),
+            Err("No rate-limit window can be reset right now")
+        );
+        let rejected = interpret_consume(
+            &serde_json::json!({"code":"other","credit":{"id":"RateLimitResetCredit_secret"}}),
+        )
+        .unwrap_err();
+        assert!(!rejected.contains("RateLimitResetCredit"));
+        assert!(valid_redeem_request_id(
+            "55cbe0c1-71ab-4c52-b855-80746f73ff52"
+        ));
+        assert!(!valid_redeem_request_id("not-a-request"));
+        assert!(!valid_redeem_request_id(
+            "55cbe0c1-71ab-4c52-b855-80746f73ff52-extra"
+        ));
     }
 
     #[test]
