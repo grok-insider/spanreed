@@ -67,6 +67,8 @@ struct TrayState {
     last_notify_quota: Option<Instant>,
     /// Background thread sets this; UI thread clears after repaint.
     dirty: bool,
+    /// Bumped when the card body changes. Status text does not bump it.
+    content_epoch: u64,
     /// Idempotency key for an in-progress Codex reset. Reused until success.
     reset_request_id: Option<String>,
     reset_in_flight: bool,
@@ -86,6 +88,7 @@ impl Default for TrayState {
             last_notify_proxy: None,
             last_notify_quota: None,
             dirty: true,
+            content_epoch: 0,
             reset_request_id: None,
             reset_in_flight: false,
         }
@@ -245,6 +248,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
 
     let menu_channel = MenuEvent::receiver();
     let click_channel = TrayIconEvent::receiver();
+    let mut loaded_epoch = 0_u64;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
@@ -302,6 +306,12 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             {
                 let html = usage_card(&state);
                 popover.toggle(rect, html);
+                if popover.visible() {
+                    loaded_epoch = state
+                        .lock()
+                        .map(|guard| guard.content_epoch)
+                        .unwrap_or(loaded_epoch);
+                }
             }
         }
 
@@ -510,7 +520,14 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 &item_unlink,
             );
             if popover.visible() {
-                popover.load(usage_card(&state));
+                let epoch = state
+                    .lock()
+                    .map(|guard| guard.content_epoch)
+                    .unwrap_or(loaded_epoch);
+                if epoch != loaded_epoch {
+                    popover.load(usage_card(&state));
+                    loaded_epoch = epoch;
+                }
             }
         }
         if popover.visible() {
@@ -668,6 +685,7 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
         &today,
     );
     g.dirty = true;
+    g.content_epoch = g.content_epoch.wrapping_add(1);
 
     let now = Instant::now();
     if prev_up && !capture_up {
