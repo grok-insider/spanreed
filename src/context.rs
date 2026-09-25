@@ -10,6 +10,24 @@ use crate::ports::{AfterProbe, Notifier, ProbePorts, SnapshotProvider};
 /// Probe cache lifetime for `snapshot(false)`.
 const SNAPSHOT_TTL: Duration = Duration::from_secs(120);
 
+/// Directories resolved once from the environment when the context is built.
+#[derive(Clone, Debug)]
+pub struct AppPaths {
+    pub config: std::path::PathBuf,
+    pub data: std::path::PathBuf,
+    pub cache: std::path::PathBuf,
+}
+
+impl AppPaths {
+    pub fn from_env() -> Self {
+        Self {
+            config: crate::app::config_dir(),
+            data: crate::app::data_dir(),
+            cache: crate::app::cache_dir(),
+        }
+    }
+}
+
 /// Process-level services. Cheap to clone; clones share state.
 #[derive(Clone)]
 pub struct AppContext {
@@ -17,6 +35,12 @@ pub struct AppContext {
 }
 
 struct Inner {
+    paths: AppPaths,
+    proxy: crate::desktop_runtime::ProxyControl,
+    reviews: crate::client_configuration::Reviews,
+    hosted_reviews: crate::hosted_client_configuration::HostedReviews,
+    logins: crate::account_login::Logins,
+    pricing: Arc<crate::pricing::Catalog>,
     cost: crate::cost::LocalCost,
     history_sync: crate::sync::HistorySync,
     notifier: Arc<dyn Notifier>,
@@ -31,14 +55,25 @@ impl Default for AppContext {
 
 impl AppContext {
     pub fn new() -> Self {
+        let pricing = Arc::new(crate::pricing::Catalog::load());
         Self {
             inner: Arc::new(Inner {
-                cost: crate::cost::LocalCost,
-                history_sync: crate::sync::HistorySync::default(),
+                cost: crate::cost::LocalCost::new(Arc::clone(&pricing)),
+                history_sync: crate::sync::HistorySync::new(Arc::clone(&pricing)),
+                paths: AppPaths::from_env(),
+                pricing,
+                logins: Default::default(),
+                proxy: Default::default(),
+                reviews: Default::default(),
+                hosted_reviews: Default::default(),
                 notifier: Arc::new(crate::notifications::ResetExpiryNotifier),
                 snapshot: fabrials_runtime::Snapshot::new(SNAPSHOT_TTL),
             }),
         }
+    }
+
+    pub fn paths(&self) -> &AppPaths {
+        &self.inner.paths
     }
 
     fn with_ports<T>(&self, run: impl FnOnce(ProbePorts<'_>) -> T) -> T {
@@ -78,6 +113,36 @@ impl AppContext {
             crate::history::record(&outputs);
             outputs
         })
+    }
+
+    /// Price and context-window tables; reload explicitly after the user or
+    /// a refresh changes them.
+    pub fn pricing(&self) -> &crate::pricing::Catalog {
+        &self.inner.pricing
+    }
+
+    /// Device authorization in progress (desktop account login).
+    pub fn logins(&self) -> &crate::account_login::Logins {
+        &self.inner.logins
+    }
+
+    /// The local proxy this process owns (desktop).
+    pub fn proxy(&self) -> &crate::desktop_runtime::ProxyControl {
+        &self.inner.proxy
+    }
+
+    /// Pending client configuration review (desktop).
+    pub fn reviews(&self) -> &crate::client_configuration::Reviews {
+        &self.inner.reviews
+    }
+
+    /// Pending hosted client configuration review (desktop).
+    pub fn hosted_reviews(&self) -> &crate::hosted_client_configuration::HostedReviews {
+        &self.inner.hosted_reviews
+    }
+
+    pub fn reload_pricing(&self) {
+        self.inner.pricing.reload();
     }
 
     pub fn notifier(&self) -> Arc<dyn Notifier> {

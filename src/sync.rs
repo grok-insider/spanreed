@@ -164,9 +164,18 @@ fn save_status(owner: &str, status: SyncStatus) {
 }
 /// `AfterProbe` hook: uploads fresh outputs when private history sync is on.
 /// At most one upload runs at a time per hook instance.
-#[derive(Default)]
 pub struct HistorySync {
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pricing: std::sync::Arc<crate::pricing::Catalog>,
+}
+
+impl HistorySync {
+    pub fn new(pricing: std::sync::Arc<crate::pricing::Catalog>) -> Self {
+        Self {
+            running: Default::default(),
+            pricing,
+        }
+    }
 }
 
 impl crate::ports::AfterProbe for HistorySync {
@@ -188,6 +197,7 @@ impl crate::ports::AfterProbe for HistorySync {
         let outputs = outputs.to_vec();
         let owner = cached_owner();
         let running = std::sync::Arc::clone(&self.running);
+        let pricing = self.pricing.table();
         std::thread::spawn(move || {
             struct Guard(std::sync::Arc<std::sync::atomic::AtomicBool>);
             impl Drop for Guard {
@@ -196,7 +206,7 @@ impl crate::ports::AfterProbe for HistorySync {
                 }
             }
             let _guard = Guard(running);
-            if let Err(error) = run_outputs(&outputs)
+            if let Err(error) = run_outputs(&outputs, &pricing)
                 && let Some(owner) = owner
             {
                 let mut status = status_for(&owner);
@@ -207,7 +217,7 @@ impl crate::ports::AfterProbe for HistorySync {
     }
 }
 
-pub fn cmd(args: &[String]) -> std::process::ExitCode {
+pub fn cmd(ctx: &crate::context::AppContext, args: &[String]) -> std::process::ExitCode {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
             "spanreed sync — synchronize selected private usage sources with Fabrials.\nSelect sources in Spanreed Settings and explicitly enable private history synchronization.\nNo provider credentials or request bodies are uploaded."
@@ -217,7 +227,7 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
     match if args.first().is_some_and(|arg| arg == "link-codex") {
         link_codex()
     } else {
-        run(true)
+        run(&ctx.pricing().table())
     } {
         Ok(message) => {
             println!("{message}");
@@ -229,8 +239,8 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
         }
     }
 }
-pub fn run(_verbose: bool) -> Result<String, String> {
-    run_outputs(&crate::api::fetch_cached().unwrap_or_default())
+pub fn run(pricing: &crate::pricing::PricingMap) -> Result<String, String> {
+    run_outputs(&crate::api::fetch_cached().unwrap_or_default(), pricing)
 }
 fn allowed(source: &str) -> Result<bool, String> {
     Ok(crate::privacy::load().sync_history
@@ -239,7 +249,10 @@ fn allowed(source: &str) -> Result<bool, String> {
             .iter()
             .any(|selected| selected == source))
 }
-fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, String> {
+fn run_outputs(
+    outputs: &[crate::model::ProviderOutput],
+    pricing: &crate::pricing::PricingMap,
+) -> Result<String, String> {
     if crate::app::env_offline() {
         return Err("Offline mode is enabled".into());
     }
@@ -377,6 +390,7 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
                     ..Default::default()
                 },
                 false,
+                pricing,
             )?;
             let days: Vec<_> = report
                 .daily
@@ -462,7 +476,7 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
             if !allowed(source)? {
                 continue;
             }
-            if let Some(summary) = crate::cost::estimate(kind) {
+            if let Some(summary) = crate::cost::estimate(kind, pricing) {
                 let snapshot = fabrials_types::private_sync::LocalUsageSnapshot {
                     device: device.clone(),
                     source: source.into(),

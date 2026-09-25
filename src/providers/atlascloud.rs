@@ -43,7 +43,7 @@ impl Provider for AtlasCloud {
         env_any(&["ATLASCLOUD_API_KEY"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["ATLASCLOUD_API_KEY"]) else {
             return ProviderOutput::error(
                 ID,

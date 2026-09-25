@@ -1,9 +1,10 @@
 //! Cost presentation backed by the shared local consumption store.
 
-use crate::pricing::{self, Usage};
+use crate::pricing::{Catalog, PricingMap, Usage};
 use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Rolling window: today plus the previous 30 days.
 const WINDOW_DAYS: i64 = 31;
@@ -32,12 +33,47 @@ impl Source {
     }
 }
 
-/// `CostSource` over the shared local consumption store.
-pub struct LocalCost;
+/// `CostSource` over the local consumption store and the capture ledger.
+pub struct LocalCost {
+    pricing: Arc<Catalog>,
+}
+
+impl LocalCost {
+    pub fn new(pricing: Arc<Catalog>) -> Self {
+        Self { pricing }
+    }
+
+    fn table(&self) -> Arc<PricingMap> {
+        self.pricing.refresh();
+        self.pricing.table()
+    }
+}
 
 impl crate::ports::CostSource for LocalCost {
-    fn local_cost_lines(&self, provider_id: &str) -> Vec<crate::model::MetricLine> {
-        Source::from_provider(provider_id).map_or_else(Vec::new, |source| cost_lines(source, None))
+    fn local_cost_lines(
+        &self,
+        provider_id: &str,
+        weekly_start_ms: Option<i64>,
+    ) -> Vec<crate::model::MetricLine> {
+        Source::from_provider(provider_id).map_or_else(Vec::new, |source| {
+            cost_lines(source, weekly_start_ms, &self.table())
+        })
+    }
+
+    fn local_totals_since(&self, provider_id: &str, cutoff_ms: i64) -> Option<(u64, f64)> {
+        let summary = estimate_since(
+            Source::from_provider(provider_id)?,
+            cutoff_ms,
+            &self.table(),
+        )?;
+        Some((summary.total_tokens, summary.total_cost))
+    }
+
+    fn capture_cost_lines(
+        &self,
+        query: crate::ports::CaptureCostQuery<'_>,
+    ) -> Vec<crate::model::MetricLine> {
+        crate::grok_ledger::cost_lines(query, &self.table())
     }
 }
 
@@ -83,10 +119,14 @@ struct Entry {
 /// set, only log entries with `ts >= weekly_start_ms` count toward
 /// "Since weekly reset" (force-resets move this forward).
 /// Returns an empty vec when there is no local usage data.
-pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::model::MetricLine> {
+pub fn cost_lines(
+    source: Source,
+    weekly_start_ms: Option<i64>,
+    pricing: &PricingMap,
+) -> Vec<crate::model::MetricLine> {
     use crate::model::{BarChartPoint, MetricKind, MetricLine};
 
-    let summary = match estimate(source) {
+    let summary = match estimate(source, pricing) {
         Some(s) if s.total_tokens > 0 => s,
         _ => return Vec::new(),
     };
@@ -107,7 +147,7 @@ pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::mo
     lines.push(MetricLine::text(MetricKind::Cost, "Last 30 Days", value));
 
     if let Some(start) = weekly_start_ms
-        && let Some(win) = estimate_since(source, start)
+        && let Some(win) = estimate_since(source, start, pricing)
         && let Some(l) =
             usage_stats::since_weekly_reset_line(win.total_tokens, win.total_cost, win.partial)
     {
@@ -136,22 +176,24 @@ pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::mo
 }
 
 /// Estimate the rolling window after importing changed local sources.
-pub fn estimate(source: Source) -> Option<CostSummary> {
-    compute_from(source, util::now_ms() - WINDOW_DAYS * DAY_MS)
+pub fn estimate(source: Source, pricing: &PricingMap) -> Option<CostSummary> {
+    compute_from(source, util::now_ms() - WINDOW_DAYS * DAY_MS, pricing)
 }
 
-pub fn estimate_since(source: Source, cutoff_ms: i64) -> Option<CostSummary> {
-    compute_from(source, cutoff_ms)
+pub fn estimate_since(source: Source, cutoff_ms: i64, pricing: &PricingMap) -> Option<CostSummary> {
+    compute_from(source, cutoff_ms, pricing)
 }
 
-fn compute_from(source: Source, cutoff: i64) -> Option<CostSummary> {
-    pricing::ensure_fresh();
+fn compute_from(source: Source, cutoff: i64, pricing: &PricingMap) -> Option<CostSummary> {
     let statuses = crate::usage::refresh(Some(source.id()), false).ok()?;
-    let records = crate::usage::records(&fabrials_types::consumption::UsageFilter {
-        client: Some(source.id().into()),
-        since_ms: Some(cutoff),
-        ..Default::default()
-    })
+    let records = crate::usage::records(
+        &fabrials_types::consumption::UsageFilter {
+            client: Some(source.id().into()),
+            since_ms: Some(cutoff),
+            ..Default::default()
+        },
+        pricing,
+    )
     .ok()?;
     let entries = records
         .into_iter()

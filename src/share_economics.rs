@@ -266,22 +266,25 @@ pub fn from_output(o: &ProviderOutput, by_model: Vec<ModelEconomics>) -> Option<
 }
 
 /// Model breakdown for Grok (ledger) or Codex/Claude (log cost).
-pub fn model_breakdown_for(provider_id: &str) -> Vec<ModelEconomics> {
+pub fn model_breakdown_for(
+    provider_id: &str,
+    pricing: &crate::pricing::PricingMap,
+) -> Vec<ModelEconomics> {
     match provider_id {
-        "grok" => grok_models(),
-        "codex" => log_cost_models(crate::cost::Source::Codex),
-        "claude" => log_cost_models(crate::cost::Source::Claude),
+        "grok" => grok_models(pricing),
+        "codex" => log_cost_models(crate::cost::Source::Codex, pricing),
+        "claude" => log_cost_models(crate::cost::Source::Claude, pricing),
         _ => Vec::new(),
     }
 }
 
-fn grok_models() -> Vec<ModelEconomics> {
+fn grok_models(pricing: &crate::pricing::PricingMap) -> Vec<ModelEconomics> {
     let now = crate::util::now_ms();
     let recs = crate::grok_ledger::read_window(now);
     let mut map: std::collections::HashMap<String, (u64, f64)> = std::collections::HashMap::new();
     for r in recs {
         let tok = r.tokens_for_total();
-        let cost = crate::pricing::hop_cost_usd(&r).unwrap_or(0.0);
+        let cost = crate::pricing::hop_cost_usd(&r, pricing).unwrap_or(0.0);
         let name = r
             .model
             .clone()
@@ -304,8 +307,11 @@ fn grok_models() -> Vec<ModelEconomics> {
     v
 }
 
-fn log_cost_models(source: crate::cost::Source) -> Vec<ModelEconomics> {
-    let Some(sum) = crate::cost::estimate(source) else {
+fn log_cost_models(
+    source: crate::cost::Source,
+    pricing: &crate::pricing::PricingMap,
+) -> Vec<ModelEconomics> {
+    let Some(sum) = crate::cost::estimate(source, pricing) else {
         return Vec::new();
     };
     sum.by_model

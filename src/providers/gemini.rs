@@ -108,7 +108,7 @@ impl Provider for Gemini {
         creds_path().is_file()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let token = match access_token() {
             Ok(token) => token,
             Err(err) => return ProviderOutput::error(ID, NAME, err),

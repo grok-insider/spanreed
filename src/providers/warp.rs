@@ -74,7 +74,7 @@ impl Provider for Warp {
         env_any(&["WARP_API_KEY", "WARP_TOKEN"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["WARP_API_KEY", "WARP_TOKEN"]) else {
             return ProviderOutput::error(ID, NAME, "No Warp API key found. Set WARP_API_KEY.");
         };

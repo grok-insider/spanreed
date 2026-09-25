@@ -64,7 +64,7 @@ impl Provider for ElevenLabs {
         env_any(&["ELEVENLABS_API_KEY", "XI_API_KEY"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["ELEVENLABS_API_KEY", "XI_API_KEY"]) else {
             return ProviderOutput::error(
                 ID,

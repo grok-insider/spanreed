@@ -23,6 +23,7 @@ pub fn token(provider: &str, alias: &str) -> Result<String, String> {
             alias,
         },
     )?;
+    // Pairs with the durable journal: must be one per process, whichever context refreshes.
     static QUEUE: std::sync::OnceLock<std::sync::Mutex<PendingQueue>> = std::sync::OnceLock::new();
     let mut queue = QUEUE
         .get_or_init(|| std::sync::Mutex::new(PendingQueue::new(64)))

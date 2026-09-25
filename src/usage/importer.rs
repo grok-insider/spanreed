@@ -10,6 +10,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Mutex;
 
+/// Imports write one shared store; file locks do not exclude threads of this process.
 static IMPORT: Mutex<()> = Mutex::new(());
 const VERSION: u32 = 1;
 const MAX_INPUT: u64 = 1024 * 1024 * 1024;

@@ -1,7 +1,6 @@
 //! Thin blocking HTTP client wrapper shared by providers.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::creds;
@@ -30,11 +29,11 @@ impl Response {
     }
 }
 
-/// Optional proxy resolved once from `~/.config/spanreed/config.json`:
+/// Optional proxy from `~/.config/spanreed/config.json`, read with each client
+/// (clients are per request, so edits apply without a restart):
 /// `{ "proxy": { "enabled": true, "url": "socks5://127.0.0.1:9050" } }`
-fn resolved_proxy() -> &'static Option<reqwest::Proxy> {
-    static PROXY: OnceLock<Option<reqwest::Proxy>> = OnceLock::new();
-    PROXY.get_or_init(|| {
+fn resolved_proxy() -> Option<reqwest::Proxy> {
+    {
         let path = crate::app::config_dir().join("config.json");
         let cfg = creds::read_json(&path)?;
         let proxy = cfg.get("proxy")?;
@@ -56,7 +55,7 @@ fn resolved_proxy() -> &'static Option<reqwest::Proxy> {
                 None
             }
         }
-    })
+    }
 }
 
 fn client_with(insecure: bool) -> reqwest::Result<reqwest::blocking::Client> {
@@ -67,7 +66,7 @@ fn client_with(insecure: bool) -> reqwest::Result<reqwest::blocking::Client> {
         // OS tag follows the build target (linux/macos/windows/...).
         .user_agent(crate::app::user_agent());
     if let Some(proxy) = resolved_proxy() {
-        builder = builder.proxy(proxy.clone());
+        builder = builder.proxy(proxy);
     }
     if insecure {
         builder = builder.danger_accept_invalid_certs(true);
@@ -183,7 +182,7 @@ impl Request {
             .redirect(reqwest::redirect::Policy::limited(10))
             .user_agent(crate::app::user_agent());
         if let Some(proxy) = resolved_proxy() {
-            builder = builder.proxy(proxy.clone());
+            builder = builder.proxy(proxy);
         }
         if self.insecure {
             builder = builder.danger_accept_invalid_certs(true);

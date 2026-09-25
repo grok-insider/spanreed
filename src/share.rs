@@ -66,7 +66,11 @@ pub struct ShareLine {
 /// Includes quota/plan/cost lines (and errors) plus structured **economics**
 /// (observed API $ and at 100% pool estimates). Multi-model mixes are valued in
 /// the CLI, not re-blended on the web.
-pub fn snapshot_from_outputs(outputs: &[ProviderOutput], version: &str) -> ShareSnapshot {
+pub fn snapshot_from_outputs(
+    outputs: &[ProviderOutput],
+    version: &str,
+    pricing: &crate::pricing::PricingMap,
+) -> ShareSnapshot {
     let mut providers = Vec::new();
     let mut any_econ = false;
     for o in outputs {
@@ -84,7 +88,7 @@ pub fn snapshot_from_outputs(outputs: &[ProviderOutput], version: &str) -> Share
         if lines.is_empty() {
             continue;
         }
-        let by_model = crate::share_economics::model_breakdown_for(&o.provider_id);
+        let by_model = crate::share_economics::model_breakdown_for(&o.provider_id, pricing);
         let economics = crate::share_economics::from_output(o, by_model);
         if economics.is_some() {
             any_econ = true;
@@ -277,7 +281,7 @@ pub fn share_once(ctx: &crate::context::AppContext, force: bool) -> Result<Strin
 
     let outputs = ctx.probe_detected();
     let version = env!("CARGO_PKG_VERSION");
-    let snap = snapshot_from_outputs(&outputs, version);
+    let snap = snapshot_from_outputs(&outputs, version, &ctx.pricing().table());
     if snap.providers.is_empty() {
         return Err("share: no shareable metrics from detected providers".into());
     }
@@ -353,7 +357,7 @@ mod tests {
                 },
             ],
         };
-        let snap = snapshot_from_outputs(&[out], "0.0.1");
+        let snap = snapshot_from_outputs(&[out], "0.0.1", &crate::pricing::table_from(None, None));
         // Cost text + weekly pool → schema v2 economics payload.
         assert_eq!(snap.schema_version, 2);
         assert_eq!(snap.source.app, "spanreed");
@@ -393,7 +397,7 @@ mod tests {
                 color: None,
             }],
         };
-        let snap = snapshot_from_outputs(&[out], "0.0.1");
+        let snap = snapshot_from_outputs(&[out], "0.0.1", &crate::pricing::table_from(None, None));
         assert_eq!(snap.providers[0].lines[0].kind, "count");
         assert_eq!(snap.providers[0].lines[0].used, Some(50.0));
         assert_eq!(snap.providers[0].lines[0].limit, Some(500.0));
@@ -439,7 +443,7 @@ mod tests {
                 color: None,
             }],
         };
-        let snap = snapshot_from_outputs(&[out], "0.0.1");
+        let snap = snapshot_from_outputs(&[out], "0.0.1", &crate::pricing::table_from(None, None));
         let keys = collect_keys(&serde_json::to_value(&snap).unwrap());
         for bad in [
             "token",

@@ -53,6 +53,7 @@ pub fn set_policy(provider: &str, on: bool, threshold: Option<f64>) -> Result<()
     if threshold.is_some_and(|value| !value.is_finite() || value <= 0.0 || value > 100.0) {
         return Err("Exhaustion threshold must be greater than 0 and at most 100".into());
     }
+    // config.json is one file per process; every writer thread shares this guard.
     static WRITE: Mutex<()> = Mutex::new(());
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut config = config()?;

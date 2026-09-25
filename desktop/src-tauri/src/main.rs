@@ -8,8 +8,9 @@ async fn forget_migration(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn begin_migration_authorization(id: String, source_id: String) -> Result<spanreed::account_login::LoginView, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::begin_authorization(&id, &source_id)).await.map_err(|_| "Authorization worker stopped".to_string())?
+async fn begin_migration_authorization(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String, source_id: String) -> Result<spanreed::account_login::LoginView, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::begin_authorization(ctx.logins(), &id, &source_id)).await.map_err(|_| "Authorization worker stopped".to_string())?
 }
 #[tauri::command]
 async fn migration_authorizations(id: String) -> Result<Vec<String>, String> {
@@ -17,13 +18,15 @@ async fn migration_authorizations(id: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-async fn preview_opencode_remove(provider:String,alias:String)->Result<spanreed::client_configuration::Preview,String>{
-    tauri::async_runtime::spawn_blocking(move || spanreed::client_configuration::preview_opencode_remove(&provider,&alias)).await.map_err(|_| "Configuration worker stopped".to_string())?
+async fn preview_opencode_remove(ctx: tauri::State<'_, spanreed::context::AppContext>, provider:String,alias:String)->Result<spanreed::client_configuration::Preview,String>{
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.reviews().preview_opencode_remove(ctx.proxy(),&provider,&alias)).await.map_err(|_| "Configuration worker stopped".to_string())?
 }
 
 #[tauri::command]
-async fn preview_opencode_update(provider: String, alias: String, model: String) -> Result<spanreed::client_configuration::Preview, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::client_configuration::preview_opencode_change(&provider,&alias,&model,true)).await.map_err(|_| "Configuration worker stopped".to_string())?
+async fn preview_opencode_update(ctx: tauri::State<'_, spanreed::context::AppContext>, provider: String, alias: String, model: String) -> Result<spanreed::client_configuration::Preview, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.reviews().preview_opencode_change(ctx.proxy(),&provider,&alias,&model,true)).await.map_err(|_| "Configuration worker stopped".to_string())?
 }
 
 #[tauri::command]
@@ -32,8 +35,9 @@ async fn saved_migrations() -> Result<Vec<spanreed::migration::session::SavedSes
 }
 
 #[tauri::command]
-async fn begin_inactive_device_login(provider: String, alias: String) -> Result<spanreed::account_login::LoginView, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::account_login::begin_inactive(&provider, alias)).await.map_err(|_| "Authorization worker stopped".to_string())?
+async fn begin_inactive_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, provider: String, alias: String) -> Result<spanreed::account_login::LoginView, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.logins().begin_inactive(&provider, alias)).await.map_err(|_| "Authorization worker stopped".to_string())?
 }
 
 #[tauri::command]
@@ -69,31 +73,37 @@ async fn migration_candidates() -> Result<Vec<spanreed::migration::MigrationCand
 }
 
 #[tauri::command]
-async fn preview_grok_configuration(alias: String, model: Option<String>) -> Result<spanreed::client_configuration::Preview, String> {
+async fn preview_grok_configuration(ctx: tauri::State<'_, spanreed::context::AppContext>, alias: String, model: Option<String>) -> Result<spanreed::client_configuration::Preview, String> {
     let model = model.filter(|value| !value.is_empty());
-    tauri::async_runtime::spawn_blocking(move || spanreed::client_configuration::preview_grok_with_model(&alias, model.as_deref())).await.map_err(|_| "Configuration worker stopped".to_string())?
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.reviews().preview_grok_with_model(ctx.proxy(), &alias, model.as_deref())).await.map_err(|_| "Configuration worker stopped".to_string())?
 }
 
 #[tauri::command]
-async fn preview_opencode_configuration(provider: String, alias: String, model: String) -> Result<spanreed::client_configuration::Preview, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::client_configuration::preview_opencode(&provider, &alias, &model)).await.map_err(|_| "Configuration worker stopped".to_string())?
+async fn preview_opencode_configuration(ctx: tauri::State<'_, spanreed::context::AppContext>, provider: String, alias: String, model: String) -> Result<spanreed::client_configuration::Preview, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.reviews().preview_opencode(ctx.proxy(), &provider, &alias, &model)).await.map_err(|_| "Configuration worker stopped".to_string())?
 }
 #[tauri::command]
-async fn apply_client_configuration(id: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::client_configuration::apply_configuration(&id)).await.map_err(|_| "Configuration worker stopped".to_string())?
+async fn apply_client_configuration(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<Option<String>, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.reviews().apply_configuration(ctx.proxy(), &id)).await.map_err(|_| "Configuration worker stopped".to_string())?
 }
 
 #[tauri::command]
-async fn local_proxy_status() -> Result<spanreed::desktop_runtime::Status, String> {
-    tauri::async_runtime::spawn_blocking(spanreed::desktop_runtime::status).await.map_err(|_| "Proxy control worker stopped".to_string())?
+async fn local_proxy_status(ctx: tauri::State<'_, spanreed::context::AppContext>) -> Result<spanreed::desktop_runtime::Status, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.proxy().status()).await.map_err(|_| "Proxy control worker stopped".to_string())?
 }
 #[tauri::command]
-async fn start_local_proxy(bind: String) -> Result<spanreed::desktop_runtime::Status, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::desktop_runtime::start(&bind)).await.map_err(|_| "Proxy control worker stopped".to_string())?
+async fn start_local_proxy(ctx: tauri::State<'_, spanreed::context::AppContext>, bind: String) -> Result<spanreed::desktop_runtime::Status, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.proxy().start(&bind)).await.map_err(|_| "Proxy control worker stopped".to_string())?
 }
 #[tauri::command]
-async fn stop_local_proxy() -> Result<spanreed::desktop_runtime::Status, String> {
-    tauri::async_runtime::spawn_blocking(spanreed::desktop_runtime::stop).await.map_err(|_| "Proxy control worker stopped".to_string())?
+async fn stop_local_proxy(ctx: tauri::State<'_, spanreed::context::AppContext>) -> Result<spanreed::desktop_runtime::Status, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.proxy().stop()).await.map_err(|_| "Proxy control worker stopped".to_string())?
 }
 
 #[tauri::command]
@@ -103,8 +113,9 @@ async fn models(account_id: String) -> Result<spanreed::desktop::ModelCatalog, S
 }
 
 #[tauri::command]
-async fn reauthorize_account(id: String) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::account_login::reauthorize(&id)
+async fn reauthorize_account(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<serde_json::Value, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.logins().reauthorize(&id)
         .and_then(|view| serde_json::to_value(view).map_err(|_| "Invalid authorization view".into())))
         .await.map_err(|_| "Authorization worker stopped".to_string())?
 }
@@ -143,20 +154,23 @@ async fn history() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn begin_device_login(provider: String, alias: String) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::account_login::begin(&provider, alias)
+async fn begin_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, provider: String, alias: String) -> Result<serde_json::Value, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.logins().begin(&provider, alias)
         .and_then(|view| serde_json::to_value(view).map_err(|_| "Invalid authorization view".into())))
         .await.map_err(|_| "Authorization worker stopped".to_string())?
 }
 #[tauri::command]
-async fn poll_device_login(id: String) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::account_login::poll(&id)
+async fn poll_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<serde_json::Value, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.logins().poll(&id)
         .and_then(|progress| serde_json::to_value(progress).map_err(|_| "Invalid authorization state".into())))
         .await.map_err(|_| "Authorization worker stopped".to_string())?
 }
 #[tauri::command]
-async fn cancel_device_login(id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::account_login::cancel(&id))
+async fn cancel_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<(), String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ctx.logins().cancel(&id))
         .await.map_err(|_| "Authorization worker stopped".to_string())?
 }
 
@@ -182,9 +196,10 @@ async fn connect_usage_source(connection:spanreed::usage::connections::Connectio
 }
 
 #[tauri::command]
-async fn usage_report(filter: fabrials_types::consumption::UsageFilter, force: bool) -> Result<serde_json::Value, String> {
+async fn usage_report(ctx: tauri::State<'_, spanreed::context::AppContext>, filter: fabrials_types::consumption::UsageFilter, force: bool) -> Result<serde_json::Value, String> {
+    let ctx = ctx.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        serde_json::to_value(spanreed::usage::report(filter,force)?).map_err(|e|e.to_string())
+        serde_json::to_value(spanreed::usage::report(filter,force,&ctx.pricing().table())?).map_err(|e|e.to_string())
     }).await.map_err(|_|"Usage worker stopped".to_string())?
 }
 
@@ -247,8 +262,9 @@ async fn link_codex_source()->Result<String,String> {
     tauri::async_runtime::spawn_blocking(spanreed::sync::link_codex).await.map_err(|_|"Identity matching interrupted".to_string())?
 }
 #[tauri::command]
-async fn sync_now() -> Result<String,String> {
-    tauri::async_runtime::spawn_blocking(|| spanreed::sync::run(true)).await.map_err(|_|"Sync worker stopped".to_string())?
+async fn sync_now(ctx: tauri::State<'_, spanreed::context::AppContext>) -> Result<String,String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || spanreed::sync::run(&ctx.pricing().table())).await.map_err(|_|"Sync worker stopped".to_string())?
 }
 #[tauri::command]
 async fn publication_status() -> Result<spanreed::sharing_control::PublicationStatus,String> {
@@ -270,12 +286,14 @@ fn remote_open_authorization(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn preview_hosted_client(owner:String,client:String,alias:String,key:String,model:String)->Result<spanreed::hosted_client_configuration::HostedClientReview,String> {
-    tauri::async_runtime::spawn_blocking(move||spanreed::hosted_client_configuration::preview(&owner,&client,&alias,&key,&model)).await.map_err(|_|"Configuration worker stopped".to_string())?
+async fn preview_hosted_client(ctx: tauri::State<'_, spanreed::context::AppContext>, owner:String,client:String,alias:String,key:String,model:String)->Result<spanreed::hosted_client_configuration::HostedClientReview,String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||ctx.hosted_reviews().preview(&owner,&client,&alias,&key,&model)).await.map_err(|_|"Configuration worker stopped".to_string())?
 }
 #[tauri::command]
-async fn apply_hosted_client(owner:String,id:String)->Result<String,String> {
-    tauri::async_runtime::spawn_blocking(move||spanreed::hosted_client_configuration::apply(&owner,&id)).await.map_err(|_|"Configuration worker stopped".to_string())?
+async fn apply_hosted_client(ctx: tauri::State<'_, spanreed::context::AppContext>, owner:String,id:String)->Result<String,String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move||ctx.hosted_reviews().apply(&owner,&id)).await.map_err(|_|"Configuration worker stopped".to_string())?
 }
 
 #[tauri::command]
@@ -338,8 +356,8 @@ fn open_hosted() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_device_login(id: String) -> Result<(), String> {
-    open_url(&spanreed::account_login::verification_url(&id)?)
+fn open_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<(), String> {
+    open_url(&ctx.logins().verification_url(&id)?)
 }
 
 #[tauri::command]

@@ -42,7 +42,7 @@ impl Provider for Wayfinder {
         env_any(&["WAYFINDER_GATEWAY_URL"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let raw =
             env_any(&["WAYFINDER_GATEWAY_URL"]).unwrap_or_else(|| "http://127.0.0.1:8088".into());
         let base = match json_api::allowed_loopback(&raw) {

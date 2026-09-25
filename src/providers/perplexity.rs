@@ -85,7 +85,7 @@ impl Provider for Perplexity {
         cookie_header().is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(cookie) = cookie_header() else {
             return ProviderOutput::error(
                 ID,

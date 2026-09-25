@@ -76,7 +76,7 @@ impl Provider for Antigravity {
         !proc::find_processes(&["language_server", "antigravity"]).is_empty()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let disc = match discover() {
             Some(d) => d,
             None => {

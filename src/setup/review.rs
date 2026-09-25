@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::{
     io::Read,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -45,9 +45,11 @@ struct Pending {
     expires: Instant,
     context: Option<(String, Option<String>, String)>,
 }
-fn pending() -> &'static Mutex<Option<Pending>> {
-    static PENDING: OnceLock<Mutex<Option<Pending>>> = OnceLock::new();
-    PENDING.get_or_init(|| Mutex::new(None))
+/// The one client configuration review awaiting confirmation. Owned by
+/// `AppContext`; previews require the proxy this process runs.
+#[derive(Default)]
+pub struct Reviews {
+    pending: Mutex<Option<Pending>>,
 }
 fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match std::fs::symlink_metadata(path) {
@@ -387,76 +389,130 @@ fn prepare_grok_change(
         context: None,
     })
 }
-pub fn preview_grok(alias: &str) -> Result<Preview, String> {
-    preview_grok_with_model(alias, None)
-}
-pub fn preview_grok_with_model(alias: &str, model: Option<&str>) -> Result<Preview, String> {
-    let status = crate::desktop_runtime::status()?;
-    if status.state != crate::desktop_runtime::ProxyState::Running {
-        return Err("Start the local proxy before configuring a client".into());
+impl Reviews {
+    pub fn preview_grok(
+        &self,
+        proxy: &crate::desktop_runtime::ProxyControl,
+        alias: &str,
+    ) -> Result<Preview, String> {
+        self.preview_grok_with_model(proxy, alias, None)
     }
-    let account =
-        crate::accounts::get(&format!("grok/{alias}")).ok_or("Account no longer exists")?;
-    let home = std::env::var_os("GROK_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| crate::creds::expand("~/.grok"));
-    let mut plan = prepare_grok_change(home.join("config.toml"), &status.bind, alias, model)?;
-    plan.context = Some((account.id, account.generation, status.bind));
-    let view = plan.view.clone();
-    *pending()
-        .lock()
-        .map_err(|_| "Configuration review unavailable")? = Some(plan);
-    Ok(view)
-}
-pub fn preview_opencode(provider: &str, alias: &str, model: &str) -> Result<Preview, String> {
-    preview_opencode_change(provider, alias, model, false)
-}
-pub fn preview_opencode_change(
-    provider: &str,
-    alias: &str,
-    model: &str,
-    update: bool,
-) -> Result<Preview, String> {
-    preview_operation(
-        provider,
-        alias,
-        model,
-        if update {
-            Operation::Update
+    pub fn preview_grok_with_model(
+        &self,
+        proxy: &crate::desktop_runtime::ProxyControl,
+        alias: &str,
+        model: Option<&str>,
+    ) -> Result<Preview, String> {
+        let status = proxy.status()?;
+        if status.state != crate::desktop_runtime::ProxyState::Running {
+            return Err("Start the local proxy before configuring a client".into());
+        }
+        let account =
+            crate::accounts::get(&format!("grok/{alias}")).ok_or("Account no longer exists")?;
+        let home = std::env::var_os("GROK_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| crate::creds::expand("~/.grok"));
+        let mut plan = prepare_grok_change(home.join("config.toml"), &status.bind, alias, model)?;
+        plan.context = Some((account.id, account.generation, status.bind));
+        let view = plan.view.clone();
+        *self
+            .pending
+            .lock()
+            .map_err(|_| "Configuration review unavailable")? = Some(plan);
+        Ok(view)
+    }
+    pub fn preview_opencode(
+        &self,
+        proxy: &crate::desktop_runtime::ProxyControl,
+        provider: &str,
+        alias: &str,
+        model: &str,
+    ) -> Result<Preview, String> {
+        self.preview_opencode_change(proxy, provider, alias, model, false)
+    }
+    pub fn preview_opencode_change(
+        &self,
+        proxy: &crate::desktop_runtime::ProxyControl,
+        provider: &str,
+        alias: &str,
+        model: &str,
+        update: bool,
+    ) -> Result<Preview, String> {
+        self.preview_operation(
+            proxy,
+            provider,
+            alias,
+            model,
+            if update {
+                Operation::Update
+            } else {
+                Operation::Create
+            },
+        )
+    }
+    pub fn preview_opencode_remove(
+        &self,
+        proxy: &crate::desktop_runtime::ProxyControl,
+        provider: &str,
+        alias: &str,
+    ) -> Result<Preview, String> {
+        self.preview_operation(proxy, provider, alias, "", Operation::Remove)
+    }
+    fn preview_operation(
+        &self,
+        proxy: &crate::desktop_runtime::ProxyControl,
+        provider: &str,
+        alias: &str,
+        model: &str,
+        operation: Operation,
+    ) -> Result<Preview, String> {
+        let status = proxy.status()?;
+        if status.state != crate::desktop_runtime::ProxyState::Running {
+            return Err("Start the local proxy before configuring a client".into());
+        }
+        let account = crate::accounts::get(&format!("{provider}/{alias}"))
+            .ok_or("Account no longer exists")?;
+        let hit = super::detect::scan().opencode;
+        let path = super::detect::opencode_config_write_path(&hit);
+        let mut plan = if operation == Operation::Create {
+            prepare(path, &status.bind, provider, alias, model)?
         } else {
-            Operation::Create
-        },
-    )
-}
-pub fn preview_opencode_remove(provider: &str, alias: &str) -> Result<Preview, String> {
-    preview_operation(provider, alias, "", Operation::Remove)
-}
-fn preview_operation(
-    provider: &str,
-    alias: &str,
-    model: &str,
-    operation: Operation,
-) -> Result<Preview, String> {
-    let status = crate::desktop_runtime::status()?;
-    if status.state != crate::desktop_runtime::ProxyState::Running {
-        return Err("Start the local proxy before configuring a client".into());
+            prepare_change(path, &status.bind, provider, alias, model, operation)?
+        };
+        plan.context = Some((account.id, account.generation, status.bind));
+        let view = plan.view.clone();
+        *self
+            .pending
+            .lock()
+            .map_err(|_| "Configuration review unavailable")? = Some(plan);
+        Ok(view)
     }
-    let account =
-        crate::accounts::get(&format!("{provider}/{alias}")).ok_or("Account no longer exists")?;
-    let hit = super::detect::scan().opencode;
-    let path = super::detect::opencode_config_write_path(&hit);
-    let mut plan = if operation == Operation::Create {
-        prepare(path, &status.bind, provider, alias, model)?
-    } else {
-        prepare_change(path, &status.bind, provider, alias, model, operation)?
-    };
-    plan.context = Some((account.id, account.generation, status.bind));
-    let view = plan.view.clone();
-    *pending()
-        .lock()
-        .map_err(|_| "Configuration review unavailable")? = Some(plan);
-    Ok(view)
+    pub fn apply_configuration(
+        &self,
+        proxy: &crate::desktop_runtime::ProxyControl,
+        id: &str,
+    ) -> Result<Option<String>, String> {
+        let mut slot = self
+            .pending
+            .lock()
+            .map_err(|_| "Configuration review unavailable")?;
+        if slot.as_ref().is_none_or(|plan| plan.view.id != id) {
+            return Err("Review unavailable; preview the changes again".into());
+        }
+        let plan = slot.take().ok_or("Review unavailable")?;
+        let (account_id, generation, bind) =
+            plan.context.as_ref().ok_or("Review context unavailable")?;
+        let account = crate::accounts::get(account_id).ok_or("Account removed; preview again")?;
+        let status = proxy.status()?;
+        if account.generation != *generation
+            || status.state != crate::desktop_runtime::ProxyState::Running
+            || status.bind != *bind
+        {
+            return Err("Account or proxy changed; preview the changes again".into());
+        }
+        apply(plan, &super::paths::backup_dir())
+    }
 }
 fn apply(plan: Pending, backup_dir: &Path) -> Result<Option<String>, String> {
     if plan.view.client == ConfigurationClient::Opencode {
@@ -508,27 +564,6 @@ fn apply(plan: Pending, backup_dir: &Path) -> Result<Option<String>, String> {
         .map_err(|_| "Cannot save client configuration")?;
     Ok(backup)
 }
-pub fn apply_configuration(id: &str) -> Result<Option<String>, String> {
-    let mut slot = pending()
-        .lock()
-        .map_err(|_| "Configuration review unavailable")?;
-    if slot.as_ref().is_none_or(|plan| plan.view.id != id) {
-        return Err("Review unavailable; preview the changes again".into());
-    }
-    let plan = slot.take().ok_or("Review unavailable")?;
-    let (account_id, generation, bind) =
-        plan.context.as_ref().ok_or("Review context unavailable")?;
-    let account = crate::accounts::get(account_id).ok_or("Account removed; preview again")?;
-    let status = crate::desktop_runtime::status()?;
-    if account.generation != *generation
-        || status.state != crate::desktop_runtime::ProxyState::Running
-        || status.bind != *bind
-    {
-        return Err("Account or proxy changed; preview the changes again".into());
-    }
-    apply(plan, &super::paths::backup_dir())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

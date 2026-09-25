@@ -80,7 +80,7 @@ pub trait Provider: Send + Sync {
 
     /// Fetch current usage. Implementations should return an error *line*
     /// (via `ProviderOutput::error`) rather than panicking.
-    fn probe(&self) -> ProviderOutput;
+    fn probe(&self, ports: crate::ports::ProbePorts<'_>) -> ProviderOutput;
 }
 
 fn noted(id: &'static str) -> Box<dyn Provider> {

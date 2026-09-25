@@ -461,7 +461,7 @@ impl Provider for Codex {
             || creds::config_home().join("codex").join("sessions").is_dir()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let _move_lock = match crate::codex_session_move::probe_lock() {
             Ok(lock) => lock,
             Err(error) => return ProviderOutput::error(ID, NAME, error),
@@ -537,7 +537,9 @@ impl Provider for Codex {
         let now_sec = util::now_ms() / 1000;
         let weekly_start = weekly_epoch_start_ms(&data, now_sec);
         // Local cost estimate; Models/Cache breakdowns are noisy for Codex and hidden.
-        let mut cost: Vec<_> = crate::cost::cost_lines(crate::cost::Source::Codex, weekly_start)
+        let mut cost: Vec<_> = ports
+            .cost
+            .local_cost_lines(ID, weekly_start)
             .into_iter()
             .filter(|l| {
                 !matches!(
@@ -562,9 +564,7 @@ impl Provider for Codex {
             });
             // Tokens/cost so far this week from cost engine since epoch.
             let (tok, c) = if let Some(start) = weekly_start {
-                crate::cost::estimate_since(crate::cost::Source::Codex, start)
-                    .map(|s| (s.total_tokens, s.total_cost))
-                    .unwrap_or((0, 0.0))
+                ports.cost.local_totals_since(ID, start).unwrap_or((0, 0.0))
             } else {
                 (0, 0.0)
             };

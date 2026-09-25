@@ -122,17 +122,17 @@ pub fn relabel_generic() -> Result<String, String> {
     Ok(out)
 }
 
-pub fn probe_accounts() -> Vec<ProviderOutput> {
+pub fn probe_accounts(ports: crate::ports::ProbePorts<'_>) -> Vec<ProviderOutput> {
     let list = accounts::list_provider("grok");
     if list.is_empty() {
         return Vec::new();
     }
     list.into_iter()
-        .map(|acc| probe_one(&acc.alias, acc.active))
+        .map(|acc| probe_one(ports, &acc.alias, acc.active))
         .collect()
 }
 
-fn probe_one(alias: &str, active: bool) -> ProviderOutput {
+fn probe_one(ports: crate::ports::ProbePorts<'_>, alias: &str, active: bool) -> ProviderOutput {
     let id = format!("grok/{alias}");
     let name = if active {
         format!("Grok ({alias})*")
@@ -175,12 +175,16 @@ fn probe_one(alias: &str, active: bool) -> ProviderOutput {
         }
         _ => None,
     });
-    lines.extend(crate::grok_ledger::cost_lines_for_account(
-        &id,
-        None,
-        weekly_pct,
-        week_end_ms,
-    ));
+    lines.extend(
+        ports
+            .cost
+            .capture_cost_lines(crate::ports::CaptureCostQuery {
+                account_id: Some(&id),
+                weekly_start_ms: None,
+                weekly_pct,
+                week_end_ms,
+            }),
+    );
     let plan = fetch_plan(&token);
     let slug = plan.as_deref().map(|d| classify_plan(d).0.to_string());
     let used = weekly_pct;

@@ -111,7 +111,7 @@ impl Provider for Kimi {
         cred_path().exists()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let mut auth = match creds::read_json(&cred_path()) {
             Some(a) => a,
             None => return ProviderOutput::error(ID, NAME, "Not logged in. Run `kimi login`."),

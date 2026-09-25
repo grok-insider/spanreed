@@ -75,7 +75,7 @@ impl Provider for OpenAI {
         api_key().is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = api_key() else {
             return ProviderOutput::error(
                 ID,

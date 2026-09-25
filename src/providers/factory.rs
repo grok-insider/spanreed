@@ -120,7 +120,7 @@ impl Provider for Factory {
         auth_path().exists()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let mut auth = match creds::read_json(&auth_path()) {
             Some(a) => a,
             None => {

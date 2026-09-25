@@ -504,6 +504,7 @@ fn oauth_item(
 }
 
 pub fn begin_authorization(
+    logins: &crate::account_login::Logins,
     id: &str,
     source_id: &str,
 ) -> Result<crate::account_login::LoginView, String> {
@@ -517,7 +518,7 @@ pub fn begin_authorization(
         }
         oauth_item(&record, source_id)?
     };
-    crate::account_login::begin_reviewed(
+    logins.begin_reviewed(
         &item.provider,
         item.target_alias.clone(),
         false,

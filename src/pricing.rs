@@ -14,7 +14,7 @@
 //! invents a cache rate the source omitted.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
 pub use fabrials_metrics::pricing::{PricingMap, Usage};
@@ -33,24 +33,73 @@ const REMOTE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// After a failed refresh, wait this long before trying again.
 const REMOTE_RETRY: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// The process-wide price table: the shared embedded snapshot and overlays,
-/// the cached remote refresh, then the user's override.
-pub fn table() -> &'static PricingMap {
-    static TABLE: OnceLock<PricingMap> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let remote = creds::read_file(&remote_cache_path());
-        let user = creds::read_file(&crate::app::config_dir().join("pricing.json"));
-        table_from(remote.as_deref(), user.as_deref())
-    })
+/// Price and context-window tables loaded from disk. Owned by `AppContext`;
+/// the tables change only through [`Catalog::reload`] or [`Catalog::refresh`].
+pub struct Catalog {
+    table: RwLock<Arc<PricingMap>>,
+    limits: RwLock<Arc<LimitsMap>>,
+}
+
+impl Catalog {
+    /// The shared embedded snapshot and overlays, the cached remote refresh,
+    /// then the user's overrides.
+    pub fn load() -> Self {
+        Self {
+            table: RwLock::new(Arc::new(load_table())),
+            limits: RwLock::new(Arc::new(load_limits())),
+        }
+    }
+
+    /// A fixed table (tests, offline composition).
+    pub fn with_table(table: PricingMap) -> Self {
+        Self {
+            table: RwLock::new(Arc::new(table)),
+            limits: RwLock::new(Arc::new(build_limits("", None, None))),
+        }
+    }
+
+    pub fn table(&self) -> Arc<PricingMap> {
+        Arc::clone(&self.table.read().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub fn limits(&self) -> Arc<LimitsMap> {
+        Arc::clone(&self.limits.read().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Re-read the cached and user tables from disk.
+    pub fn reload(&self) {
+        *self.table.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(load_table());
+        *self.limits.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(load_limits());
+    }
+
+    /// Refresh the remote cache when stale ([`ensure_fresh`]) and reload the
+    /// tables when it changed.
+    pub fn refresh(&self) {
+        if ensure_fresh() {
+            self.reload();
+        }
+    }
+}
+
+fn load_table() -> PricingMap {
+    let remote = creds::read_file(&remote_cache_path());
+    let user = creds::read_file(&crate::app::config_dir().join("pricing.json"));
+    table_from(remote.as_deref(), user.as_deref())
+}
+
+fn load_limits() -> LimitsMap {
+    let cached = creds::read_file(&limits_cache_path());
+    let user = creds::read_file(&crate::app::config_dir().join("limits.json"));
+    build_limits("", cached.as_deref(), user.as_deref())
 }
 
 pub fn table_from(remote: Option<&str>, user: Option<&str>) -> PricingMap {
     fabrials_metrics::pricing::build_table(fabrials_metrics::pricing::embedded_json(), remote, user)
 }
 
-/// List-price USD for a captured hop, priced with [`table`].
-pub fn hop_cost_usd(record: &fabrials_types::HopRecord) -> Option<f64> {
-    fabrials_metrics::cost::list_cost_usd_with(record, table())
+/// List-price USD for a captured hop.
+pub fn hop_cost_usd(record: &fabrials_types::HopRecord, table: &PricingMap) -> Option<f64> {
+    fabrials_metrics::cost::list_cost_usd_with(record, table)
 }
 
 fn remote_cache_path() -> PathBuf {
@@ -98,42 +147,35 @@ fn younger_than(path: &std::path::Path, ttl: Duration) -> bool {
         .is_some_and(|age| age < ttl)
 }
 
-/// Context windows from the cached models.dev refresh, then the user's
-/// `~/.config/spanreed/limits.json`. Empty until the first successful refresh.
-pub fn limits() -> &'static LimitsMap {
-    static LIMITS: OnceLock<LimitsMap> = OnceLock::new();
-    LIMITS.get_or_init(|| {
-        let cached = creds::read_file(&limits_cache_path());
-        let user = creds::read_file(&crate::app::config_dir().join("limits.json"));
-        build_limits("", cached.as_deref(), user.as_deref())
-    })
-}
-
 /// Refresh the cached price and limits tables when either is missing or older
 /// than the TTL. Failures are silent (logged at debug): the embedded snapshot
 /// and any stale cache keep working offline, and a stamp file backs off retries
 /// so an offline machine doesn't pay a connect timeout on every probe.
-/// No-op when `SPANREED_OFFLINE` is set.
-pub fn ensure_fresh() {
+/// No-op when `SPANREED_OFFLINE` is set. Returns whether new tables were written.
+pub fn ensure_fresh() -> bool {
     if crate::app::env_offline() {
-        return;
+        return false;
     }
     let prices = remote_cache_path();
     let limits = limits_cache_path();
     let stamp = prices.with_extension("attempt");
     let fresh = younger_than(&prices, REMOTE_TTL) && younger_than(&limits, REMOTE_TTL);
     if fresh || younger_than(&stamp, REMOTE_RETRY) {
-        return;
+        return false;
     }
     match fetch_upstream() {
         Ok(tables) => {
-            if write_atomic(&prices, &tables.prices) && write_atomic(&limits, &tables.limits) {
+            let written =
+                write_atomic(&prices, &tables.prices) && write_atomic(&limits, &tables.limits);
+            if written {
                 let _ = std::fs::remove_file(&stamp);
             }
+            written
         }
         Err(e) => {
             log::debug!("pricing refresh skipped: {e}");
             let _ = std::fs::write(&stamp, b"");
+            false
         }
     }
 }

@@ -412,7 +412,7 @@ impl Provider for Copilot {
         stored_token().is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let token = match stored_token() {
             Some(t) => t,
             None => {

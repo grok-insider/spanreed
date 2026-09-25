@@ -220,12 +220,13 @@ pub fn present(
     capture_up: bool,
     status: Option<&str>,
     now_ms: i64,
+    pricing: &crate::pricing::PricingMap,
 ) -> String {
     let cards = outputs
         .iter()
         .map(|output| {
             let account = account_label(output);
-            let cost = local_cost(output);
+            let cost = local_cost(output, pricing);
             build(CardSources {
                 output,
                 account: account.as_deref(),
@@ -245,12 +246,12 @@ fn account_label(output: &ProviderOutput) -> Option<String> {
     }
 }
 
-fn local_cost(output: &ProviderOutput) -> Option<CostSummary> {
-    match output.provider_id.split('/').next().unwrap_or("") {
-        "codex" => crate::cost::estimate(crate::cost::Source::Codex),
-        "claude" => crate::cost::estimate(crate::cost::Source::Claude),
-        _ => None,
-    }
+fn local_cost(
+    output: &ProviderOutput,
+    pricing: &crate::pricing::PricingMap,
+) -> Option<CostSummary> {
+    let source = crate::cost::Source::from_provider(output.provider_id.split('/').next()?)?;
+    crate::cost::estimate(source, pricing)
 }
 
 pub fn render(cards: &[TrayCard], capture_up: bool, status: Option<&str>) -> String {
@@ -1272,6 +1273,10 @@ mod tests {
     use crate::usage_stats::ModelCost;
     use fabrials_types::{Availability, Observation, ResetCredit};
 
+    fn table() -> crate::pricing::PricingMap {
+        crate::pricing::table_from(None, None)
+    }
+
     fn output() -> ProviderOutput {
         ProviderOutput::new(
             "codex",
@@ -1391,12 +1396,12 @@ mod tests {
 
     #[test]
     fn status_line_is_only_present_while_set() {
-        let shown = present(&[], true, Some("Reset used"), 0);
+        let shown = present(&[], true, Some("Reset used"), 0, &table());
         assert!(shown.contains("data-act=\"dashboard\""));
         assert!(shown.contains("data-act=\"settings\""));
         assert!(!shown.contains("Reset used"));
         assert!(!shown.contains("class=\"status\""));
-        let cleared = present(&[], true, None, 0);
+        let cleared = present(&[], true, None, 0, &table());
         assert!(!cleared.contains("Reset used"));
         assert!(!cleared.contains("class=\"status\""));
     }
@@ -1550,7 +1555,13 @@ mod tests {
 
     #[test]
     fn present_includes_the_provider_without_local_logs() {
-        let html = present(&[output()], true, Some("Ready"), 1_700_000_000_000);
+        let html = present(
+            &[output()],
+            true,
+            Some("Ready"),
+            1_700_000_000_000,
+            &table(),
+        );
         assert!(html.contains("Codex"));
         assert!(!html.contains("Ready"));
         assert!(!html.contains("class=\"status\""));

@@ -71,7 +71,7 @@ impl Provider for Kiro {
         state_db().exists() || auth_token_file().exists()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let usage_state = match read_usage_state() {
             Some(s) => s,
             None => {

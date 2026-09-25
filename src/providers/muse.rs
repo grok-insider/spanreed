@@ -66,7 +66,7 @@ impl Provider for Muse {
         access_token().is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(token) = access_token() else {
             return ProviderOutput::error(
                 ID,

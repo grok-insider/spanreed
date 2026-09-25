@@ -455,7 +455,7 @@ impl Provider for Grok {
         crate::accounts::list_provider("grok").is_empty() && auth_path().exists()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let mut auth = match load_auth() {
             Ok(a) => a,
             Err(msg) => return ProviderOutput::error(ID, NAME, msg),
@@ -505,11 +505,16 @@ impl Provider for Grok {
             }
             _ => None,
         });
-        lines.extend(crate::grok_ledger::cost_lines_with_forecast(
-            weekly_start_ms,
-            weekly_pct,
-            week_end_ms,
-        ));
+        lines.extend(
+            ports
+                .cost
+                .capture_cost_lines(crate::ports::CaptureCostQuery {
+                    account_id: None,
+                    weekly_start_ms,
+                    weekly_pct,
+                    week_end_ms,
+                }),
+        );
 
         let plan = fetch_plan(&auth.token);
         let reset_inventory = crate::resets::grok(&auth.token);

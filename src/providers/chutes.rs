@@ -86,7 +86,7 @@ impl Provider for Chutes {
         env_any(&["CHUTES_API_KEY"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["CHUTES_API_KEY"]) else {
             return ProviderOutput::error(ID, NAME, "No Chutes API key found. Set CHUTES_API_KEY.");
         };

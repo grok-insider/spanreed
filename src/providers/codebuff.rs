@@ -80,7 +80,7 @@ impl Provider for Codebuff {
         token().is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(token) = token() else {
             return ProviderOutput::error(
                 ID,

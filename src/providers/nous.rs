@@ -11,7 +11,7 @@ impl Provider for Nous {
     fn detect(&self) -> bool {
         !crate::accounts::list_provider("nous").is_empty()
     }
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(account) = crate::accounts::active("nous") else {
             return ProviderOutput::error(
                 "nous",

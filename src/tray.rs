@@ -794,6 +794,7 @@ fn usage_card(state: &Arc<Mutex<TrayState>>) -> String {
         guard.capture_up,
         guard.status_note.as_deref(),
         crate::util::now_ms(),
+        &guard.ctx.pricing().table(),
     )
 }
 

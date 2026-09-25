@@ -93,7 +93,7 @@ impl Provider for OpenCodeGo {
         load_rows().map(|r| !r.is_empty()).unwrap_or(false)
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let rows = match load_rows() {
             Some(r) => r,
             None => {

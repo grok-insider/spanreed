@@ -69,41 +69,28 @@ pub fn recent_hops() -> Result<Vec<HopRecord>, String> {
     store()?.recent("local", 200)
 }
 
-/// Aggregate ledger into Last-30-Days lines. Returns empty when no capture data.
+/// Aggregate ledger into Last-30-Days lines (and week/month forecasts when
+/// `weekly_pct` is known). A single hint line when there is no capture data.
 ///
 /// When `weekly_start_ms` is set (Grok `currentPeriod.start`), also emit
 /// "Since weekly reset" from records at/after that epoch start.
-/// Without pool-% forecast (e.g. tests / callers that only need ledger lines).
-#[allow(dead_code)]
-pub fn cost_lines(weekly_start_ms: Option<i64>) -> Vec<MetricLine> {
-    cost_lines_with_forecast(weekly_start_ms, None, None)
-}
-
-/// Like [`cost_lines`], plus week/month forecasts when `weekly_pct` is known.
-pub fn cost_lines_with_forecast(
-    weekly_start_ms: Option<i64>,
-    weekly_pct: Option<f64>,
-    week_end_ms: Option<i64>,
+pub fn cost_lines(
+    query: crate::ports::CaptureCostQuery<'_>,
+    pricing: &PricingMap,
 ) -> Vec<MetricLine> {
-    cost_lines_filtered(None, weekly_start_ms, weekly_pct, week_end_ms)
-}
-
-/// Last-30-Days / forecast for one host account (`grok/heavy`).
-pub fn cost_lines_for_account(
-    account_id: &str,
-    weekly_start_ms: Option<i64>,
-    weekly_pct: Option<f64>,
-    week_end_ms: Option<i64>,
-) -> Vec<MetricLine> {
-    cost_lines_filtered(Some(account_id), weekly_start_ms, weekly_pct, week_end_ms)
+    cost_lines_filtered(query, pricing)
 }
 
 fn cost_lines_filtered(
-    account_id: Option<&str>,
-    weekly_start_ms: Option<i64>,
-    weekly_pct: Option<f64>,
-    week_end_ms: Option<i64>,
+    query: crate::ports::CaptureCostQuery<'_>,
+    pricing: &PricingMap,
 ) -> Vec<MetricLine> {
+    let crate::ports::CaptureCostQuery {
+        account_id,
+        weekly_start_ms,
+        weekly_pct,
+        week_end_ms,
+    } = query;
     let now = util::now_ms();
     let recs: Vec<_> = read_window(now)
         .into_iter()
@@ -116,13 +103,7 @@ fn cost_lines_filtered(
         let hint = empty_capture_hint();
         return vec![MetricLine::text(MetricKind::Cost, "Last 30 Days", hint)];
     }
-    lines_from_records(
-        &recs,
-        crate::pricing::table(),
-        weekly_start_ms,
-        weekly_pct,
-        week_end_ms,
-    )
+    lines_from_records(&recs, pricing, weekly_start_ms, weekly_pct, week_end_ms)
 }
 
 fn empty_capture_hint() -> String {
@@ -403,7 +384,7 @@ data: [DONE]
         // When ledger missing, cost_lines still returns enable message.
         // Use a path that won't exist by temporarily relying on real ledger;
         // if user has capture data this still returns non-empty. Assert shape:
-        let lines = cost_lines(None);
+        let lines = cost_lines(Default::default(), fabrials_metrics::pricing::table());
         assert!(!lines.is_empty());
         match &lines[0] {
             MetricLine::Text { label, .. } => assert_eq!(label, "Last 30 Days"),

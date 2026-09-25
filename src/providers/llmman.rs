@@ -65,7 +65,7 @@ impl Provider for Llmman {
         env_any(&["LLMMAN_HOST"]).is_some() || env_any(&["LLMMAN_API_KEY"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let raw = env_any(&["LLMMAN_HOST"]).unwrap_or_else(|| "http://127.0.0.1:17434".into());
         let raw = if raw.contains("://") {
             raw

@@ -108,7 +108,7 @@ impl Provider for JetBrains {
         !quota_files().is_empty()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let files = quota_files();
         if files.is_empty() {
             return ProviderOutput::error(

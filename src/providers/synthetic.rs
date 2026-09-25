@@ -93,7 +93,7 @@ impl Provider for Synthetic {
         discover_key().is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let key = match discover_key() {
             Some(k) => k,
             None => {

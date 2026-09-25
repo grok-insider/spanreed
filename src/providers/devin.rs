@@ -59,7 +59,7 @@ impl Provider for Devin {
         creds_path().exists()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let text = match creds::read_file(&creds_path()) {
             Some(t) => t,
             None => {

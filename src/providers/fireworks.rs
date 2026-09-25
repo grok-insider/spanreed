@@ -76,7 +76,7 @@ impl Provider for Fireworks {
         env_any(&["FIREWORKS_API_KEY", "FIREWORKS_KEY"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["FIREWORKS_API_KEY", "FIREWORKS_KEY"]) else {
             return ProviderOutput::error(
                 ID,

@@ -19,9 +19,9 @@ pub fn probe_all(ports: ProbePorts<'_>) -> Vec<ProviderOutput> {
 /// Probe a single provider by id (forced).
 pub fn probe_one(ports: ProbePorts<'_>, id: &str) -> Option<ProviderOutput> {
     let mut out = providers::by_id(id)
-        .map(|p| p.probe())
+        .map(|p| p.probe(ports))
         .or_else(|| {
-            crate::drivers::grok::probe_accounts()
+            crate::drivers::grok::probe_accounts(ports)
                 .into_iter()
                 .find(|o| o.provider_id == id)
         })
@@ -50,13 +50,14 @@ where
         .collect();
 
     // Each provider runs on its own thread; provider probes are blocking I/O.
-    let handles: Vec<_> = selected
-        .into_iter()
-        .map(|p| thread::spawn(move || p.probe()))
-        .collect();
-
-    let mut outs: Vec<_> = handles.into_iter().filter_map(|h| h.join().ok()).collect();
-    outs.extend(crate::drivers::grok::probe_accounts());
+    let mut outs: Vec<_> = thread::scope(|scope| {
+        let handles: Vec<_> = selected
+            .iter()
+            .map(|p| scope.spawn(move || p.probe(ports)))
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    });
+    outs.extend(crate::drivers::grok::probe_accounts(ports));
     outs.extend(crate::drivers::codex::probe_accounts());
     outs.extend(crate::addons::extra_detected_outputs());
     for o in &mut outs {
@@ -76,6 +77,6 @@ fn enrich_local_usage(ports: ProbePorts<'_>, output: &mut ProviderOutput) {
     {
         return;
     }
-    let lines = ports.cost.local_cost_lines(&output.provider_id);
+    let lines = ports.cost.local_cost_lines(&output.provider_id, None);
     output.lines.extend(lines);
 }

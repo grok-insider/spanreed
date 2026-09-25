@@ -41,7 +41,7 @@ impl Provider for Ollama {
         env_any(&["OLLAMA_API_KEY"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["OLLAMA_API_KEY"]) else {
             return ProviderOutput::error(ID, NAME, "No Ollama API key found. Set OLLAMA_API_KEY.");
         };

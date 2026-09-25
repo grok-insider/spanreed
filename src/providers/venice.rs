@@ -71,7 +71,7 @@ impl Provider for Venice {
         env_any(&["VENICE_API_KEY", "VENICE_KEY"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["VENICE_API_KEY", "VENICE_KEY"]) else {
             return ProviderOutput::error(ID, NAME, "No Venice API key found. Set VENICE_API_KEY.");
         };

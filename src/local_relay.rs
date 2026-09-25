@@ -33,7 +33,7 @@ impl LocalRelay {
                 Arc::new(upstreams::opencode_go::OpenCodeGoAdapter::default()),
             ],
             credentials: Arc::new(credential),
-            usage: Arc::new(LocalUsage),
+            usage: Arc::new(LocalUsage::default()),
         })
     }
 
@@ -441,7 +441,11 @@ fn credential(provider: &str, requested: Option<&str>) -> Result<Credential, Str
     })
 }
 
-struct LocalUsage;
+/// Serializes ledger appends from one relay's connection threads.
+#[derive(Default)]
+struct LocalUsage {
+    ledger: Mutex<()>,
+}
 impl forward::HopObserver for LocalUsage {
     fn authorize_response(
         &self,
@@ -469,8 +473,7 @@ impl forward::HopObserver for LocalUsage {
         crate::capture_log::append(message);
     }
     fn record(&self, record: fabrials_types::HopRecord) {
-        static LEDGER: Mutex<()> = Mutex::new(());
-        let _guard = LEDGER.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = self.ledger.lock().unwrap_or_else(|e| e.into_inner());
         if crate::grok_ledger::append(&record).is_err() {
             crate::capture_log::append("Local usage persistence failed");
         }

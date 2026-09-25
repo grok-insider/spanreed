@@ -225,7 +225,7 @@ impl Provider for Cursor {
         state_db_paths().iter().any(|p| p.exists())
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let auth = match load_auth() {
             Some(a) => a,
             None => {

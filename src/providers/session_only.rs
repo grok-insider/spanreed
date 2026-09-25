@@ -160,7 +160,7 @@ impl Provider for SessionOnly {
     fn detect(&self) -> bool {
         false
     }
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         ProviderOutput::error(self.note.id, self.note.name, self.note.reason)
     }
 }
@@ -195,7 +195,7 @@ mod tests {
             ids.push(note.id);
             let provider = SessionOnly { note };
             assert!(!provider.detect());
-            assert!(provider.probe().has_error());
+            assert!(provider.probe(crate::ports::ProbePorts::bare()).has_error());
         }
         assert_eq!(providers().len(), NOTES.len());
     }

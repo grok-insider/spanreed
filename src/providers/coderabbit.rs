@@ -105,7 +105,7 @@ impl Provider for CodeRabbit {
         cli_path().is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(path) = cli_path() else {
             return ProviderOutput::error(
                 ID,

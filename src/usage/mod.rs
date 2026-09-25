@@ -19,7 +19,10 @@ pub fn refresh(client: Option<&str>, force: bool) -> Result<Vec<SourceStatus>, S
     importer::refresh(client, force)
 }
 
-pub fn records(filter: &UsageFilter) -> Result<Vec<ConsumptionRecord>, String> {
+pub fn records(
+    filter: &UsageFilter,
+    pricing: &crate::pricing::PricingMap,
+) -> Result<Vec<ConsumptionRecord>, String> {
     let store = UsageStore::open(&crate::history::history_path())?;
     let mut records = store.records(filter)?;
     for record in &mut records {
@@ -46,7 +49,7 @@ pub fn records(filter: &UsageFilter) -> Result<Vec<ConsumptionRecord>, String> {
             cache_create: tokens.cache_write,
             cache_read: tokens.cache_read,
         };
-        if let Some((usd, rates)) = crate::pricing::table().exact_cost(model, usage) {
+        if let Some((usd, rates)) = pricing.exact_cost(model, usage) {
             let price_identity = format!("{model}:{rates:?}");
             record.cost = Some(UsageCost {
                 usd,
@@ -91,12 +94,16 @@ fn group(
     groups.into_values().collect()
 }
 
-pub fn report(mut filter: UsageFilter, force: bool) -> Result<UsageReport, String> {
+pub fn report(
+    mut filter: UsageFilter,
+    force: bool,
+    pricing: &crate::pricing::PricingMap,
+) -> Result<UsageReport, String> {
     let sources = refresh(filter.client.as_deref(), force)?;
     if filter.since_ms.is_none() {
         filter.since_ms = Some(crate::util::now_ms() - 31 * 86_400_000);
     }
-    let records = records(&filter)?;
+    let records = records(&filter, pricing)?;
     let mut total = UsageTotal {
         key: "total".into(),
         ..UsageTotal::default()
@@ -147,7 +154,7 @@ pub fn report(mut filter: UsageFilter, force: bool) -> Result<UsageReport, Strin
     Ok(report)
 }
 
-pub fn cmd(args: &[String]) -> ExitCode {
+pub fn cmd(ctx: &crate::context::AppContext, args: &[String]) -> ExitCode {
     let run = || -> Result<serde_json::Value, String> {
         if args.first().is_some_and(|s| s == "connect") {
             use std::io::Read;
@@ -195,7 +202,8 @@ pub fn cmd(args: &[String]) -> ExitCode {
                 _=>return Err("Usage: spanreed usage [sources] [--client ID] [--model ID] [--provider ID] [--session ID] [--project PATH] [--days N] [--refresh] [--json]".into()),
             }
         }
-        serde_json::to_value(report(filter, force)?).map_err(|e| e.to_string())
+        serde_json::to_value(report(filter, force, &ctx.pricing().table())?)
+            .map_err(|e| e.to_string())
     };
     match run() {
         Ok(value) => {

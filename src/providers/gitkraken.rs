@@ -62,7 +62,7 @@ impl Provider for GitKraken {
         env_any(&["GITKRAKEN_API_TOKEN"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(token) = env_any(&["GITKRAKEN_API_TOKEN"]) else {
             return ProviderOutput::error(
                 ID,

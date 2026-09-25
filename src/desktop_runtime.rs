@@ -1,6 +1,6 @@
 //! Lifecycle of the proxy instance owned by this GUI process.
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::JoinHandle;
@@ -129,27 +129,30 @@ impl Controller {
         self.status()
     }
 }
-fn controller() -> &'static Mutex<Controller> {
-    static CONTROLLER: OnceLock<Mutex<Controller>> = OnceLock::new();
-    CONTROLLER.get_or_init(|| Mutex::new(Controller::default()))
+/// The local proxy owned by this GUI process. Owned by `AppContext`.
+#[derive(Default)]
+pub struct ProxyControl {
+    controller: Mutex<Controller>,
 }
-pub fn status() -> Result<Status, String> {
-    Ok(controller()
-        .lock()
-        .map_err(|_| "Proxy control unavailable")?
-        .status())
-}
-pub fn start(bind: &str) -> Result<Status, String> {
-    controller()
-        .lock()
-        .map_err(|_| "Proxy control unavailable")?
-        .start(bind)
-}
-pub fn stop() -> Result<Status, String> {
-    Ok(controller()
-        .lock()
-        .map_err(|_| "Proxy control unavailable")?
-        .stop())
+
+impl ProxyControl {
+    fn controller(&self) -> Result<std::sync::MutexGuard<'_, Controller>, String> {
+        self.controller
+            .lock()
+            .map_err(|_| "Proxy control unavailable".into())
+    }
+
+    pub fn status(&self) -> Result<Status, String> {
+        Ok(self.controller()?.status())
+    }
+
+    pub fn start(&self, bind: &str) -> Result<Status, String> {
+        self.controller()?.start(bind)
+    }
+
+    pub fn stop(&self) -> Result<Status, String> {
+        Ok(self.controller()?.stop())
+    }
 }
 
 impl Drop for Controller {

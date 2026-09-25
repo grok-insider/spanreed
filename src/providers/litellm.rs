@@ -81,7 +81,7 @@ impl Provider for LiteLLM {
         env_any(&["LITELLM_API_KEY"]).is_some() && env_any(&["LITELLM_BASE_URL"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["LITELLM_API_KEY"]) else {
             return ProviderOutput::error(
                 ID,

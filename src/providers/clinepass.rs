@@ -58,7 +58,7 @@ impl Provider for ClinePass {
         env_any(&["CLINE_API_KEY", "CLINEPASS_API_KEY"]).is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["CLINE_API_KEY", "CLINEPASS_API_KEY"]) else {
             return ProviderOutput::error(
                 ID,

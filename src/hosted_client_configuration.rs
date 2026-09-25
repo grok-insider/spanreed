@@ -9,7 +9,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
     path::PathBuf,
-    sync::{Mutex, OnceLock},
+    sync::Mutex,
     time::{Duration, Instant},
 };
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
@@ -30,9 +30,10 @@ struct Pending {
     key: String,
     expires: Instant,
 }
-fn pending() -> &'static Mutex<Option<Pending>> {
-    static VALUE: OnceLock<Mutex<Option<Pending>>> = OnceLock::new();
-    VALUE.get_or_init(|| Mutex::new(None))
+/// The one hosted client review awaiting confirmation. Owned by `AppContext`.
+#[derive(Default)]
+pub struct HostedReviews {
+    pending: Mutex<Option<Pending>>,
 }
 fn account(owner: &str, id: &str, key: &str) -> Result<(), String> {
     let dashboard = request(RemoteOperation::Dashboard, json!({}), Some(7), Some(owner))?;
@@ -118,115 +119,120 @@ fn opencode_path() -> Result<PathBuf, String> {
         path
     })
 }
-pub fn preview(
-    owner: &str,
-    client: &str,
-    alias: &str,
-    key: &str,
-    model: &str,
-) -> Result<HostedClientReview, String> {
-    if !matches!(client, "codex" | "opencode")
-        || !crate::accounts::valid_alias(alias)
-        || alias.len() > 40
-        || model.trim() != model
-        || model.is_empty()
-        || model.len() > 256
-        || model.chars().any(char::is_control)
-        || !(16..=512).contains(&key.len())
-        || key.chars().any(char::is_whitespace)
-        || key.starts_with("eyJ")
-    {
-        return Err("Choose a client, hosted account, model and ai-relay proxy key".into());
+impl HostedReviews {
+    pub fn preview(
+        &self,
+        owner: &str,
+        client: &str,
+        alias: &str,
+        key: &str,
+        model: &str,
+    ) -> Result<HostedClientReview, String> {
+        if !matches!(client, "codex" | "opencode")
+            || !crate::accounts::valid_alias(alias)
+            || alias.len() > 40
+            || model.trim() != model
+            || model.is_empty()
+            || model.len() > 256
+            || model.chars().any(char::is_control)
+            || !(16..=512).contains(&key.len())
+            || key.chars().any(char::is_whitespace)
+            || key.starts_with("eyJ")
+        {
+            return Err("Choose a client, hosted account, model and ai-relay proxy key".into());
+        }
+        let id = format!("codex/{alias}");
+        account(owner, &id, key)?;
+        let endpoint = format!("https://ai.fabrials.com/acct/{alias}/codex/v1");
+        verify_key(&endpoint, key, model)?;
+        let path = if client == "codex" {
+            session_home().join("config.toml")
+        } else {
+            opencode_path()?
+        };
+        let before = read_regular(&path)?;
+        let after = if client == "codex" {
+            let text = client_config(before.as_deref().unwrap_or(""), alias, key)?;
+            let mut doc = text
+                .parse::<toml_edit::Document>()
+                .map_err(|_| "Invalid Codex configuration")?;
+            doc["model"] = toml_edit::value(model);
+            doc.to_string()
+        } else {
+            opencode(before.as_deref(), alias, &endpoint, key, model)?
+        };
+        let view = HostedClientReview {
+            id: fabrials_runtime::accounting::new_request_id(),
+            client: client.into(),
+            path: path.to_string_lossy().into_owned(),
+            account_id: id,
+            model: model.into(),
+            endpoint,
+        };
+        *self
+            .pending
+            .lock()
+            .map_err(|_| "Configuration review unavailable")? = Some(Pending {
+            view: view.clone(),
+            owner: owner.into(),
+            before,
+            after,
+            key: key.into(),
+            expires: Instant::now() + Duration::from_secs(300),
+        });
+        Ok(view)
     }
-    let id = format!("codex/{alias}");
-    account(owner, &id, key)?;
-    let endpoint = format!("https://ai.fabrials.com/acct/{alias}/codex/v1");
-    verify_key(&endpoint, key, model)?;
-    let path = if client == "codex" {
-        session_home().join("config.toml")
-    } else {
-        opencode_path()?
-    };
-    let before = read_regular(&path)?;
-    let after = if client == "codex" {
-        let text = client_config(before.as_deref().unwrap_or(""), alias, key)?;
-        let mut doc = text
-            .parse::<toml_edit::Document>()
-            .map_err(|_| "Invalid Codex configuration")?;
-        doc["model"] = toml_edit::value(model);
-        doc.to_string()
-    } else {
-        opencode(before.as_deref(), alias, &endpoint, key, model)?
-    };
-    let view = HostedClientReview {
-        id: fabrials_runtime::accounting::new_request_id(),
-        client: client.into(),
-        path: path.to_string_lossy().into_owned(),
-        account_id: id,
-        model: model.into(),
-        endpoint,
-    };
-    *pending()
-        .lock()
-        .map_err(|_| "Configuration review unavailable")? = Some(Pending {
-        view: view.clone(),
-        owner: owner.into(),
-        before,
-        after,
-        key: key.into(),
-        expires: Instant::now() + Duration::from_secs(300),
-    });
-    Ok(view)
-}
-pub fn apply(owner: &str, id: &str) -> Result<String, String> {
-    let mut slot = pending()
-        .lock()
-        .map_err(|_| "Configuration review unavailable")?;
-    if slot
-        .as_ref()
-        .is_none_or(|p| p.view.id != id || p.owner != owner || p.expires < Instant::now())
-    {
-        return Err("Review expired or account changed; preview again".into());
+    pub fn apply(&self, owner: &str, id: &str) -> Result<String, String> {
+        let mut slot = self
+            .pending
+            .lock()
+            .map_err(|_| "Configuration review unavailable")?;
+        if slot
+            .as_ref()
+            .is_none_or(|p| p.view.id != id || p.owner != owner || p.expires < Instant::now())
+        {
+            return Err("Review expired or account changed; preview again".into());
+        }
+        let plan = slot.take().ok_or("Review unavailable")?;
+        account(owner, &plan.view.account_id, &plan.key)?;
+        verify_key(&plan.view.endpoint, &plan.key, &plan.view.model)?;
+        let path = PathBuf::from(&plan.view.path);
+        if plan.view.client == "opencode" && opencode_path()? != path {
+            return Err("OpenCode configuration path changed; preview again".into());
+        }
+        if plan.view.client == "codex" && session_home().join("config.toml") != path {
+            return Err("Codex home changed; preview again".into());
+        }
+        let _lock = fabrials_runtime::file_set::FileSet::acquire_wait(
+            path.parent().ok_or("Invalid client path")?,
+        )?;
+        if read_regular(&path)? != plan.before {
+            return Err("Client configuration changed; preview again".into());
+        }
+        if let Some(before) = &plan.before {
+            fabrials_runtime::files::atomic_write_private(
+                &crate::app::data_dir()
+                    .join("backups")
+                    .join(format!("{}-{}.config", plan.view.client, id)),
+                before.as_bytes(),
+            )
+            .map_err(|_| "Could not back up client configuration")?;
+        }
+        if read_regular(&path)? != plan.before {
+            return Err("Client configuration changed during backup; preview again".into());
+        }
+        fabrials_runtime::files::atomic_write_private(&path, plan.after.as_bytes())
+            .map_err(|_| "Could not save client configuration")?;
+        Ok(if plan.view.client == "codex" {
+            "Configuration saved. Start a new Codex session; profile, project or command-line overrides may take precedence.".into()
+        } else {
+            format!(
+                "Connection saved. Restart OpenCode and select fabrials-codex-{}/{} in /models.",
+                plan.view.account_id.trim_start_matches("codex/"),
+                plan.view.model
+            )
+        })
     }
-    let plan = slot.take().ok_or("Review unavailable")?;
-    account(owner, &plan.view.account_id, &plan.key)?;
-    verify_key(&plan.view.endpoint, &plan.key, &plan.view.model)?;
-    let path = PathBuf::from(&plan.view.path);
-    if plan.view.client == "opencode" && opencode_path()? != path {
-        return Err("OpenCode configuration path changed; preview again".into());
-    }
-    if plan.view.client == "codex" && session_home().join("config.toml") != path {
-        return Err("Codex home changed; preview again".into());
-    }
-    let _lock = fabrials_runtime::file_set::FileSet::acquire_wait(
-        path.parent().ok_or("Invalid client path")?,
-    )?;
-    if read_regular(&path)? != plan.before {
-        return Err("Client configuration changed; preview again".into());
-    }
-    if let Some(before) = &plan.before {
-        fabrials_runtime::files::atomic_write_private(
-            &crate::app::data_dir()
-                .join("backups")
-                .join(format!("{}-{}.config", plan.view.client, id)),
-            before.as_bytes(),
-        )
-        .map_err(|_| "Could not back up client configuration")?;
-    }
-    if read_regular(&path)? != plan.before {
-        return Err("Client configuration changed during backup; preview again".into());
-    }
-    fabrials_runtime::files::atomic_write_private(&path, plan.after.as_bytes())
-        .map_err(|_| "Could not save client configuration")?;
-    Ok(if plan.view.client == "codex" {
-        "Configuration saved. Start a new Codex session; profile, project or command-line overrides may take precedence.".into()
-    } else {
-        format!(
-            "Connection saved. Restart OpenCode and select fabrials-codex-{}/{} in /models.",
-            plan.view.account_id.trim_start_matches("codex/"),
-            plan.view.model
-        )
-    })
 }
 #[cfg(test)]
 mod tests {

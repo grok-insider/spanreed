@@ -322,10 +322,10 @@ impl Provider for Claude {
             || secret::exists(KEYCHAIN_SERVICE)
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         // Inference-only token override (no refresh/persistence).
         if let Some(token) = creds::env("CLAUDE_CODE_OAUTH_TOKEN") {
-            return match fetch_and_build(&token) {
+            return match fetch_and_build(&token, ports) {
                 Ok((plan, lines)) => ProviderOutput::new(ID, NAME, lines).with_plan(plan),
                 Err(msg) => ProviderOutput::error(ID, NAME, msg),
             };
@@ -347,7 +347,7 @@ impl Provider for Claude {
         }
 
         let plan = build_plan(&oauth);
-        match fetch_and_build(&oauth.access_token) {
+        match fetch_and_build(&oauth.access_token, ports) {
             Ok((_, lines)) => ProviderOutput::new(ID, NAME, lines).with_plan(plan),
             Err(msg) => ProviderOutput::error(ID, NAME, msg),
         }
@@ -356,7 +356,10 @@ impl Provider for Claude {
 
 /// Fetch usage with a token and build the lines (plan comes from creds, so the
 /// returned plan here is always None — caller supplies it).
-fn fetch_and_build(access_token: &str) -> Result<(Option<String>, Vec<MetricLine>), String> {
+fn fetch_and_build(
+    access_token: &str,
+    ports: crate::ports::ProbePorts<'_>,
+) -> Result<(Option<String>, Vec<MetricLine>), String> {
     let resp = Request::get(USAGE_URL)
         .bearer(access_token.trim())
         .header("Accept", "application/json")
@@ -380,10 +383,7 @@ fn fetch_and_build(access_token: &str) -> Result<(Option<String>, Vec<MetricLine
     lines.extend(fetch_plan_period_lines(access_token));
     // Local-log cost: Last 30 Days + since weekly epoch (resets_at − 7d) + models/cache.
     let weekly_start = weekly_epoch_start_ms(&data);
-    lines.extend(crate::cost::cost_lines(
-        crate::cost::Source::Claude,
-        weekly_start,
-    ));
+    lines.extend(ports.cost.local_cost_lines(ID, weekly_start));
     Ok((None, lines))
 }
 

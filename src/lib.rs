@@ -66,7 +66,6 @@ mod resets;
 mod secret;
 mod self_update;
 mod setup;
-pub use pricing::limits;
 pub use setup::review as client_configuration;
 mod provider_icons;
 mod share;
@@ -134,7 +133,7 @@ pub fn run_cli() -> ExitCode {
         "json" => cmd_json(&ctx),
         "serve" => cmd_serve(&ctx, rest),
         "history" => cmd_history(rest),
-        "usage" => usage::cmd(rest),
+        "usage" => usage::cmd(&ctx, rest),
         "capture" => cmd_capture(rest),
         "grok-proxy" => cmd_grok_proxy(rest),
         "setup" => setup::cmd(rest),
@@ -149,7 +148,7 @@ pub fn run_cli() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        "sync" => crate::sync::cmd(rest),
+        "sync" => crate::sync::cmd(&ctx, rest),
         "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),
         "self-update" => self_update::cmd(rest),

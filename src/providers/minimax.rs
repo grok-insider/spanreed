@@ -171,7 +171,7 @@ impl Provider for MiniMax {
         any_key()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         if !any_key() {
             return ProviderOutput::error(
                 ID,

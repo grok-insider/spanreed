@@ -91,7 +91,7 @@ impl Provider for Kilo {
         env_any(&["KILO_API_KEY"]).is_some() || cli_token().is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
         let Some(key) = env_any(&["KILO_API_KEY"]).or_else(cli_token) else {
             return ProviderOutput::error(
                 ID,
