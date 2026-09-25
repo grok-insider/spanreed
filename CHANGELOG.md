@@ -4,6 +4,48 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-25
+
+- fix: macOS test qualification - hermetic keyring test, full ps command, bounded cross job
+- fix: build the macOS LaunchAgent plist test and path only on Unix
+- fix: edition 2024 unsafe extern blocks and env writes in Windows code
+- refactor: phase 3 - agent host entry in the desktop tray and AgentStatus contract
+- refactor: phase 3 - separate spanreed-adapters from spanreed-app
+- refactor: phase 2 - migrate to the reshaped fabrials-libs (8606b3a)
+- chore: record fabrials-libs 8606b3a46265
+- Squashed 'vendor/fabrials-libs/' changes from 4601449..8606b3a
+- refactor: phase 3 - agent host tests run without building the fake agent
+- refactor: phase 3 - document the workspace layout and lift the lifecycle fixture
+- refactor: phase 3 - desktop and tray start the agent host
+- refactor: phase 3 - Cargo workspace with domain, app, tray and CLI crates
+- refactor: phase 3 - split large modules and functions
+- refactor: phase 3 - CLI split into src/cli with one file per subcommand
+- refactor: phase 3 - application facade shared by CLI, tray, desktop and API
+- refactor: phase 3 - AppContext owns process state instead of statics
+- refactor: phase 3 - break module cycles with ports
+- Squashed 'vendor/fabrials-libs/' changes from 4ec9840..4601449
+- chore: record fabrials-libs 46014491de2c
+- feat: phase 5 - Spanreed absorbs grok-bridge as `spanreed agent`
+- Squashed 'vendor/fabrials-libs/' changes from 656684f..4ec9840
+- chore: record fabrials-libs 4ec9840531cc
+- ci: phase 6 - build and test Spanreed on macOS
+- refactor: phase 3 - move Spanreed to edition 2024 and deflake the proxy restart test
+- refactor: phase 3 - use the shared Grok CLI token helpers
+- refactor: phase 2 - build on fabrials-types and the shared pricing, accounts and share code
+- Squashed 'vendor/fabrials-libs/' changes from 9838c51..656684f
+- chore: record fabrials-libs 656684fa8677
+- docs: phase 1 - describe the in-tree fabrials-libs workspace
+- fix: phase 1 - read model contracts from fabrials-libs and sync from worktrees
+- Squashed 'vendor/fabrials-libs/' changes from 2719c27..9838c51
+- chore: record fabrials-libs 9838c516bd06
+- build: phase 1 - build against in-tree fabrials-libs and relicense to AGPL-3.0
+- Squashed 'vendor/fabrials-libs/' changes from 84fda68..2719c27
+- chore: record fabrials-libs 2719c272df7d
+- Squashed 'vendor/fabrials-libs/' content from commit 84fda68
+- chore: record fabrials-libs 84fda68e625f
+- chore: phase 1 - drop the per-crate vendor copies before adding fabrials-libs
+- fix: phase 0 - price Grok hops with the user's pricing layers
+
 ## [0.6.2] - 2026-09-25
 
 - chore: sync vendored fabrials crates
