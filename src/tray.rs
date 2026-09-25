@@ -369,27 +369,11 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     Ok(()) => {
                         let msg = format!("Opened log:\n{}", path.display());
                         set_status(&state, "Opened capture log");
-                        apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                         log::info!("tray: {msg}");
                     }
                     Err(e) => {
                         let msg = format!("Could not open log:\n{}\n\n{}", path.display(), e);
                         set_status(&state, "Failed to open capture log");
-                        apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                         user_notify("spanreed — capture log", &msg, true);
                     }
                 }
@@ -400,14 +384,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     .unwrap_or(false);
                 if logged_in {
                     set_status(&state, "Sharing usage…");
-                    apply_visual(
-                        &state,
-                        &mut tray,
-                        &item_update,
-                        &item_check,
-                        &item_share_primary,
-                        &item_unlink,
-                    );
                     let st = state.clone();
                     thread::spawn(move || {
                         let msg = match share::share_once(false) {
@@ -420,14 +396,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     });
                 } else {
                     set_status(&state, "Starting share login…");
-                    apply_visual(
-                        &state,
-                        &mut tray,
-                        &item_update,
-                        &item_check,
-                        &item_share_primary,
-                        &item_unlink,
-                    );
                     let st = state.clone();
                     thread::spawn(move || match share_session::start_device_login() {
                         Ok(pending) => {
@@ -466,14 +434,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     Ok(()) => {
                         set_status(&state, "Share unlinked");
                         refresh_state(&state);
-                        apply_visual(
-                            &state,
-                            &mut tray,
-                            &item_update,
-                            &item_check,
-                            &item_share_primary,
-                            &item_unlink,
-                        );
                         user_notify("spanreed — share", "Local share session removed.", false);
                     }
                     Err(e) => {
@@ -484,14 +444,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             } else if id == id_check {
                 item_check.set_text("Checking for updates…");
                 set_status(&state, "Checking for updates…");
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                 let st = state.clone();
                 thread::spawn(move || {
                     let summary = run_update_check(&st);
@@ -501,26 +453,10 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             } else if id == id_update {
                 if let Some(why) = self_update::apply_blocked_reason() {
                     set_status(&state, why);
-                    apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                     user_notify("spanreed — updates", why, true);
                     continue;
                 }
                 set_status(&state, "Starting self-update…");
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                 let exe = std::env::current_exe().unwrap_or_default();
                 let st = state.clone();
                 thread::spawn(move || match Command::new(&exe)
