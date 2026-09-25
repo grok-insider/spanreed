@@ -4,6 +4,15 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-09-25
+
+- chore: sync vendored fabrials crates
+- chore: refresh the desktop UI vendor
+- fix: keep local hops compatible with Grok Build goal checks
+- feat: sync per-model usage and price OpenCode Go from models.dev
+- feat: price grok-4.7 at the grok-4.6 list rate
+- feat: show output tokens per second on captured requests
+
 ## [0.6.1] - 2026-09-25
 
 - fix: keep the Windows alert on the user desktop

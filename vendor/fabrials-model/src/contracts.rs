@@ -23,6 +23,7 @@ pub fn typescript() -> String {
         crate::private_sync::LocalUsageSnapshotV2,
         crate::private_sync::LocalUsageAggregate,
         crate::private_sync::LocalUsageDay,
+        crate::private_sync::LocalUsageModel,
         crate::private_sync::PrivateEvent,
         crate::private_sync::PrivateObservation,
         crate::private_sync::PrivateStoredObservation,

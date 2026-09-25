@@ -392,8 +392,18 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
                     partial: report.period_totals.iter().any(|row| row.partial),
                 }
             });
-            let projection = serde_json::to_vec(&(report.total.partial, &days, &period_totals))
-                .map_err(|_| "Invalid usage projection")?;
+            let send_models = capabilities
+                .as_ref()
+                .is_ok_and(|value| value["local_usage_models_v1"] == true);
+            let models = model_totals(&report.models);
+            let projection = serde_json::to_vec(&(
+                report.total.partial,
+                &days,
+                &period_totals,
+                &models,
+                send_models,
+            ))
+            .map_err(|_| "Invalid usage projection")?;
             use sha2::{Digest, Sha256};
             let digest = format!("{:x}", Sha256::digest(projection));
             let revision =
@@ -416,6 +426,7 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
                 observed_at_ms: crate::util::now_ms(),
                 partial: report.total.partial,
                 days,
+                models: if send_models { models } else { Vec::new() },
             };
             if !allowed(&client.id)? {
                 return Err("Private synchronization selection changed".into());
@@ -484,6 +495,67 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
     ))
 }
 
+/// At most this many model rows travel with one snapshot. The rest fold into
+/// `other` so a noisy client cannot blow the sync body limit.
+fn model_totals(
+    models: &[fabrials_core::usage::ConsumptionTotal],
+) -> Vec<fabrials_model::private_sync::LocalUsageModel> {
+    const LIMIT: usize = 32;
+    let mut rows: Vec<_> = models
+        .iter()
+        .filter(|row| model_id(&row.key))
+        .map(|row| fabrials_model::private_sync::LocalUsageModel {
+            model: row.key.clone(),
+            requests: row.records,
+            tokens: row.tokens,
+            estimated_usd: row.known_usd,
+        })
+        .filter(|row| {
+            row.estimated_usd.is_finite()
+                && (0.0..=1_000_000.0).contains(&row.estimated_usd)
+                && row.requests <= 1_000_000_000
+                && row.tokens <= 1_000_000_000_000
+        })
+        .collect();
+    rows.sort_by(|left, right| {
+        right
+            .tokens
+            .cmp(&left.tokens)
+            .then_with(|| left.model.cmp(&right.model))
+    });
+    if rows.len() <= LIMIT {
+        return rows;
+    }
+    let rest = rows.split_off(LIMIT - 1);
+    let mut folded = fabrials_model::private_sync::LocalUsageModel {
+        model: "other".into(),
+        requests: 0,
+        tokens: 0,
+        estimated_usd: 0.0,
+    };
+    for row in rest {
+        folded.requests = folded.requests.saturating_add(row.requests);
+        folded.tokens = folded.tokens.saturating_add(row.tokens);
+        folded.estimated_usd += row.estimated_usd;
+    }
+    if let Some(existing) = rows.iter_mut().find(|row| row.model == "other") {
+        existing.requests = existing.requests.saturating_add(folded.requests);
+        existing.tokens = existing.tokens.saturating_add(folded.tokens);
+        existing.estimated_usd += folded.estimated_usd;
+    } else if folded.requests > 0 || folded.tokens > 0 {
+        rows.push(folded);
+    }
+    rows
+}
+
+fn model_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_/:.".contains(&byte))
+}
+
 pub fn link_codex() -> Result<String, String> {
     if !allowed("codex")? {
         return Err("Enable private synchronization and save the Codex source first".into());
@@ -499,4 +571,41 @@ pub fn link_codex() -> Result<String, String> {
         .as_str()
         .ok_or("Invalid identity match response")?;
     Ok(format!("Verified identity match with hosted {account}. Local log totals remain separate from relay traffic."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabrials_core::usage::ConsumptionTotal;
+
+    fn total(key: &str, tokens: u64) -> ConsumptionTotal {
+        ConsumptionTotal {
+            key: key.into(),
+            tokens,
+            unknown_token_records: 0,
+            known_usd: 1.0,
+            partial: false,
+            records: 1,
+        }
+    }
+
+    #[test]
+    fn model_totals_keep_the_largest_and_fold_the_rest() {
+        let rows: Vec<_> = (0..40).map(|n| total(&format!("m{n:02}"), n)).collect();
+        let models = model_totals(&rows);
+        assert_eq!(models.len(), 32);
+        assert_eq!(models[0].model, "m39");
+        assert_eq!(models.last().unwrap().model, "other");
+        let kept: u64 = models.iter().map(|row| row.tokens).sum();
+        let source: u64 = rows.iter().map(|row| row.tokens).sum();
+        assert_eq!(kept, source);
+    }
+
+    #[test]
+    fn model_totals_drop_ids_the_relay_would_reject() {
+        let models = model_totals(&[total("gpt-6-astra", 10), total("has space", 99)]);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].model, "gpt-6-astra");
+        assert_eq!(models[0].tokens, 10);
+    }
 }

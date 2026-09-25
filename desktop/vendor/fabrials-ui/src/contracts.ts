@@ -35,15 +35,21 @@ export type ConsumptionTotal = { key: string, tokens: number, unknown_token_reco
 
 export type ConsumptionReport = { revision: number, sources: Array<SourceStatus>, total: ConsumptionTotal, daily: Array<ConsumptionTotal>, period_totals: Array<ConsumptionTotal>, clients: Array<ConsumptionTotal>, models: Array<ConsumptionTotal>, sessions: Array<ConsumptionTotal>, projects: Array<ConsumptionTotal>, records: Array<ConsumptionRecord>, records_truncated: boolean, };
 
-export type SynchronizedAccount = { linked_account_id: string | null, device: string, source: string, observed_at_ms: number, output: ProviderOutput, local_usage: LocalUsageSnapshot | null, };
+export type SynchronizedAccount = { linked_account_id: string | null, device: string, hostname?: string | null, source: string, observed_at_ms: number, output: ProviderOutput, local_usage: LocalUsageSnapshot | null, };
 
 export type LocalUsageSnapshot = { device: string, source: string, observed_at_ms: number, partial: boolean, days: Array<LocalUsageDay>, };
 
-export type LocalUsageSnapshotV2 = { device: string, source: string, revision: number, observed_at_ms: number, partial: boolean, days: Array<LocalUsageDay>, period_totals: LocalUsageAggregate | null, };
+export type LocalUsageSnapshotV2 = { device: string, source: string, revision: number, observed_at_ms: number, partial: boolean, days: Array<LocalUsageDay>, period_totals: LocalUsageAggregate | null,
+/**
+ * Absent on snapshots written before model totals existed.
+ */
+models?: Array<LocalUsageModel>, };
 
 export type LocalUsageAggregate = { tokens: number | null, known_usd: number, partial: boolean, };
 
 export type LocalUsageDay = { date: string, tokens: number, estimated_usd: number, };
+
+export type LocalUsageModel = { model: string, requests: number, tokens: number, estimated_usd: number, };
 
 export type PrivateEvent = { "kind": "quota", at_ms: number, output: ProviderOutput, } | { "kind": "history", sample: HistorySample, } | { "kind": "request", record: UsageRecord, };
 

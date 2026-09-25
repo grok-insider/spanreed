@@ -28,3 +28,4 @@ export * from "./radio-group";
 export * from "./toggle-group";
 export * from "./accordion";
 export * from "./navigation";
+export * from "./multi-select";

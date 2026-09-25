@@ -49,12 +49,21 @@ impl Provider for OpenCodeGoAdapter {
 
     fn parse_usage(&self, response_body: &[u8]) -> Option<UsageRecord> {
         let text = String::from_utf8_lossy(response_body);
-        fabrials_metrics::usage_from_response_body(&text)
+        fabrials_metrics::usage_from_messages_body(&text)
+            .or_else(|| fabrials_metrics::usage_from_response_body(&text))
             .map(|p| p.into_record(now_ms(), None, None, Some("opencode-go".into())))
     }
 
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
         HopClass::openai_compat(&hop.path, upgrade)
+    }
+
+    /// Go serves frontier models such as `union-alpha` on the Anthropic
+    /// Messages protocol only; chat and responses keep the core surface.
+    fn allows_request(&self, method: &str, hop: &Upstream, upgrade: bool) -> bool {
+        let _ = upgrade;
+        fabrials_core::hop::core_request_allowed(method, &hop.path)
+            || fabrials_core::hop::messages_request_allowed(method, &hop.path)
     }
 }
 

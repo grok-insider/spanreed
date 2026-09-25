@@ -62,6 +62,7 @@ mod resets;
 mod secret;
 mod self_update;
 mod setup;
+pub use pricing::limits;
 pub use setup::review as client_configuration;
 mod provider_icons;
 mod share;
@@ -192,9 +193,9 @@ fn print_help() {
          \t  --user LOGIN                 Import token for that gh account\n\
          \t  --token-stdin                Read token from stdin\n\
          \tspanreed auth logout copilot  Remove the stored Copilot credential\n\
-         \tspanreed update-pricing [out] Fetch + filter the LiteLLM price table\n\
-         \t                               (writes to stdout, or to [out]; used to\n\
-         \t                               refresh the embedded src/pricing-data.json)\n\
+         \tspanreed update-pricing [out] Fetch LiteLLM prices plus the OpenCode Go\n\
+         \t                               channel from models.dev (writes to stdout, or to [out];\n\
+         \t                               used to refresh the embedded src/pricing-data.json)\n\
          \tspanreed share               Upload plan/quota metrics (requires X login)\n\
          \tspanreed share login         Link CLI via device code on fabrials.com\n\
          \tspanreed share logout|status Session management\n\

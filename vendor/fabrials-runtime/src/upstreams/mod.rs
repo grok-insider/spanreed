@@ -1,4 +1,7 @@
+pub mod catalog;
+pub mod claude;
 pub mod grok;
+pub mod kimi;
 pub mod nous;
 pub mod openai;
 pub mod opencode_go;

@@ -6,7 +6,8 @@ import { MigrationReviewDetails } from "./migration-review.js";
 function HostedMigration({
   api: migrationApi,
   origin,
-  authorize
+  authorize,
+  heading = true
 }) {
   const [authorized, setAuthorized] = React.useState([]);
   const [direction, setDirection] = React.useState("hostedToLocal");
@@ -65,7 +66,13 @@ function HostedMigration({
     if (view.phase !== "pairing") setInvitation(null);
   }
   return /* @__PURE__ */ jsxs("div", { className: "fb-form", children: [
-    /* @__PURE__ */ jsx(PageHeader, { title: "Account migration", description: "Pair Spanreed with this hosted workspace. Review the destination and selected accounts before approving a transfer." }),
+    heading ? /* @__PURE__ */ jsx(
+      PageHeader,
+      {
+        title: "Account migration",
+        description: "Pair Spanreed with this relay. Review the destination and the selected accounts before you approve a transfer."
+      }
+    ) : null,
     /* @__PURE__ */ jsxs("section", { className: "fb-form", "aria-label": "Create migration invitation", children: [
       /* @__PURE__ */ jsxs(Label, { children: [
         "Direction",
@@ -99,10 +106,10 @@ function HostedMigration({
         }
       ),
       invitation && /* @__PURE__ */ jsxs("div", { className: "fb-form", children: [
-        /* @__PURE__ */ jsxs("p", { children: [
-          "Enter these details in Spanreed → Migration. The invitation expires ",
-          new Date(invitation.expiresAtMs).toLocaleTimeString(),
-          "."
+        /* @__PURE__ */ jsxs("p", { className: "fb-muted", children: [
+          "Enter these details in Spanreed, on Account migration. The invitation expires ",
+          formatWhen(invitation.expiresAtMs),
+          ". The secret stays on this page until you leave it."
         ] }),
         /* @__PURE__ */ jsxs(Label, { children: [
           "Hosted origin",
@@ -160,37 +167,27 @@ function HostedMigration({
       ] })
     ] }),
     /* @__PURE__ */ jsxs("section", { className: "fb-form", "aria-label": "Migration sessions", children: [
-      /* @__PURE__ */ jsx("h2", { children: "Sessions" }),
-      /* @__PURE__ */ jsx("p", { className: "fb-muted", children: "Completed receipts remain available for 30 days after the transfer window closes." }),
-      /* @__PURE__ */ jsx(
-        Button,
+      /* @__PURE__ */ jsxs("div", { className: "fb-row", children: [
+        /* @__PURE__ */ jsx("h2", { children: "Sessions" }),
+        /* @__PURE__ */ jsx(Button, { variant: "outline", disabled: busy, onClick: () => void run(refresh), children: "Refresh sessions" })
+      ] }),
+      /* @__PURE__ */ jsx("p", { className: "fb-muted", children: "Completed receipts stay available for 30 days after the transfer window closes." }),
+      !sessions.length ? /* @__PURE__ */ jsx("p", { className: "fb-muted", children: "No migration sessions yet. Create an invitation to start one." }) : null,
+      sessions.length ? /* @__PURE__ */ jsx("div", { className: "fb-log", children: sessions.map((session) => /* @__PURE__ */ jsxs(
+        "button",
         {
-          variant: "outline",
-          className: "",
-          disabled: busy,
-          onClick: () => void run(refresh),
-          children: "Refresh sessions"
-        }
-      ),
-      !sessions.length && /* @__PURE__ */ jsx("p", { className: "fb-muted", children: "No migration sessions." }),
-      sessions.map((session) => /* @__PURE__ */ jsx(
-        Button,
-        {
-          variant: "outline",
-          className: "",
+          className: "fb-log-button",
           disabled: busy,
           onClick: () => void run(async () => open(session.id)),
-          children: /* @__PURE__ */ jsxs("span", { style: { overflowWrap: "anywhere" }, children: [
-            session.direction === "hostedToLocal" ? "ai-relay → Spanreed" : "Spanreed → ai-relay",
-            " ",
-            "· ",
-            session.phase,
-            /* @__PURE__ */ jsx("br", {}),
-            session.id
-          ] })
+          type: "button",
+          children: [
+            /* @__PURE__ */ jsx("strong", { children: directionLabel(session.direction) }),
+            /* @__PURE__ */ jsx("span", { className: "fb-muted", children: phaseLabel(session.phase) }),
+            /* @__PURE__ */ jsx("code", { className: "fb-mono", style: { overflowWrap: "anywhere" }, children: session.id })
+          ]
         },
         session.id
-      ))
+      )) }) : null
     ] }),
     selected && /* @__PURE__ */ jsxs("section", { className: "fb-form", "aria-label": "Selected migration", children: [
       /* @__PURE__ */ jsx("h2", { children: "Review transfer" }),
@@ -338,6 +335,23 @@ function HostedMigration({
     busy && /* @__PURE__ */ jsx("p", { role: "status", children: "Updating migration…" }),
     error && /* @__PURE__ */ jsx("p", { ref: errorRef, tabIndex: -1, className: "fb-error", role: "alert", children: error })
   ] });
+}
+function directionLabel(direction) {
+  return direction === "hostedToLocal" ? "ai-relay to Spanreed" : "Spanreed to ai-relay";
+}
+function phaseLabel(phase) {
+  const labels = {
+    pairing: "Waiting to pair",
+    paired: "Paired",
+    reviewing: "Ready to review",
+    approved: "Approved",
+    completed: "Completed",
+    cancelled: "Cancelled"
+  };
+  return labels[phase] ?? phase;
+}
+function formatWhen(ms) {
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(ms);
 }
 export {
   HostedMigration
