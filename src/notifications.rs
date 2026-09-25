@@ -119,7 +119,48 @@ pub fn deliver_outputs(
 }
 
 pub fn deliver_background(outputs: &[crate::model::ProviderOutput]) -> Result<u32, String> {
-    deliver_outputs(outputs, deliver_os)
+    deliver_outputs(outputs, deliver_user_visible)
+}
+
+/// Deliver an alert, then show a dialog when the banner command is not proof
+/// the user saw it. Capture-down and other alerts share this path.
+pub fn deliver_user_visible(title: &str, body: &str) -> Result<(), String> {
+    let delivered = deliver_os(title, body);
+    if !notification_confirmed(std::env::consts::OS, delivered.is_ok()) {
+        show_unconfirmed_dialog(title, body);
+    }
+    delivered
+}
+
+fn show_unconfirmed_dialog(title: &str, body: &str) {
+    #[cfg(windows)]
+    {
+        let title = title.replace('\'', "''");
+        let body = body.replace('\'', "''");
+        let script = format!(
+            "Add-Type -AssemblyName PresentationFramework; \
+             [System.Windows.MessageBox]::Show('{body}','{title}') | Out-Null"
+        );
+        let _ = std::process::Command::new(powershell_program())
+            .args(["-NoProfile", "-Command", &script])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new(osascript_program())
+            .args(["-e", &osascript_dialog(title, body)])
+            .spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("zenity")
+            .args(zenity_dialog_args(title, body))
+            .spawn();
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = (title, body);
+    }
 }
 
 /// macOS `display notification` and a Windows toast both exit successfully when

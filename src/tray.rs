@@ -1030,46 +1030,10 @@ fn user_notify(title: &str, body: &str, modal: bool) {
         let _handed_to_desktop = crate::desktop_open::hand_off_alert(&title, &body);
         // A desktop show can report success and then drop the alert. Every
         // platform still delivers through its own notification path.
-        let delivered = crate::notifications::deliver_os(&title, &body);
-        if !crate::notifications::notification_confirmed(std::env::consts::OS, delivered.is_ok()) {
-            if let Err(error) = &delivered {
-                log::warn!("tray notify failed: {error}");
-            }
-            #[cfg(windows)]
-            show_windows_message(&title, &body);
-            #[cfg(target_os = "macos")]
-            show_macos_dialog(&title, &body);
-            #[cfg(all(unix, not(target_os = "macos")))]
-            show_linux_dialog(&title, &body);
+        if let Err(error) = crate::notifications::deliver_user_visible(&title, &body) {
+            log::warn!("tray notify failed: {error}");
         }
     });
-}
-
-#[cfg(windows)]
-fn show_windows_message(title: &str, body: &str) {
-    let t = title.replace('\'', "''");
-    let b = body.replace('\'', "''");
-    let script = format!(
-        "Add-Type -AssemblyName PresentationFramework; \
-         [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
-    );
-    let _ = Command::new(crate::notifications::powershell_program())
-        .args(["-NoProfile", "-Command", &script])
-        .spawn();
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn show_linux_dialog(title: &str, body: &str) {
-    let args = crate::notifications::zenity_dialog_args(title, body);
-    let _ = Command::new("zenity").args(&args).spawn();
-}
-
-#[cfg(target_os = "macos")]
-fn show_macos_dialog(title: &str, body: &str) {
-    let script = crate::notifications::osascript_dialog(title, body);
-    let _ = Command::new(crate::notifications::osascript_program())
-        .args(["-e", &script])
-        .spawn();
 }
 
 #[cfg(test)]
