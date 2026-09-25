@@ -31,6 +31,15 @@ pub fn reset_hung(status_at: Option<Instant>, reset_in_flight: bool, now: Instan
         && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(60))
 }
 
+/// After a transient line expires, the outage line returns while capture is down.
+pub fn next_status_after_expiry(capture_up: bool) -> Option<&'static str> {
+    if capture_up {
+        None
+    } else {
+        Some("Capture proxy is DOWN")
+    }
+}
+
 /// A refresh must not cover the capture-down line. Other states show progress.
 pub fn begin_refresh_status(current: Option<&str>) -> Option<&'static str> {
     if current == Some("Capture proxy is DOWN") {
@@ -265,6 +274,11 @@ mod tests {
             begin_refresh_status(Some("Reset used")),
             Some("Refreshing usage…")
         );
+        assert_eq!(
+            next_status_after_expiry(false),
+            Some("Capture proxy is DOWN")
+        );
+        assert_eq!(next_status_after_expiry(true), None);
         let hung = now.checked_sub(Duration::from_secs(61)).expect("instant");
         assert!(!reset_hung(Some(now), true, now));
         assert!(reset_hung(Some(hung), true, now));

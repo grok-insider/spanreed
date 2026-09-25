@@ -268,8 +268,16 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 guard.reset_in_flight,
                 now,
             ) {
-                guard.status_note = None;
-                guard.status_at = None;
+                match tray_format::next_status_after_expiry(guard.capture_up) {
+                    Some(note) => {
+                        guard.status_note = Some(note.into());
+                        guard.status_at = Some(now);
+                    }
+                    None => {
+                        guard.status_note = None;
+                        guard.status_at = None;
+                    }
+                }
                 guard.dirty = true;
             }
         }
@@ -679,6 +687,9 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
             );
             return;
         }
+    }
+    if !capture_up && g.status_note.is_none() {
+        stamp_status(&mut g, "Capture proxy is DOWN");
     }
     if let Some(band) = tray_format::crossed_threshold(prev_used, max_used) {
         let cool = g
