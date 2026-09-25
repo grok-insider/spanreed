@@ -1,8 +1,19 @@
 //! Usage: probes, the shared snapshot, history and local consumption.
 use crate::context::AppContext;
-use crate::model::ProviderOutput;
 
+pub use crate::model::{self, ProbeView, ProviderOutput};
+pub use crate::output::{plain, plain_with_view, waybar};
 pub use crate::usage::{UsageReport, catalog_view, connections, discovery};
+pub use crate::util::now_ms;
+
+pub fn format_history(samples: &[crate::history::HistorySample]) -> String {
+    crate::history::format_table(samples)
+}
+
+/// LiteLLM prices plus the models.dev OpenCode Go channel, as JSON.
+pub fn fetch_price_table() -> Result<String, String> {
+    crate::pricing::fetch_filtered()
+}
 
 pub fn history() -> Result<Vec<crate::history::HistorySample>, String> {
     crate::history::local_samples(None, 500)

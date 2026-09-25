@@ -26,6 +26,19 @@ pub fn begin_link() -> Result<PendingLogin, String> {
     crate::share_session::start_device_login()
 }
 
+pub const DEFAULT_API_BASE: &str = crate::share_state::DEFAULT_API_BASE;
+pub const TIME_ZONE_LABEL: &str = crate::util::SHARE_TZ_LABEL;
+
+/// A stored share session that can refresh its access token.
+pub fn has_refresh_session() -> bool {
+    crate::share_session::load().is_some_and(|session| !session.refresh_token.is_empty())
+}
+
+/// Wait for the browser approval of `pending`.
+pub fn wait_link(pending: &PendingLogin) -> Result<(), String> {
+    crate::share_session::wait_device_login(pending).map(|_| ())
+}
+
 /// Wait for approval, then enable the daily schedule.
 pub fn finish_link(pending: &PendingLogin) -> Result<(), String> {
     crate::share_session::wait_device_login(pending)?;

@@ -1,6 +1,5 @@
 //! Built-in status-bar integrations, rendered from the same cached snapshot.
 use std::path::Path;
-use std::process::ExitCode;
 
 const WAYBAR: &str = r#"{
   "custom/spanreed": {
@@ -28,7 +27,7 @@ sketchybar --add item spanreed right \
   click_script='spanreed gui'
 "#;
 
-fn files(name: &str) -> Option<Vec<(&'static str, &'static str)>> {
+pub fn files(name: &str) -> Option<Vec<(&'static str, &'static str)>> {
     match name {
         "waybar" => Some(vec![
             ("spanreed.jsonc", WAYBAR),
@@ -48,7 +47,7 @@ fn files(name: &str) -> Option<Vec<(&'static str, &'static str)>> {
     }
 }
 
-fn install(name: &str, directory: &Path) -> Result<(), String> {
+pub fn install(name: &str, directory: &Path) -> Result<(), String> {
     use std::io::Write;
     let files = files(name).ok_or("Unknown profile")?;
     if files.iter().any(|(name, _)| directory.join(name).exists()) {
@@ -75,77 +74,6 @@ fn install(name: &str, directory: &Path) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-pub fn cmd(args: &[String]) -> ExitCode {
-    let result = match args.first().map(String::as_str) {
-        None | Some("list") => {
-            println!("waybar\neww\neww-panel\nsketchybar");
-            return ExitCode::SUCCESS;
-        }
-        Some("show") if args.len() == 2 => files(&args[1])
-            .ok_or_else(|| "Unknown profile".into())
-            .map(|files| {
-                for (name, body) in files {
-                    println!("--- {name} ---\n{body}");
-                }
-            }),
-        Some("install") if args.len() == 4 && args[2] == "--output" => {
-            install(&args[1], Path::new(&args[3]))
-        }
-        _ => Err("Usage: spanreed profile list | show NAME | install NAME --output DIR".into()),
-    };
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-pub fn widget(ctx: &crate::context::AppContext, args: &[String]) -> ExitCode {
-    if args.first().is_some_and(|arg| arg == "panel") {
-        println!("{}", crate::panel::snapshot());
-        return ExitCode::SUCCESS;
-    }
-    if args.first().is_some_and(|arg| arg != "json") {
-        eprintln!("Usage: spanreed widget json | panel");
-        return ExitCode::FAILURE;
-    }
-    let mut outputs = ctx.snapshot(false);
-    for output in &mut outputs {
-        for line in &mut output.lines {
-            if let crate::model::MetricLine::Progress {
-                label,
-                used,
-                limit,
-                format,
-                ..
-            } = line
-            {
-                let value = match format {
-                    crate::model::ProgressFormat::Percent => format!("{used:.0}%"),
-                    crate::model::ProgressFormat::Dollars => format!("${used:.2} / ${limit:.2}"),
-                    crate::model::ProgressFormat::Count { suffix } => {
-                        format!("{used:.0} / {limit:.0} {suffix}")
-                    }
-                };
-                *line = crate::model::MetricLine::text(
-                    crate::model::MetricKind::Quota,
-                    label.clone(),
-                    value,
-                );
-            }
-        }
-    }
-    match serde_json::to_string(&outputs) {
-        Ok(json) => {
-            println!("{json}");
-            ExitCode::SUCCESS
-        }
-        Err(_) => ExitCode::FAILURE,
-    }
 }
 
 #[cfg(test)]

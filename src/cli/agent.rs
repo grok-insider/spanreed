@@ -21,7 +21,11 @@ pub fn defaults() -> CliDefaults {
     CliDefaults::new(HOST, COMMAND)
 }
 
-pub fn cmd(args: &[String]) -> ExitCode {
+pub(super) fn run(_ctx: &crate::app::AppContext, args: &[String]) -> ExitCode {
+    cmd(args)
+}
+
+pub(super) fn cmd(args: &[String]) -> ExitCode {
     if args.first().map(String::as_str) == Some("service") {
         return service::cmd(&args[1..]);
     }

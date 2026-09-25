@@ -13,6 +13,20 @@ pub fn valid_reset_request(request_id: &str) -> bool {
     crate::providers::codex::valid_redeem_request_id(request_id)
 }
 
+/// `spanreed auth copilot [--user LOGIN | --token-stdin]`.
+pub fn link_copilot(args: &[String]) -> Result<(), String> {
+    crate::providers::copilot::cmd_auth(args)
+}
+
+pub fn unlink_copilot() -> Result<(), String> {
+    crate::providers::copilot::cmd_logout()
+}
+
+/// `spanreed account …` (and the `spanreed grok …` addon shim).
+pub fn command(args: &[String]) -> Result<String, String> {
+    crate::drivers::dispatch_account(args)
+}
+
 pub fn add_api_key(provider: &str, alias: &str, key: &str) -> Result<(), String> {
     crate::account_keys::add(provider, alias, key).map(|_| ())
 }

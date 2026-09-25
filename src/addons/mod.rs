@@ -6,7 +6,7 @@ pub mod protocol;
 
 use crate::model::ProviderOutput;
 
-pub use host::{cmd as cmd_addon, dispatch_prefix, extra_detected_outputs, extra_provider_ids};
+pub use host::{dispatch_prefix, extra_detected_outputs, extra_provider_ids};
 pub use protocol::AddonHello;
 
 /// In-process addon (same ops as the JSON protocol).

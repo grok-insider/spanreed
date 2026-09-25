@@ -1,7 +1,11 @@
-//! `spanreed account …`
+//! `spanreed account …`: identities the host owns.
 
-pub fn cmd(args: &[String]) -> std::process::ExitCode {
-    match crate::drivers::dispatch_account(args) {
+use std::process::ExitCode;
+
+use crate::app::{self, AppContext};
+
+pub(super) fn run(_ctx: &AppContext, args: &[String]) -> ExitCode {
+    match app::accounts::command(args) {
         Ok(out) => {
             if !out.is_empty() {
                 print!("{out}");
@@ -9,11 +13,11 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
                     println!();
                 }
             }
-            std::process::ExitCode::SUCCESS
+            ExitCode::SUCCESS
         }
         Err(e) => {
             eprintln!("{e}");
-            std::process::ExitCode::FAILURE
+            ExitCode::FAILURE
         }
     }
 }

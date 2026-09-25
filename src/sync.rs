@@ -217,28 +217,6 @@ impl crate::ports::AfterProbe for HistorySync {
     }
 }
 
-pub fn cmd(ctx: &crate::context::AppContext, args: &[String]) -> std::process::ExitCode {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!(
-            "spanreed sync — synchronize selected private usage sources with Fabrials.\nSelect sources in Spanreed Settings and explicitly enable private history synchronization.\nNo provider credentials or request bodies are uploaded."
-        );
-        return std::process::ExitCode::SUCCESS;
-    }
-    match if args.first().is_some_and(|arg| arg == "link-codex") {
-        link_codex()
-    } else {
-        run(&ctx.pricing().table())
-    } {
-        Ok(message) => {
-            println!("{message}");
-            std::process::ExitCode::SUCCESS
-        }
-        Err(error) => {
-            eprintln!("{error}");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
 pub fn run(pricing: &crate::pricing::PricingMap) -> Result<String, String> {
     run_outputs(&crate::api::fetch_cached().unwrap_or_default(), pricing)
 }

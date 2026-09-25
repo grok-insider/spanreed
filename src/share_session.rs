@@ -353,69 +353,6 @@ pub fn wait_device_login(pending: &PendingLogin) -> Result<ShareSession, String>
     Err("share login: timed out waiting for approval".into())
 }
 
-/// Device authorization login (RFC 8628-style).
-pub fn cmd_login() -> std::process::ExitCode {
-    let pending = match start_device_login() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("share login: {e}");
-            return if e.contains("OFFLINE") {
-                std::process::ExitCode::SUCCESS
-            } else {
-                std::process::ExitCode::FAILURE
-            };
-        }
-    };
-
-    println!("spanreed share login\n");
-    println!("  1. Open:  {}", pending.verification_uri);
-    println!("  2. Code:  {}", pending.user_code);
-    println!("  3. Sign in with X and approve this CLI\n");
-    println!("Waiting for approval (up to {}s)…", pending.expires_in);
-
-    match wait_device_login(&pending) {
-        Ok(_) => {
-            println!("Logged in. Daily share can run without the browser.");
-            std::process::ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
-
-pub fn cmd_logout() -> std::process::ExitCode {
-    match clear() {
-        Ok(()) => {
-            println!("share: logged out (local session removed)");
-            std::process::ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("share logout: {e}");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
-
-pub fn cmd_status() -> std::process::ExitCode {
-    match load() {
-        Some(s) if !s.refresh_token.is_empty() => {
-            println!("share: logged in (refresh present)");
-            if let Some(day) = share::last_shared_day() {
-                println!("share: last shared day {day}");
-            } else {
-                println!("share: last shared day: never");
-            }
-            std::process::ExitCode::SUCCESS
-        }
-        _ => {
-            println!("share: not logged in — run: spanreed share login");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

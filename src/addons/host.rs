@@ -32,34 +32,6 @@ struct Manifest {
     enabled: Option<bool>,
 }
 
-pub fn cmd(args: &[String]) -> std::process::ExitCode {
-    match args.first().map(String::as_str) {
-        None | Some("list") => {
-            for row in list_all() {
-                let on = if row.enabled { "on" } else { "off" };
-                let cmds = if row.commands.is_empty() {
-                    String::new()
-                } else {
-                    format!(" cmds={}", row.commands.join(","))
-                };
-                println!(
-                    "{:<16} {:<8} {:<12} {}{cmds}",
-                    row.id, on, row.source, row.name
-                );
-            }
-            std::process::ExitCode::SUCCESS
-        }
-        Some("enable") | Some("disable") => {
-            eprintln!("addon enable/disable: edit ~/.config/spanreed/addons/<id>.toml");
-            std::process::ExitCode::FAILURE
-        }
-        Some(other) => {
-            eprintln!("unknown addon subcommand: {other}\nusage: spanreed addon list");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
-
 pub fn list_all() -> Vec<AddonListing> {
     let mut out = Vec::new();
     for a in compiled_in() {

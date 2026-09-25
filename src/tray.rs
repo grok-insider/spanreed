@@ -12,7 +12,7 @@
 //! long results like update checks). Never kill capture from the tray; use
 //! `capture ensure` only.
 
-use std::process::{Command, ExitCode};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -29,7 +29,7 @@ use crate::model::ProviderOutput;
 use crate::tray_format::{self, TraySeverity};
 use crate::util;
 
-const DEFAULT_INTERVAL_SECS: u64 = 60;
+pub const DEFAULT_INTERVAL_SECS: u64 = 60;
 const MASTER_PNG: &[u8] = include_bytes!("assets/tray/spanreed-32.png");
 const LOCK_FILE: &str = "tray.lock";
 
@@ -90,57 +90,8 @@ impl TrayState {
     }
 }
 
-/// CLI entry.
-pub fn cmd(ctx: &AppContext, args: &[String]) -> ExitCode {
-    let mut interval = DEFAULT_INTERVAL_SECS;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--interval" => {
-                i += 1;
-                let s = args
-                    .get(i)
-                    .ok_or_else(|| "--interval needs a value".to_string())
-                    .and_then(|v| v.parse::<u64>().map_err(|_| format!("bad --interval: {v}")));
-                match s {
-                    Ok(n) if n >= 5 => interval = n,
-                    Ok(_) => {
-                        eprintln!("tray: --interval minimum is 5s");
-                        return ExitCode::FAILURE;
-                    }
-                    Err(e) => {
-                        eprintln!("tray: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                }
-            }
-            "-h" | "--help" => {
-                println!(
-                    "spanreed tray — system tray status (Spanreed icon)\n\n\
-                     \t--interval S   Refresh every S seconds (default {DEFAULT_INTERVAL_SECS})\n\
-                     Left click opens the usage card. Right click keeps the menu:\n\
-                     \tOpen dashboard, Settings, Refresh, Ensure, Open log,\n\
-                     \tLink/Share/Unlink, Check/Install update, Quit tray"
-                );
-                return ExitCode::SUCCESS;
-            }
-            other => {
-                eprintln!("tray: unknown arg: {other}");
-                return ExitCode::FAILURE;
-            }
-        }
-        i += 1;
-    }
-
-    if let Err(e) = run_tray(ctx.clone(), interval) {
-        eprintln!("tray: {e}");
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    }
-}
-
-fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
+/// Run the tray until Quit; refreshes usage every `interval_secs`.
+pub fn run(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
     let _lock = acquire_single_instance()?;
 
     let event_loop = EventLoopBuilder::new().build();

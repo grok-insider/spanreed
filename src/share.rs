@@ -17,7 +17,7 @@ use crate::http::Request;
 use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
 use crate::util;
 
-use crate::share_state::{DEFAULT_API_BASE, api_base, is_due_today, is_offline, mark_shared_day};
+use crate::share_state::{api_base, is_due_today, is_offline, mark_shared_day};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct ShareSnapshot {
@@ -206,55 +206,6 @@ pub fn post_snapshot(
             res.status,
             res.body.chars().take(200).collect::<String>()
         ))
-    }
-}
-
-pub fn cmd(ctx: &crate::context::AppContext, args: &[String]) -> std::process::ExitCode {
-    if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!(
-            "spanreed share — authenticated upload of plan/quota metrics\n\n\
-             Requires a Grok Insider account (Sign in with X) linked once via:\n\
-               spanreed share login\n\n\
-             Sends aggregated provider+plan lines to the public community pool\n\
-             on fabrials.com. Server identity is your account (not install id).\n\n\
-             At most one local send per day (product TZ {tz}) unless --force.\n\
-             Same-day re-send upserts on the server.\n\n\
-             Subcommands: login | logout | status\n\
-             Optional SPANREED_API_BASE (default {DEFAULT_API_BASE}).\n\
-             SPANREED_OFFLINE=1 skips the network call.\n\
-             --force  bypass local same-day skip.",
-            tz = util::SHARE_TZ_LABEL
-        );
-        return std::process::ExitCode::SUCCESS;
-    }
-
-    if let Some(sub) = args.first().map(String::as_str) {
-        match sub {
-            "login" => return crate::share_session::cmd_login(),
-            "logout" => return crate::share_session::cmd_logout(),
-            "status" => return crate::share_session::cmd_status(),
-            _ => {}
-        }
-    }
-
-    let force = args.iter().any(|a| a == "--force");
-    match share_once(ctx, force) {
-        Ok(msg) => {
-            println!("{msg}");
-            std::process::ExitCode::SUCCESS
-        }
-        Err(e) if e.starts_with("share: SPANREED_OFFLINE") => {
-            eprintln!("{e}");
-            std::process::ExitCode::SUCCESS
-        }
-        Err(e) if e.contains("already sent") => {
-            eprintln!("{e}");
-            std::process::ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::ExitCode::FAILURE
-        }
     }
 }
 

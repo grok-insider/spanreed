@@ -4,14 +4,17 @@
 //! results.
 
 pub mod accounts;
+pub mod addons;
 pub mod capture;
 pub mod clients;
 pub mod fabrials;
 pub mod local_api;
 pub mod migration;
 pub mod notifications;
+pub mod profiles;
 pub mod proxy;
 pub mod routing;
+pub mod setup;
 pub mod sharing;
 pub mod sync;
 pub mod updates;
@@ -19,3 +22,5 @@ pub mod usage;
 pub mod window;
 
 pub use crate::context::AppContext;
+
+pub const PRODUCT_NAME: &str = crate::product::APP_NAME;
