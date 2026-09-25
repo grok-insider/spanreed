@@ -251,9 +251,10 @@ pub(crate) fn zenity_dialog_args(title: &str, body: &str) -> Vec<String> {
     ]
 }
 
-/// WPF `MessageBox` throws unless the PowerShell host is STA, and a WinForms
-/// box with no owner window can stay off the active desktop. `-STA` plus
-/// `DefaultDesktopOnly` puts the box on the desktop the user is looking at.
+/// WPF `MessageBox` throws unless the PowerShell host is STA, and that throw
+/// is easy to miss because the dialog is spawned. WinForms shows on the STA
+/// host Windows PowerShell already uses when `-STA` is set.
+/// `DefaultDesktopOnly` is for services and can put the box on another desktop.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn windows_dialog_script(title: &str, body: &str) -> String {
     fn escape(value: &str) -> String {
@@ -261,7 +262,7 @@ pub(crate) fn windows_dialog_script(title: &str, body: &str) -> String {
     }
     format!(
         "Add-Type -AssemblyName System.Windows.Forms; \
-         [System.Windows.Forms.MessageBox]::Show('{}','{}',[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Warning,[System.Windows.Forms.MessageBoxDefaultButton]::Button1,[System.Windows.Forms.MessageBoxOptions]::DefaultDesktopOnly) | Out-Null",
+         [System.Windows.Forms.MessageBox]::Show('{}','{}') | Out-Null",
         escape(body),
         escape(title)
     )
@@ -620,7 +621,7 @@ loop.run()
     fn windows_dialog_stays_visible_without_wpf() {
         let script = windows_dialog_script("Capture 'down'", "Line one\nLine two");
         assert!(script.contains("System.Windows.Forms.MessageBox"));
-        assert!(script.contains("DefaultDesktopOnly"));
+        assert!(!script.contains("DefaultDesktopOnly"));
         assert!(!script.contains("PresentationFramework"));
         assert!(script.contains("Capture ''down''"));
         assert!(script.contains("Line one Line two"));
