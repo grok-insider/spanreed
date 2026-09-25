@@ -197,22 +197,25 @@ pub fn refresh_rejection(status: u16) -> String {
 }
 
 pub struct Client {
-    http: reqwest::blocking::Client,
+    http: std::sync::Arc<dyn crate::http::HttpPort>,
     origins: Origins,
 }
 
 impl Client {
+    #[cfg(feature = "reqwest")]
     pub fn new() -> Result<Self, String> {
         Self::with_origins(Origins::default())
     }
 
+    #[cfg(feature = "reqwest")]
     pub fn with_origins(origins: Origins) -> Result<Self, String> {
-        reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map(|http| Self { http, origins })
+        crate::http::default_port(30)
+            .map(|http| Self::with_http(http, origins))
             .map_err(|_| "Kimi client unavailable".into())
+    }
+
+    pub fn with_http(http: std::sync::Arc<dyn crate::http::HttpPort>, origins: Origins) -> Self {
+        Self { http, origins }
     }
 
     pub fn origins(&self) -> &Origins {
@@ -220,15 +223,14 @@ impl Client {
     }
 
     fn get(&self, path: &str, token: &str) -> Result<Value, String> {
-        let mut request = self
+        let owned = headers(token);
+        let mut pairs: Vec<(&str, &str)> = vec![("Accept", "application/json")];
+        pairs.extend(owned.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        let response = self
             .http
-            .get(format!("{}{path}", self.origins.api_base))
-            .header("Accept", "application/json");
-        for (name, value) in headers(token) {
-            request = request.header(name, value);
-        }
-        let response = request.send().map_err(|_| "Kimi request failed")?;
-        let status = response.status().as_u16();
+            .get(&format!("{}{path}", self.origins.api_base), &pairs)
+            .map_err(|_| "Kimi request failed")?;
+        let status = response.status;
         if status == 401 || status == 403 {
             return Err("Kimi rejected the credential".into());
         }
@@ -236,7 +238,7 @@ impl Client {
             return Err(format!("Kimi /{path} HTTP {status}"));
         }
         response
-            .json::<Value>()
+            .json()
             .map_err(|_| "Kimi response was not JSON".to_string())
     }
 
@@ -254,15 +256,15 @@ impl Client {
         let refresh = refresh_token(document).ok_or("Kimi refresh token missing")?;
         let response = self
             .http
-            .post(&self.origins.token_url)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Accept", "application/json")
-            .body(refresh_body(&refresh))
-            .send()
+            .post_form(
+                &self.origins.token_url,
+                &[("Accept", "application/json")],
+                &refresh_body(&refresh),
+            )
             .map_err(|_| "Kimi refresh failed")?;
-        let status = response.status().as_u16();
+        let status = response.status;
         let body = response
-            .json::<Value>()
+            .json()
             .map_err(|_| "Kimi refresh response was not JSON".to_string())?;
         if !(200..300).contains(&status) {
             return Err(refresh_rejection(status));
@@ -367,6 +369,25 @@ fn membership_level(usage: &Value) -> Option<&str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|level| !level.is_empty())
+}
+
+/// The [`crate::subscription::SubscriptionProbe`] for this provider.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Subscription;
+
+impl crate::subscription::SubscriptionProbe for Subscription {
+    fn provider_id(&self) -> &'static str {
+        ID
+    }
+    fn is_subscription(&self, document: &Value) -> bool {
+        document
+            .get("access_token")
+            .and_then(Value::as_str)
+            .is_some_and(|token| !token.trim().is_empty())
+    }
+    fn usage_output(&self, usage: &Value, now_ms: i64) -> fabrials_types::ProviderOutput {
+        usage_output(usage, now_ms)
+    }
 }
 
 #[cfg(test)]

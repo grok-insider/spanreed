@@ -388,22 +388,25 @@ pub fn document_from_credentials(value: &Value, now: i64) -> Result<Value, Strin
 }
 
 pub struct Client {
-    http: reqwest::blocking::Client,
+    http: std::sync::Arc<dyn crate::http::HttpPort>,
     origins: Origins,
 }
 
 impl Client {
+    #[cfg(feature = "reqwest")]
     pub fn new() -> Result<Self, String> {
         Self::with_origins(Origins::default())
     }
 
+    #[cfg(feature = "reqwest")]
     pub fn with_origins(origins: Origins) -> Result<Self, String> {
-        reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map(|http| Self { http, origins })
+        crate::http::default_port(30)
+            .map(|http| Self::with_http(http, origins))
             .map_err(|_| "Claude client unavailable".into())
+    }
+
+    pub fn with_http(http: std::sync::Arc<dyn crate::http::HttpPort>, origins: Origins) -> Self {
+        Self { http, origins }
     }
 
     pub fn origins(&self) -> &Origins {
@@ -411,15 +414,14 @@ impl Client {
     }
 
     fn get(&self, path: &str, token: &str) -> Result<Value, String> {
-        let mut request = self
+        let owned = headers(token);
+        let mut pairs: Vec<(&str, &str)> = vec![("Accept", "application/json")];
+        pairs.extend(owned.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        let response = self
             .http
-            .get(format!("{}{path}", self.origins.api_base))
-            .header("Accept", "application/json");
-        for (name, value) in headers(token) {
-            request = request.header(name, value);
-        }
-        let response = request.send().map_err(|_| "Claude request failed")?;
-        let status = response.status().as_u16();
+            .get(&format!("{}{path}", self.origins.api_base), &pairs)
+            .map_err(|_| "Claude request failed")?;
+        let status = response.status;
         if status == 401 || status == 403 {
             return Err("Claude rejected the credential".into());
         }
@@ -427,7 +429,7 @@ impl Client {
             return Err(format!("Claude /{path} HTTP {status}"));
         }
         response
-            .json::<Value>()
+            .json()
             .map_err(|_| "Claude response was not JSON".to_string())
     }
 
@@ -457,15 +459,15 @@ impl Client {
         }
         let response = self
             .http
-            .post(&self.origins.token_url)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .json(&exchange_body(code.trim(), state, code_verifier))
-            .send()
+            .post_json(
+                &self.origins.token_url,
+                &[("Accept", "application/json")],
+                &exchange_body(code.trim(), state, code_verifier),
+            )
             .map_err(|_| "Claude authorization request failed")?;
-        let status = response.status().as_u16();
+        let status = response.status;
         let body = response
-            .json::<Value>()
+            .json()
             .map_err(|_| "Claude authorization response was not JSON".to_string())?;
         if matches!(status, 400 | 401 | 403) {
             return Err(authorization_rejection(&body));
@@ -488,15 +490,15 @@ impl Client {
         });
         let response = self
             .http
-            .post(&self.origins.token_url)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .json(&payload)
-            .send()
+            .post_json(
+                &self.origins.token_url,
+                &[("Accept", "application/json")],
+                &payload,
+            )
             .map_err(|_| "Claude refresh failed")?;
-        let status = response.status().as_u16();
+        let status = response.status;
         let body = response
-            .json::<Value>()
+            .json()
             .map_err(|_| "Claude refresh response was not JSON".to_string())?;
         if status == 400 || status == 401 {
             return Err(refresh_rejection(&body));
@@ -842,6 +844,25 @@ fn iso_utc(value: &Value) -> Option<String> {
     let text = value.as_str()?.trim();
     let parsed = OffsetDateTime::parse(text, &Rfc3339).ok()?;
     parsed.to_offset(time::UtcOffset::UTC).format(&Rfc3339).ok()
+}
+
+/// The [`crate::subscription::SubscriptionProbe`] for this provider.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Subscription;
+
+impl crate::subscription::SubscriptionProbe for Subscription {
+    fn provider_id(&self) -> &'static str {
+        ID
+    }
+    fn is_subscription(&self, document: &Value) -> bool {
+        document
+            .get("access_token")
+            .and_then(Value::as_str)
+            .is_some_and(is_oauth)
+    }
+    fn usage_output(&self, usage: &Value, now_ms: i64) -> fabrials_types::ProviderOutput {
+        usage_output(usage, now_ms)
+    }
 }
 
 #[cfg(test)]

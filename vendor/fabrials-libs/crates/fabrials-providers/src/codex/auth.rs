@@ -65,26 +65,29 @@ pub fn validate(document: &Value, now: i64) -> Result<(), String> {
     Ok(())
 }
 
+const USER_AGENT: (&str, &str) = ("User-Agent", "codex_cli_rs");
+
 pub struct Client {
-    http: reqwest::blocking::Client,
+    http: std::sync::Arc<dyn crate::http::HttpPort>,
 }
 impl Client {
+    #[cfg(feature = "reqwest")]
     pub fn new() -> Result<Self, String> {
-        Ok(Self {
-            http: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .redirect(reqwest::redirect::Policy::none())
-                .user_agent("codex_cli_rs")
-                .build()
-                .map_err(|_| "Could not initialize Codex authorization")?,
-        })
+        crate::http::default_port(30)
+            .map(Self::with_http)
+            .map_err(|_| "Could not initialize Codex authorization".into())
+    }
+    pub fn with_http(http: std::sync::Arc<dyn crate::http::HttpPort>) -> Self {
+        Self { http }
     }
     pub fn begin(&self) -> Result<DeviceAuthorization, String> {
         let value = read(
             self.http
-                .post(format!("{ISSUER}/api/accounts/deviceauth/usercode"))
-                .json(&json!({"client_id":CLIENT_ID}))
-                .send()
+                .post_json(
+                    &format!("{ISSUER}/api/accounts/deviceauth/usercode"),
+                    &[USER_AGENT],
+                    &json!({"client_id":CLIENT_ID}),
+                )
                 .map_err(|_| "Codex authorization unavailable")?,
         )?;
         let code = required(&value, "user_code").or_else(|_| required(&value, "usercode"))?;
@@ -109,44 +112,44 @@ impl Client {
             serde_json::from_str(code).map_err(|_| "Invalid saved Codex authorization")?;
         let response = self
             .http
-            .post(format!("{ISSUER}/api/accounts/deviceauth/token"))
-            .json(&proof)
-            .send()
+            .post_json(
+                &format!("{ISSUER}/api/accounts/deviceauth/token"),
+                &[USER_AGENT],
+                &proof,
+            )
             .map_err(|_| "Codex authorization check unavailable")?;
-        match response.status().as_u16() {
+        match response.status {
             403 | 404 => return Ok(PollResult::Pending),
             429 => return Ok(PollResult::SlowDown),
             _ => {}
         }
         let result = read(response)?;
+        let form = crate::http::form_body(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", CLIENT_ID),
+            (
+                "redirect_uri",
+                "https://auth.openai.com/deviceauth/callback",
+            ),
+            ("code", required(&result, "authorization_code")?),
+            ("code_verifier", required(&result, "code_verifier")?),
+        ]);
         let value = read(
             self.http
-                .post(format!("{ISSUER}/oauth/token"))
-                .form(&[
-                    ("grant_type", "authorization_code"),
-                    ("client_id", CLIENT_ID),
-                    (
-                        "redirect_uri",
-                        "https://auth.openai.com/deviceauth/callback",
-                    ),
-                    ("code", required(&result, "authorization_code")?),
-                    ("code_verifier", required(&result, "code_verifier")?),
-                ])
-                .send()
+                .post_form(&format!("{ISSUER}/oauth/token"), &[USER_AGENT], &form)
                 .map_err(|_| "Codex authorization exchange unavailable")?,
         )?;
         Ok(PollResult::Authorized(token_document(value, now, None)?))
     }
     pub fn refresh(&self, document: &Value, now: i64) -> Result<Value, String> {
+        let form = crate::http::form_body(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", CLIENT_ID),
+            ("refresh_token", required(document, "refresh_token")?),
+        ]);
         let value = read(
             self.http
-                .post(format!("{ISSUER}/oauth/token"))
-                .form(&[
-                    ("grant_type", "refresh_token"),
-                    ("client_id", CLIENT_ID),
-                    ("refresh_token", required(document, "refresh_token")?),
-                ])
-                .send()
+                .post_form(&format!("{ISSUER}/oauth/token"), &[USER_AGENT], &form)
                 .map_err(|_| "Codex token refresh unavailable")?,
         )?;
         token_document(value, now, Some(document))
@@ -158,17 +161,19 @@ impl Client {
         {
             return Err("Unsupported Codex metadata operation".into());
         }
-        let access = required(document, "access_token")?;
+        let bearer = format!("Bearer {}", required(document, "access_token")?);
+        let account = account_id(document).ok_or("Codex account missing")?;
         read(
             self.http
-                .get(format!("https://chatgpt.com{path}"))
-                .bearer_auth(access)
-                .header(
-                    "ChatGPT-Account-Id",
-                    account_id(document).ok_or("Codex account missing")?,
+                .get(
+                    &format!("https://chatgpt.com{path}"),
+                    &[
+                        USER_AGENT,
+                        ("Authorization", &bearer),
+                        ("ChatGPT-Account-Id", account),
+                        ("originator", "codex_cli_rs"),
+                    ],
                 )
-                .header("originator", "codex_cli_rs")
-                .send()
                 .map_err(|_| "Codex metadata unavailable")?,
         )
     }
@@ -185,34 +190,34 @@ impl Client {
         }
         let access =
             required(document, "access_token").map_err(|_| "Incomplete Codex authorization")?;
+        let bearer = format!("Bearer {access}");
+        let account = account_id(document).ok_or("Codex account missing")?;
         let response = self
             .http
-            .post("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume")
-            .bearer_auth(access)
-            .header(
-                "ChatGPT-Account-Id",
-                account_id(document).ok_or("Codex account missing")?,
+            .post_json(
+                "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+                &[
+                    USER_AGENT,
+                    ("Authorization", &bearer),
+                    ("ChatGPT-Account-Id", account),
+                    ("originator", "codex_cli_rs"),
+                    ("Accept", "application/json"),
+                ],
+                &json!({ "redeem_request_id": redeem_request_id }),
             )
-            .header("originator", "codex_cli_rs")
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-            .json(&json!({ "redeem_request_id": redeem_request_id }))
-            .send()
             .map_err(|_| "Codex reset unavailable")?;
-        if !response.status().is_success() {
+        if !response.is_success() {
             return Err("Codex reset unavailable");
         }
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        response
-            .take(1_048_577)
-            .read_to_end(&mut bytes)
-            .map_err(|_| "Could not read Codex reset")?;
-        if bytes.len() > 1_048_576 {
-            return Err("Codex reset response too large");
-        }
-        let value =
-            serde_json::from_slice::<Value>(&bytes).map_err(|_| "Codex did not redeem a reset")?;
+        let value = response
+            .json_within(1_048_576, "Codex reset response too large")
+            .map_err(|error| {
+                if error.contains("too large") {
+                    "Codex reset response too large"
+                } else {
+                    "Codex did not redeem a reset"
+                }
+            })?;
         interpret_consume(&value)
     }
 }
@@ -244,20 +249,15 @@ fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
         .filter(|s| !s.is_empty() && s.len() <= 16384)
         .ok_or_else(|| "Incomplete Codex authorization".into())
 }
-fn read(response: reqwest::blocking::Response) -> Result<Value, String> {
-    use std::io::Read;
-    if !response.status().is_success() {
-        return Err(format!("Codex authorization failed (HTTP {}). Check device login availability or authorize again.",response.status().as_u16()));
+fn read(response: crate::http::HttpResponse) -> Result<Value, String> {
+    if !response.is_success() {
+        return Err(format!("Codex authorization failed (HTTP {}). Check device login availability or authorize again.", response.status));
     }
-    let mut bytes = Vec::new();
-    response
-        .take(1_048_577)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Could not read Codex authorization")?;
-    if bytes.len() > 1_048_576 {
+    if response.body.len() > 1_048_576 {
         return Err("Codex authorization response too large".into());
     }
-    serde_json::from_slice(&bytes).map_err(|_| "Invalid Codex authorization response".into())
+    serde_json::from_slice(&response.body)
+        .map_err(|_| "Invalid Codex authorization response".into())
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use super::CodexAdapter;
-use fabrials_runtime::provider::{Provider, Upstream};
+use fabrials_fabric::provider::{CredentialInjector, Upstream, UsageExtractor};
 use fabrials_types::HopRecord;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -56,108 +56,7 @@ pub fn responses_request(mut value: Value, chat: bool) -> Result<Value, String> 
         return Err("Codex subscriptions do not support an output-token limit. Remove max_output_tokens, max_tokens and max_completion_tokens; use an API provider if your client requires a token cap.".into());
     }
     if chat {
-        for key in object.keys() {
-            if ![
-                "model",
-                "messages",
-                "stream",
-                "stream_options",
-                "tools",
-                "tool_choice",
-                "parallel_tool_calls",
-                "reasoning_effort",
-            ]
-            .contains(&key.as_str())
-            {
-                return Err(format!("Unsupported Codex Chat Completions field: {key}"));
-            }
-        }
-        let messages = value["messages"]
-            .as_array()
-            .ok_or("messages must be an array")?;
-        let mut input = Vec::new();
-        let mut instructions = Vec::new();
-        for message in messages {
-            let role = message["role"].as_str().ok_or("Message role missing")?;
-            if matches!(role, "system" | "developer") {
-                instructions.push(
-                    message["content"]
-                        .as_str()
-                        .ok_or("Instructions must be text")?
-                        .to_owned(),
-                );
-                continue;
-            }
-            if role == "tool" {
-                input.push(json!({"type":"function_call_output","call_id":message["tool_call_id"].as_str().ok_or("Tool call ID missing")?,"output":message["content"].as_str().ok_or("Tool output must be text")?}));
-                continue;
-            }
-            if !matches!(role, "user" | "assistant") {
-                return Err("Unsupported message role".into());
-            }
-            if let Some(calls) = message.get("tool_calls") {
-                if role != "assistant" {
-                    return Err("Only assistant messages may contain tool calls".into());
-                }
-                for call in calls.as_array().ok_or("tool_calls must be an array")? {
-                    if call["type"] != "function" {
-                        return Err("Only function tools are supported".into());
-                    }
-                    input.push(json!({"type":"function_call","call_id":call["id"].as_str().ok_or("Tool call ID missing")?,"name":call["function"]["name"].as_str().ok_or("Tool name missing")?,"arguments":call["function"]["arguments"].as_str().ok_or("Tool arguments must be a string")?}));
-                }
-            }
-            let content = &message["content"];
-            if content.is_null() {
-                continue;
-            }
-            let parts = if let Some(text) = content.as_str() {
-                vec![
-                    json!({"type":if role=="assistant" {"output_text"} else {"input_text"},"text":text}),
-                ]
-            } else {
-                content.as_array().ok_or("Unsupported message content")?.iter().map(|part| {
-                    match part["type"].as_str() {
-                        Some("text")=>Ok(json!({"type":if role=="assistant" {"output_text"} else {"input_text"},"text":part["text"].as_str().ok_or("Text missing")?})),
-                        Some("image_url") if role=="user"=>Ok(json!({"type":"input_image","image_url":part["image_url"]["url"].as_str().ok_or("Image URL missing")?,"detail":part["image_url"].get("detail").cloned().unwrap_or(json!("auto"))})),
-                        _=>Err("Unsupported content type".to_string()),
-                    }
-                }).collect::<Result<Vec<_>,String>>()?
-            };
-            input.push(json!({"role":role,"content":parts}));
-        }
-        let mut request =
-            json!({"model":value["model"],"input":input,"instructions":instructions.join("\n\n")});
-        if let Some(tools) = value.get("tools") {
-            let converted = tools
-                .as_array()
-                .ok_or("tools must be an array")?
-                .iter()
-                .map(|tool| {
-                    if tool["type"] != "function" {
-                        return Err("Only function tools are supported".to_string());
-                    }
-                    let mut function = tool["function"]
-                        .as_object()
-                        .ok_or("Invalid function tool")?
-                        .clone();
-                    function.insert("type".into(), json!("function"));
-                    Ok(Value::Object(function))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            request["tools"] = json!(converted);
-        }
-        for key in ["tool_choice", "parallel_tool_calls"] {
-            if let Some(v) = value.get(key) {
-                request[key] = v.clone();
-            }
-        }
-        if request["tool_choice"].is_object() {
-            request["tool_choice"] = json!({"type":"function","name":request["tool_choice"]["function"]["name"].as_str().ok_or("Invalid tool choice")?});
-        }
-        if let Some(effort) = value.get("reasoning_effort") {
-            request["reasoning"] = json!({"effort":effort});
-        }
-        value = request;
+        value = fabrials_fabric::wire_compat::chat_request_to_responses(&value)?;
     }
     value["store"] = json!(false);
     value["stream"] = json!(true);
@@ -167,38 +66,6 @@ pub fn responses_request(mut value: Value, chat: bool) -> Result<Value, String> 
     Ok(value)
 }
 
-pub fn chat_response(response: &Value) -> Value {
-    let mut text = String::new();
-    let mut tools = Vec::new();
-    let mut refusal = String::new();
-    for item in response["output"].as_array().into_iter().flatten() {
-        if item["type"] == "function_call" {
-            tools.push(json!({"id":item["call_id"],"type":"function","function":{"name":item["name"],"arguments":item["arguments"]}}));
-        }
-        for part in item["content"].as_array().into_iter().flatten() {
-            if let Some(s) = part["text"].as_str() {
-                text.push_str(s);
-            }
-            if let Some(s) = part["refusal"].as_str() {
-                refusal.push_str(s);
-            }
-        }
-    }
-    let mut message =
-        json!({"role":"assistant","content":if text.is_empty(){Value::Null}else{json!(text)}});
-    if !tools.is_empty() {
-        message["tool_calls"] = json!(tools);
-    }
-    if !refusal.is_empty() {
-        message["refusal"] = json!(refusal);
-    }
-    json!({"id":response["id"],"object":"chat.completion","created":response["created_at"],"model":response["model"],
-        "choices":[{"index":0,"message":message,"finish_reason":if response["status"]=="incomplete" {"length"} else if !tools.is_empty(){"tool_calls"}else{"stop"}}],"usage":chat_usage(&response["usage"])})
-}
-fn chat_usage(usage: &Value) -> Value {
-    json!({"prompt_tokens":usage["input_tokens"],"completion_tokens":usage["output_tokens"],"total_tokens":usage["total_tokens"],
-        "prompt_tokens_details":usage["input_tokens_details"],"completion_tokens_details":usage["output_tokens_details"]})
-}
 fn json_reply(client: &mut dyn Write, status: u16, value: &Value) -> Result<(), String> {
     let body = value.to_string();
     write!(client,"HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).map_err(|_|"Client disconnected".into())
@@ -272,7 +139,7 @@ pub fn forward(
     } else {
         "/backend-api/codex/responses".to_string()
     };
-    let url = fabrials_runtime::forward::validated_upstream_url(base, &endpoint)
+    let url = fabrials_fabric::forward::validated_upstream_url(base, &endpoint)
         .map_err(|_| "Invalid Codex origin")?;
     let http = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
@@ -483,7 +350,7 @@ pub fn forward(
     record.status = Some(200);
     record.duration_ms = Some(started.elapsed().as_millis() as u64);
     if chat {
-        let result = chat_response(&terminal);
+        let result = fabrials_fabric::wire_compat::responses_to_chat_response(&terminal);
         if stream {
             data(
                 client,

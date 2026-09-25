@@ -1,6 +1,9 @@
-use fabrials_runtime::provider::{Provider, Upstream};
-use fabrials_runtime::routes::parse_fabric_path;
-use fabrials_runtime::routes::{UPSTREAM_GROK_CLI, UPSTREAM_XAI_API};
+pub mod models;
+use crate::routes::parse_fabric_path;
+use crate::routes::{UPSTREAM_GROK_CLI, UPSTREAM_XAI_API};
+use fabrials_fabric::provider::{
+    BodyShaper, CredentialInjector, Router, Translator, Upstream, UsageExtractor,
+};
 use fabrials_types::hop::HopClass;
 use fabrials_types::HopRecord;
 /// Client identity headers sent to Grok upstreams. The host chooses the values.
@@ -49,7 +52,7 @@ pub struct GrokAdapter {
     pub identity: GrokClientIdentity,
 }
 
-impl Provider for GrokAdapter {
+impl Router for GrokAdapter {
     fn id(&self) -> &'static str {
         "grok"
     }
@@ -76,6 +79,18 @@ impl Provider for GrokAdapter {
         })
     }
 
+    fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
+        HopClass::openai_compat(&hop.path, upgrade)
+    }
+
+    fn allows_request(&self, method: &str, hop: &Upstream, upgrade: bool) -> bool {
+        fabrials_types::hop::core_request_allowed(method, &hop.path)
+            || fabrials_types::hop::media_request_allowed(method, &hop.path, upgrade)
+            || fabrials_types::hop::cli_aux_request_allowed(method, &hop.path)
+    }
+}
+
+impl CredentialInjector for GrokAdapter {
     fn inject(&self, token: &str) -> Vec<(String, String)> {
         self.identity.cli_headers(token)
     }
@@ -95,23 +110,33 @@ impl Provider for GrokAdapter {
         }
         hop.base = self.cli_origin();
     }
+}
 
+impl UsageExtractor for GrokAdapter {
     fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
         let text = String::from_utf8_lossy(response_body);
-        fabrials_metrics::usage_from_response_body(&text)
+        fabrials_providers::sse::usage_from_response_body(&text)
             .map(|p| p.into_record(now_ms(), None, None, Some("grok".into())))
     }
+}
 
-    fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
-        HopClass::openai_compat(&hop.path, upgrade)
-    }
-
-    fn allows_request(&self, method: &str, hop: &Upstream, upgrade: bool) -> bool {
-        fabrials_types::hop::core_request_allowed(method, &hop.path)
-            || fabrials_types::hop::media_request_allowed(method, &hop.path, upgrade)
-            || fabrials_types::hop::cli_aux_request_allowed(method, &hop.path)
+impl Translator for GrokAdapter {
+    /// The model listing goes through the host's catalog rewrite
+    /// ([`models::rewrite_grok_models_body`]).
+    fn rewrites_models_list(&self, method: &str, hop: &Upstream) -> bool {
+        method.eq_ignore_ascii_case("GET")
+            && (hop.route == "xai" || hop.route == "grok")
+            && hop
+                .path
+                .split('?')
+                .next()
+                .unwrap_or(&hop.path)
+                .trim_end_matches('/')
+                == "/v1/models"
     }
 }
+
+impl BodyShaper for GrokAdapter {}
 
 impl GrokAdapter {
     fn cli_origin(&self) -> String {

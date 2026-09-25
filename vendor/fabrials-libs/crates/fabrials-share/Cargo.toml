@@ -11,5 +11,5 @@ publish = false
 
 [dependencies]
 fabrials-types = { path = "../fabrials-types" }
-fabrials-metrics = { path = "../fabrials-metrics" }
+fabrials-pricing = { path = "../fabrials-pricing" }
 serde_json = "1"

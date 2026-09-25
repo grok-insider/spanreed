@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use fabrials_metrics::list_cost_usd;
+use fabrials_pricing::list_cost_usd;
 use fabrials_types::{
     HopRecord, MetricKind, MetricLine, ModelEconomics, ProviderEconomics, ProviderOutput,
     ShareSnapshot,

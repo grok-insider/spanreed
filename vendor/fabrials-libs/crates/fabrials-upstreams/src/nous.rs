@@ -1,9 +1,11 @@
-use fabrials_runtime::provider::{Provider, Upstream};
-use fabrials_runtime::routes::parse_fabric_path;
+use crate::routes::parse_fabric_path;
+use fabrials_fabric::provider::{
+    BodyShaper, CredentialInjector, Router, Translator, Upstream, UsageExtractor,
+};
 use fabrials_types::hop::HopClass;
 use fabrials_types::HopRecord;
 pub const USER_AGENT: &str = concat!(
-    "fabrials-runtime/",
+    "fabrials-fabric/",
     env!("CARGO_PKG_VERSION"),
     " (+https://fabrials.com)"
 );
@@ -13,7 +15,7 @@ pub struct NousAdapter {
     pub base: Option<String>,
 }
 
-impl Provider for NousAdapter {
+impl Router for NousAdapter {
     fn id(&self) -> &'static str {
         "nous"
     }
@@ -32,23 +34,31 @@ impl Provider for NousAdapter {
         })
     }
 
+    fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
+        HopClass::openai_compat(&hop.path, upgrade)
+    }
+}
+
+impl CredentialInjector for NousAdapter {
     fn inject(&self, token: &str) -> Vec<(String, String)> {
         vec![
             ("Authorization".into(), format!("Bearer {token}")),
             ("User-Agent".into(), USER_AGENT.into()),
         ]
     }
+}
 
+impl UsageExtractor for NousAdapter {
     fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
         let text = String::from_utf8_lossy(response_body);
-        fabrials_metrics::usage_from_response_body(&text)
+        fabrials_providers::sse::usage_from_response_body(&text)
             .map(|p| p.into_record(now_ms(), None, None, Some("nous".into())))
     }
-
-    fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
-        HopClass::openai_compat(&hop.path, upgrade)
-    }
 }
+
+impl Translator for NousAdapter {}
+
+impl BodyShaper for NousAdapter {}
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()

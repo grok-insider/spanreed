@@ -1,6 +1,8 @@
-use fabrials_runtime::catalog::CatalogRoute;
-use fabrials_runtime::provider::{Provider, Upstream};
-use fabrials_runtime::routes::parse_fabric_path;
+pub use crate::catalog_routes::*;
+use crate::routes::parse_fabric_path;
+use fabrials_fabric::provider::{
+    BodyShaper, CredentialInjector, Router, Translator, Upstream, UsageExtractor,
+};
 use fabrials_types::hop::HopClass;
 use fabrials_types::HopRecord;
 
@@ -8,7 +10,7 @@ pub struct CatalogAdapter {
     pub spec: &'static CatalogRoute,
 }
 
-impl Provider for CatalogAdapter {
+impl Router for CatalogAdapter {
     fn id(&self) -> &'static str {
         self.spec.id
     }
@@ -26,17 +28,6 @@ impl Provider for CatalogAdapter {
         })
     }
 
-    fn inject(&self, token: &str) -> Vec<(String, String)> {
-        self.spec.credential_headers(token)
-    }
-
-    fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
-        let text = String::from_utf8_lossy(response_body);
-        fabrials_metrics::usage_from_messages_body(&text)
-            .or_else(|| fabrials_metrics::usage_from_response_body(&text))
-            .map(|parsed| parsed.into_record(now_ms(), None, None, Some(self.spec.id.into())))
-    }
-
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
         HopClass::openai_compat(&hop.path, upgrade)
     }
@@ -46,6 +37,25 @@ impl Provider for CatalogAdapter {
         self.spec.allows(method, &hop.path)
     }
 }
+
+impl CredentialInjector for CatalogAdapter {
+    fn inject(&self, token: &str) -> Vec<(String, String)> {
+        self.spec.credential_headers(token)
+    }
+}
+
+impl UsageExtractor for CatalogAdapter {
+    fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
+        let text = String::from_utf8_lossy(response_body);
+        fabrials_providers::sse::usage_from_messages_body(&text)
+            .or_else(|| fabrials_providers::sse::usage_from_response_body(&text))
+            .map(|parsed| parsed.into_record(now_ms(), None, None, Some(self.spec.id.into())))
+    }
+}
+
+impl Translator for CatalogAdapter {}
+
+impl BodyShaper for CatalogAdapter {}
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -57,7 +67,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_runtime::catalog::{by_id, CatalogSurface};
+    use crate::catalog_routes::{by_id, CatalogSurface};
 
     #[test]
     fn openrouter_owns_its_prefix_and_core_surface() {

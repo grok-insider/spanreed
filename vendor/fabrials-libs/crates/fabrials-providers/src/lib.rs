@@ -8,11 +8,15 @@ pub mod nous;
 
 pub mod device_flow;
 
+pub mod http;
+
 pub mod catalog;
 
 pub mod oauth;
 
-pub mod usage;
+pub mod sse;
+
+pub mod subscription;
 
 /// An absolute http(s) origin without its trailing slash, or the pinned default.
 pub(crate) fn origin_or(candidate: Option<&str>, pinned: &str) -> String {

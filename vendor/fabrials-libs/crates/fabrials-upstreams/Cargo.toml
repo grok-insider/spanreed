@@ -7,13 +7,14 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/grok-insider/fabrials-libs"
 authors = ["Grok Insider <admin@grokinsider.net>"]
 publish = false
-description = "Provider adapters that plug into the fabrials-runtime proxy engine"
+description = "Provider adapters that plug into the fabrials-fabric proxy engine"
 
 [dependencies]
 fabrials-types = { path = "../fabrials-types" }
-fabrials-runtime = { path = "../fabrials-runtime" }
+fabrials-fabric = { path = "../fabrials-fabric" }
 fabrials-providers = { path = "../fabrials-providers" }
-fabrials-metrics = { path = "../fabrials-metrics" }
+fabrials-accounts = { path = "../fabrials-accounts" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
 futures-util = { version = "0.3", features = ["sink"] }

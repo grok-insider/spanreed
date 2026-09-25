@@ -1,6 +1,6 @@
 //! Grok client identity comes from the host, never from the process environment.
 
-use fabrials_runtime::provider::Provider;
+use fabrials_fabric::provider::{CredentialInjector, Router};
 use fabrials_upstreams::grok::{GrokAdapter, GrokClientIdentity};
 
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {

@@ -5,7 +5,17 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde_json::Value;
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(feature = "reqwest")]
 pub fn verify(token: &str, now_ms: i64) -> Result<String, String> {
+    verify_with(crate::http::default_port(30)?.as_ref(), token, now_ms)
+}
+
+/// [`verify`] with the host's HTTP; the signing keys are cached for an hour.
+pub fn verify_with(
+    http: &dyn crate::http::HttpPort,
+    token: &str,
+    now_ms: i64,
+) -> Result<String, String> {
     static CACHE: OnceLock<Mutex<Option<(std::time::Instant, Value)>>> = OnceLock::new();
     let mut cache = CACHE
         .get_or_init(|| Mutex::new(None))
@@ -15,10 +25,11 @@ pub fn verify(token: &str, now_ms: i64) -> Result<String, String> {
         .as_ref()
         .is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_secs(3600))
     {
-        let response = super::Client::new()?
-            .http
-            .get("https://auth.openai.com/.well-known/jwks.json")
-            .send()
+        let response = http
+            .get(
+                "https://auth.openai.com/.well-known/jwks.json",
+                &[super::USER_AGENT],
+            )
             .map_err(|_| "OpenAI signing keys unavailable")?;
         *cache = Some((std::time::Instant::now(), super::read(response)?));
     }

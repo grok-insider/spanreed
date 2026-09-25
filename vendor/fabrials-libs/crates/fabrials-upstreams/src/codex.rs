@@ -1,4 +1,6 @@
-use fabrials_runtime::provider::{Provider, Upstream};
+use fabrials_fabric::provider::{
+    BodyShaper, CredentialInjector, Router, Translator, Upstream, UsageExtractor,
+};
 use fabrials_types::hop::{HopClass, HopKind, Transport};
 use fabrials_types::HopRecord;
 use serde_json::Value;
@@ -9,12 +11,13 @@ pub mod websocket;
 pub struct CodexAdapter {
     pub base: Option<String>,
 }
-impl Provider for CodexAdapter {
+impl Router for CodexAdapter {
     fn id(&self) -> &'static str {
         "codex"
     }
+
     fn resolve(&self, raw: &str) -> Option<Upstream> {
-        let route = fabrials_runtime::routes::parse_fabric_path(raw);
+        let route = crate::routes::parse_fabric_path(raw);
         if route.route != "codex" {
             return None;
         }
@@ -42,31 +45,7 @@ impl Provider for CodexAdapter {
             route: "codex",
         })
     }
-    fn inject(&self, token: &str) -> Vec<(String, String)> {
-        vec![
-            ("Authorization".into(), format!("Bearer {token}")),
-            ("originator".into(), "codex_cli_rs".into()),
-            ("User-Agent".into(), "codex_cli_rs".into()),
-        ]
-    }
-    fn credential_headers(
-        &self,
-        token: &str,
-        _hop: &Upstream,
-        secret: Option<&Value>,
-    ) -> Result<Vec<(String, String)>, String> {
-        let id = secret
-            .and_then(|s| s["account_id"].as_str())
-            .filter(|s| !s.is_empty() && s.len() <= 256 && s.bytes().all(|b| b.is_ascii_graphic()))
-            .ok_or("Codex account identity unavailable")?;
-        let mut headers = self.inject(token);
-        headers.push(("ChatGPT-Account-Id".into(), id.into()));
-        Ok(headers)
-    }
-    fn parse_usage(&self, body: &[u8]) -> Option<HopRecord> {
-        fabrials_metrics::usage_from_response_body(&String::from_utf8_lossy(body))
-            .map(|p| p.into_record(translation::now_ms(), None, None, Some("codex".into())))
-    }
+
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
         let path = codex_api_path(&hop.path);
         HopClass {
@@ -93,12 +72,48 @@ impl Provider for CodexAdapter {
             _ => false,
         }
     }
+}
+
+impl CredentialInjector for CodexAdapter {
+    fn inject(&self, token: &str) -> Vec<(String, String)> {
+        vec![
+            ("Authorization".into(), format!("Bearer {token}")),
+            ("originator".into(), "codex_cli_rs".into()),
+            ("User-Agent".into(), "codex_cli_rs".into()),
+        ]
+    }
+
+    fn credential_headers(
+        &self,
+        token: &str,
+        _hop: &Upstream,
+        secret: Option<&Value>,
+    ) -> Result<Vec<(String, String)>, String> {
+        let id = secret
+            .and_then(|s| s["account_id"].as_str())
+            .filter(|s| !s.is_empty() && s.len() <= 256 && s.bytes().all(|b| b.is_ascii_graphic()))
+            .ok_or("Codex account identity unavailable")?;
+        let mut headers = self.inject(token);
+        headers.push(("ChatGPT-Account-Id".into(), id.into()));
+        Ok(headers)
+    }
+}
+
+impl UsageExtractor for CodexAdapter {
+    fn parse_usage(&self, body: &[u8]) -> Option<HopRecord> {
+        fabrials_providers::sse::usage_from_response_body(&String::from_utf8_lossy(body))
+            .map(|p| p.into_record(translation::now_ms(), None, None, Some("codex".into())))
+    }
+}
+
+impl Translator for CodexAdapter {
     fn websocket_hop(
         &self,
-        hop: fabrials_runtime::forward::WebSocketHop<'_>,
+        hop: fabrials_fabric::forward::WebSocketHop<'_>,
     ) -> Option<Result<(), String>> {
         Some(websocket::forward(self, hop))
     }
+
     fn translated_hop(
         &self,
         method: &str,
@@ -113,6 +128,8 @@ impl Provider for CodexAdapter {
         ))
     }
 }
+
+impl BodyShaper for CodexAdapter {}
 
 fn codex_api_path(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
