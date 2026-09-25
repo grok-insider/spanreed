@@ -160,7 +160,7 @@ fn jwt_exp_ms(token: &str) -> Option<i64> {
 fn decode_b64url(s: &str) -> Option<Vec<u8>> {
     use base64::Engine;
     let mut t = s.replace('-', "+").replace('_', "/");
-    while !t.len().is_multiple_of(4) {
+    while t.len() % 4 != 0 {
         t.push('=');
     }
     base64::engine::general_purpose::STANDARD.decode(t).ok()

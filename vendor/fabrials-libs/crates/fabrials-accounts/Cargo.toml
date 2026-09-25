@@ -3,6 +3,7 @@ name = "fabrials-accounts"
 version = "0.2.0"
 description = "Host-owned account registry for Fabrials (Spanreed and ai-relay)"
 edition = "2021"
+rust-version = "1.85"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/grok-insider/fabrials-libs"
 authors = ["Grok Insider <admin@grokinsider.net>"]
