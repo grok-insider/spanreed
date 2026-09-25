@@ -327,43 +327,55 @@ mod tests {
     use std::path::Path;
 
     /// The fabrials-agent-host scripted ACP agent, built on demand into this
-    /// test's profile (and target triple, as in the Nix check phase).
-    fn fake_agent() -> PathBuf {
-        let exe = std::env::current_exe().expect("test exe");
-        let profile_dir = exe
-            .parent()
-            .and_then(Path::parent)
-            .expect("target profile directory");
+    /// test's profile and target. `None` when it cannot be built (the Nix
+    /// check phase has no registry for the example's dev-dependencies).
+    fn fake_agent() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let profile_dir = exe.parent().and_then(Path::parent)?;
         let path = profile_dir
             .join("examples")
             .join(format!("fake_agent{}", std::env::consts::EXE_SUFFIX));
-        if !path.exists() {
-            let mut command = std::process::Command::new(env!("CARGO"));
-            command.args([
-                "build",
-                "--offline",
-                "-p",
-                "fabrials-agent-host",
-                "--example",
-                "fake_agent",
-            ]);
-            let profile = profile_dir.file_name().and_then(|name| name.to_str());
-            if let Some(profile) = profile.filter(|profile| *profile != "debug") {
-                command.args(["--profile", profile]);
-            }
-            let triple = profile_dir
-                .parent()
-                .and_then(Path::file_name)
-                .and_then(|name| name.to_str())
-                .filter(|name| name.matches('-').count() >= 2);
-            if let Some(triple) = triple {
-                command.args(["--target", triple]);
-            }
-            let status = command.status().expect("spawn cargo");
-            assert!(status.success(), "cargo build --example fake_agent failed");
+        if path.exists() {
+            return Some(path);
         }
-        assert!(path.exists(), "missing {}", path.display());
-        path
+        let mut command = std::process::Command::new(env!("CARGO"));
+        command.args([
+            "build",
+            "--offline",
+            "-p",
+            "fabrials-agent-host",
+            "--example",
+            "fake_agent",
+        ]);
+        let profile = profile_dir.file_name().and_then(|name| name.to_str());
+        if let Some(profile) = profile.filter(|profile| *profile != "debug") {
+            command.args(["--profile", profile]);
+        }
+        let triple = profile_dir
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .filter(|name| name.matches('-').count() >= 2);
+        if let Some(triple) = triple {
+            command.args(["--target", triple]);
+        }
+        let built = command.status().is_ok_and(|status| status.success());
+        (built && path.exists()).then_some(path)
+    }
+
+    /// The fake agent, or a missing program: the host serves and keeps
+    /// relaunching either way, which is all the controller relies on.
+    fn agent_program() -> String {
+        match fake_agent() {
+            Some(path) => path.to_string_lossy().into_owned(),
+            None => {
+                eprintln!("fake_agent unavailable; testing the host with a missing agent");
+                std::env::temp_dir()
+                    .join("spanreed-missing-agent")
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        }
     }
 
     /// A free port in the agent host's allocation range.
@@ -409,7 +421,7 @@ mod tests {
 
     fn launch(dir: &Path) -> AgentLaunch {
         let mut config = HostConfig::new(dir, HOST);
-        config.agent_program = fake_agent().to_string_lossy().into_owned();
+        config.agent_program = agent_program();
         config.picker = Some(Arc::new(
             fabrials_agent_host::picker::UnavailableDirectoryPicker,
         ));
