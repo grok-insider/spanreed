@@ -446,12 +446,29 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn copy_true_stub(destination: &std::path::Path) {
+        let from_path = std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path).find_map(|dir| {
+                let candidate = dir.join("true");
+                candidate.is_file().then_some(candidate)
+            })
+        });
+        let source = ["/bin/true", "/usr/bin/true"]
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .find(|path| path.is_file())
+            .or(from_path)
+            .expect("true");
+        std::fs::copy(source, destination).unwrap();
+    }
+
+    #[cfg(unix)]
     #[test]
     fn request_starts_the_desktop_named_by_the_environment() {
         with_data_home(|dir| {
             std::fs::create_dir_all(dir).unwrap();
             let stub = dir.join("spanreed-desktop");
-            std::fs::copy("/bin/true", &stub).unwrap();
+            copy_true_stub(&stub);
             let mut permissions = std::fs::metadata(&stub).unwrap().permissions();
             use std::os::unix::fs::PermissionsExt;
             permissions.set_mode(0o755);
@@ -475,7 +492,7 @@ mod tests {
             let bin = dir.join("bin");
             std::fs::create_dir_all(&bin).unwrap();
             let stub = bin.join("spanreed-desktop");
-            std::fs::copy("/bin/true", &stub).unwrap();
+            copy_true_stub(&stub);
             let mut permissions = std::fs::metadata(&stub).unwrap().permissions();
             use std::os::unix::fs::PermissionsExt;
             permissions.set_mode(0o755);

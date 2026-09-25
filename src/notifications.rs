@@ -434,12 +434,19 @@ loop.run()
 "#,
         )
         .unwrap();
-        let mut daemon = std::process::Command::new("dbus-daemon")
+        let mut daemon = match std::process::Command::new("dbus-daemon")
             .args(["--session", "--nofork", "--print-address=1"])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .expect("dbus-daemon");
+        {
+            Ok(daemon) => daemon,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+            Err(error) => panic!("dbus-daemon: {error}"),
+        };
         let mut address = String::new();
         BufReader::new(daemon.stdout.take().expect("address"))
             .read_line(&mut address)
@@ -452,14 +459,23 @@ loop.run()
             std::path::Path::new("python3")
         };
         let stderr = std::fs::File::create(&stderr_log).unwrap();
-        let mut service = std::process::Command::new(python)
+        let mut service = match std::process::Command::new(python)
             .arg(&script)
             .arg(&log)
             .arg(&ready)
             .env("DBUS_SESSION_BUS_ADDRESS", &address)
             .stderr(stderr)
             .spawn()
-            .expect("notification service");
+        {
+            Ok(service) => service,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let _ = daemon.kill();
+                let _ = daemon.wait();
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+            Err(error) => panic!("notification service: {error}"),
+        };
         for _ in 0..50 {
             if ready.exists() || service.try_wait().ok().flatten().is_some() {
                 break;
