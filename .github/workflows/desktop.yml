@@ -2,7 +2,7 @@ name: Desktop builds
 
 on:
   pull_request:
-    paths: ['desktop/**', 'src/**', 'vendor/**', 'Cargo.*', '.gitattributes', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'src/**', 'crates/**', 'vendor/**', 'Cargo.*', '.gitattributes', '.github/workflows/desktop.yml']
   workflow_dispatch:
     inputs:
       pr_number:

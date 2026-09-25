@@ -48,12 +48,27 @@ def next_version(version, bump):
             "minor": f"{major}.{minor + 1}.0", "major": f"{major + 1}.0.0"}[bump]
 
 
-def expected_assets(version):
+def binary_assets(version):
+    """Release binaries, one per builder; each ships with a `.sha256` file."""
     version_tuple(version)
-    names = [f"spanreed-{version}-x86_64-unknown-linux-musl.tar.gz",
-             f"spanreed-{version}-x86_64-pc-windows-msvc.zip",
-             f"Spanreed_{version}_amd64.deb", f"Spanreed_{version}_x64-setup.exe"]
+    return [f"spanreed-{version}-x86_64-unknown-linux-musl.tar.gz",
+            f"spanreed-{version}-x86_64-pc-windows-msvc.zip",
+            f"spanreed-{version}-aarch64-apple-darwin.tar.gz",
+            f"spanreed-{version}-x86_64-apple-darwin.tar.gz",
+            f"spanreed-{version}-universal-apple-darwin.tar.gz",
+            f"Spanreed_{version}_amd64.deb", f"Spanreed_{version}_x64-setup.exe"]
+
+
+def expected_assets(version):
+    names = binary_assets(version)
     return names + [name + ".sha256" for name in names]
+
+
+# Workspace packages released with the CLI version, and those the desktop
+# host locks (it depends on spanreed-app and spanreed-adapters, which depend
+# on spanreed-domain).
+LOCAL_PACKAGES = ("spanreed", "spanreed-domain", "spanreed-app", "spanreed-adapters", "spanreed-tray")
+DESKTOP_PACKAGES = ("spanreed-domain", "spanreed-app", "spanreed-adapters", "spanreed-desktop")
 
 
 def package_version():
@@ -63,13 +78,15 @@ def package_version():
 def check_versions():
     version = package_version()
     version_tuple(version)
+    if tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"] != version:
+        raise ValueError("Workspace package version differs from CLI")
     for name in ("desktop/package.json", "desktop/src-tauri/tauri.conf.json"):
         if json.loads(Path(name).read_text())["version"] != version:
             raise ValueError(f"Version mismatch: {name}")
     if tomllib.loads(Path("desktop/src-tauri/Cargo.toml").read_text())["package"]["version"] != version:
         raise ValueError("Desktop Cargo version differs from CLI")
-    for name, packages in (("Cargo.lock", ("spanreed",)),
-                           ("desktop/src-tauri/Cargo.lock", ("spanreed", "spanreed-desktop"))):
+    for name, packages in (("Cargo.lock", LOCAL_PACKAGES),
+                           ("desktop/src-tauri/Cargo.lock", DESKTOP_PACKAGES)):
         entries = tomllib.loads(Path(name).read_text())["package"]
         for package in packages:
             matches = [p for p in entries if p["name"] == package]
@@ -81,15 +98,18 @@ def check_versions():
 def bump_files(version):
     version_tuple(version)
     path = Path("Cargo.toml")
-    text, count = re.subn(r'(?m)^version = "[^"]+"$', f'version = "{version}"', path.read_text(), count=1)
-    if count != 1:
-        raise ValueError("Missing package version")
+    # [package] and [workspace.package]; member crates inherit the latter.
+    text, count = re.subn(r'(?m)^version = "[^"]+"$', f'version = "{version}"', path.read_text())
+    if count != 2:
+        raise ValueError("Missing package or workspace version")
     path.write_text(text)
     path = Path("Cargo.lock")
-    text, count = re.subn(r'(\[\[package\]\]\nname = "spanreed"\nversion = ")[^"]+("\n)',
-                        lambda m: m[1] + version + m[2], path.read_text())
-    if count != 1:
-        raise ValueError("Missing local lock entry")
+    text = path.read_text()
+    for package in LOCAL_PACKAGES:
+        text, count = re.subn(rf'(\[\[package\]\]\nname = "{package}"\nversion = ")[^"]+("\n)',
+                              lambda m: m[1] + version + m[2], text)
+        if count != 1:
+            raise ValueError(f"Missing local lock entry {package}")
     path.write_text(text)
     run(sys.executable, "scripts/sync-desktop-version.py")
     check_versions()
@@ -163,8 +183,8 @@ def verify_assets(root, version, sha):
             raise ValueError(f"Expected exactly one regular artifact: {name}")
         files[name] = matches[0]
     manifests = list(root.rglob("release-provenance.json"))
-    if len(manifests) != 4:
-        raise ValueError("Expected provenance for all four builders")
+    if len(manifests) != len(binary_assets(version)):
+        raise ValueError("Expected provenance for every builder")
     claimed = []
     for path in manifests:
         manifest = json.loads(path.read_text())
@@ -203,7 +223,7 @@ def published_complete(sha, version):
     with tempfile.TemporaryDirectory() as directory:
         run("gh", "release", "download", "v" + version, "--repo", REPO, "--dir", directory)
         root = Path(directory)
-        for name in expected_assets(version)[:4]:
+        for name in binary_assets(version):
             digest = hashlib.sha256((root / name).read_bytes()).hexdigest()
             if (root / (name + ".sha256")).read_text().split() != [digest, name]:
                 raise ValueError("Published release checksum mismatch")
@@ -220,9 +240,11 @@ def publish(sha, run_id):
         raise ValueError("Recovery artifacts must come from a successful release run at the same SHA")
     if not current:
         jobs = api(f"actions/runs/{int(run_id)}/jobs?per_page=100")["jobs"]
-        builders = [j for j in jobs if j["name"].startswith(("cli / cli (", "desktop / desktop ("))]
-        if len(builders) != 4 or any(j["conclusion"] != "success" for j in builders):
-            raise ValueError("Recovery requires all four successful builder jobs")
+        builders = [j for j in jobs if j["name"].startswith(
+            ("cli / cli (", "cli / macos-universal", "desktop / desktop ("))]
+        if len(builders) != len(binary_assets(version)) \
+                or any(j["conclusion"] != "success" for j in builders):
+            raise ValueError("Recovery requires every builder job to succeed")
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         run("gh", "run", "download", str(run_id), "--repo", REPO, "--pattern", "spanreed-release-*", "--dir", str(root))

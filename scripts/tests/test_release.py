@@ -13,6 +13,12 @@ release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 ROOT = Path(__file__).resolve().parents[2]
 SHA = "a" * 40
+BUILDER_JOBS = [("cli / cli (", "ubuntu-24.04, x86_64-unknown-linux-musl)"),
+                ("cli / cli (", "windows-latest, x86_64-pc-windows-msvc)"),
+                ("cli / cli (", "macos-latest, aarch64-apple-darwin)"),
+                ("cli / cli (", "macos-latest, x86_64-apple-darwin)"),
+                ("cli / macos-universal", ""),
+                ("desktop / desktop (", "linux)"), ("desktop / desktop (", "windows)")]
 
 
 @contextlib.contextmanager
@@ -34,7 +40,7 @@ def checkout():
 
 def artifacts(root, version="0.3.1", sha=SHA):
     import hashlib
-    names = release.expected_assets(version)[:4]
+    names = release.binary_assets(version)
     for index, name in enumerate(names):
         directory = root / str(index)
         directory.mkdir()
@@ -62,7 +68,7 @@ class VersionTests(unittest.TestCase):
             for name, entries in before.items():
                 after = release.tomllib.loads(Path(name).read_text())["package"]
                 for entry in entries:
-                    if entry["name"] in ("spanreed", "spanreed-desktop"):
+                    if entry["name"] in release.LOCAL_PACKAGES + release.DESKTOP_PACKAGES:
                         entry["version"] = "0.3.1"
                 self.assertEqual(entries, after)
             first = Path("desktop/package.json").read_bytes()
@@ -156,7 +162,7 @@ class ArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             artifacts(root)
-            self.assertEqual(len(release.verify_assets(root, "0.3.1", SHA)), 8)
+            self.assertEqual(len(release.verify_assets(root, "0.3.1", SHA)), len(release.expected_assets("0.3.1")))
             binary = next(root.rglob("*.deb"))
             binary.write_bytes(b"corrupt")
             with self.assertRaisesRegex(ValueError, "Checksum"):
@@ -183,7 +189,7 @@ class ArtifactTests(unittest.TestCase):
             def api(path, **kwargs):
                 if '/jobs?' in path:
                     return {"jobs": [{"name": prefix + os, "conclusion": "success"}
-                            for prefix in ("cli / cli (", "desktop / desktop (") for os in ("linux)", "windows)")]}
+                            for prefix, os in BUILDER_JOBS]}
                 if path.startswith("actions/runs/"):
                     return {"head_sha": SHA, "event": "push", "path": ".github/workflows/release.yml", "conclusion": "success", "status": "completed"}
                 if path.startswith("git/ref"):
@@ -206,7 +212,7 @@ class ArtifactTests(unittest.TestCase):
                     self.assertNotIn("--clobber", args)
                     path = Path(args[-1]); existing[path.name] = path.read_bytes(); mutations.append("upload")
                 elif args[:3] == ("gh", "release", "edit"):
-                    self.assertEqual(len(existing), 8)
+                    self.assertEqual(len(existing), len(release.expected_assets("0.3.1")))
                     remote["draft"] = False; mutations.append("publish")
                 else:
                     self.fail(f"Unexpected call: {args}")
@@ -214,7 +220,7 @@ class ArtifactTests(unittest.TestCase):
             with patch.object(release, "validate_source", return_value="0.3.1"), \
                     patch.object(release, "api", side_effect=api), patch.object(release, "run", side_effect=run):
                 release.publish(SHA, "123")
-                self.assertEqual(mutations.count("upload"), 7)
+                self.assertEqual(mutations.count("upload"), len(release.expected_assets("0.3.1")) - 1)
                 self.assertEqual(mutations[-1], "publish")
                 mutations.clear()
                 release.publish(SHA, "123")

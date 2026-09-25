@@ -1,0 +1,26 @@
+[package]
+name = "fabrials-providers"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/grok-insider/fabrials-libs"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+publish = false
+description = "Provider protocols and parsers for Fabrials"
+
+[features]
+default = ["reqwest"]
+contracts = ["dep:ts-rs"]
+reqwest = ["dep:reqwest"]
+
+[dependencies]
+fabrials-types = { path = "../fabrials-types" }
+time = { version = "0.3", features = ["parsing", "formatting"] }
+ts-rs = { version = "12.0.1", optional = true }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+url = "2"
+serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
+ring = "0.17"

@@ -27,7 +27,7 @@ updates[path] = text
 
 path = root / "desktop/src-tauri/Cargo.lock"
 text = path.read_text()
-for package in ("spanreed", "spanreed-desktop"):
+for package in ("spanreed-domain", "spanreed-app", "spanreed-adapters", "spanreed-desktop"):
     pattern = rf'(\[\[package\]\]\nname = "{package}"\nversion = ")[^"]+("\n)'
     text, count = re.subn(pattern, lambda m: m[1] + version + m[2], text)
     if count != 1:

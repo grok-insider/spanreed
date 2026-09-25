@@ -1,0 +1,750 @@
+//! Codex (OpenAI Codex CLI / ChatGPT) provider.
+//!
+//! Auth file lookup order:
+//!   1. `$CODEX_HOME/auth.json` (Codex CLI, if set)
+//!   2. `~/.codex/auth.json` (Codex CLI default since 0.2; current 0.153)
+//!   3. `~/.config/codex/auth.json` (leftover XDG path; often stale)
+//!   4. Secret Service item `Codex Auth` (via secret-tool)
+//!
+//! When both 2 and 3 exist, the newest mtime wins so a leftover XDG file
+//! does not shadow a fresh `codex login`.
+//!
+//! Usage: `GET https://chatgpt.com/backend-api/wham/usage`.
+
+use crate::creds;
+use crate::http::Request;
+use crate::model::{MetricKind, MetricLine, ProviderOutput};
+use crate::providers::Provider;
+use crate::secret;
+use crate::util;
+
+const ID: &str = "codex";
+const NAME: &str = "Codex";
+const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const RESET_CONSUME_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
+const REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
+const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const KEYCHAIN_SERVICE: &str = "Codex Auth";
+const REFRESH_AGE_MS: i64 = 8 * 24 * 60 * 60 * 1000;
+
+pub struct Codex;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Source {
+    File(usize),
+    Secret,
+}
+
+fn auth_paths() -> Vec<std::path::PathBuf> {
+    if let Some(home) = creds::env("CODEX_HOME") {
+        return vec![creds::expand(&home).join("auth.json")];
+    }
+    vec![
+        creds::expand("~/.codex").join("auth.json"),
+        creds::config_home().join("codex").join("auth.json"),
+    ]
+}
+
+fn has_token_like(auth: &serde_json::Value) -> bool {
+    auth.get("tokens")
+        .and_then(|t| t.get("access_token"))
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+        || auth
+            .get("OPENAI_API_KEY")
+            .and_then(|v| v.as_str())
+            .is_some()
+}
+
+fn load_auth() -> Option<(serde_json::Value, Source, std::path::PathBuf)> {
+    let mut best: Option<(
+        std::time::SystemTime,
+        serde_json::Value,
+        Source,
+        std::path::PathBuf,
+    )> = None;
+    for (i, path) in auth_paths().into_iter().enumerate() {
+        let Some(value) = creds::read_json(&path) else {
+            continue;
+        };
+        if !has_token_like(&value) {
+            continue;
+        }
+        let mtime = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        let newer = best.as_ref().map(|(t, _, _, _)| mtime > *t).unwrap_or(true);
+        if newer {
+            best = Some((mtime, value, Source::File(i), path));
+        }
+    }
+    if let Some((_, value, source, path)) = best {
+        return Some((value, source, path));
+    }
+    if let Some(text) = secret::lookup(KEYCHAIN_SERVICE)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim())
+        && has_token_like(&value)
+    {
+        return Some((value, Source::Secret, std::path::PathBuf::new()));
+    }
+    None
+}
+
+/// Identity hint for binding source selection; never exports a token.
+pub(crate) fn local_identity() -> Option<String> {
+    let (document, _, _) = load_auth()?;
+    let tokens = document.get("tokens")?;
+    tokens
+        .get("account_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            tokens
+                .get("access_token")
+                .and_then(serde_json::Value::as_str)
+                .and_then(util::jwt_payload)
+                .and_then(|claims| {
+                    claims["https://api.openai.com/auth"]["chatgpt_account_id"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+        })
+}
+
+/// Spend one banked Codex limit-reset credit. `redeem_request_id` is the
+/// idempotency key; retries must reuse it. Errors are static and never include
+/// tokens or credit identifiers.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn redeem_reset(redeem_request_id: &str) -> Result<(), &'static str> {
+    if !valid_redeem_request_id(redeem_request_id) {
+        return Err("invalid reset request");
+    }
+    let (mut auth, source, path) = load_auth().ok_or("No local Codex authorization found")?;
+    if refresh_if_needed(&mut auth, source, &path).is_err() {
+        return Err("Codex reset unavailable");
+    }
+    let access = auth["tokens"]["access_token"]
+        .as_str()
+        .filter(|token| !token.is_empty() && token.len() <= 16_384)
+        .ok_or("Incomplete Codex authorization")?;
+    let account = auth["tokens"]["account_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            util::jwt_payload(access).and_then(|claims| {
+                claims["https://api.openai.com/auth"]["chatgpt_account_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+            })
+        })
+        .ok_or("Codex account missing")?;
+    let body = format!(r#"{{"redeem_request_id":"{redeem_request_id}"}}"#);
+    let response = Request::post(RESET_CONSUME_URL)
+        .bearer(access)
+        .header("ChatGPT-Account-Id", &account)
+        .header("originator", "codex_cli_rs")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send_limited(1_048_576)
+        .map_err(|_| "Codex reset unavailable")?;
+    if !(200..300).contains(&response.status) {
+        return Err("Codex reset unavailable");
+    }
+    let value = response.json().ok_or("Codex did not redeem a reset")?;
+    interpret_consume(&value)
+}
+
+pub(crate) fn valid_redeem_request_id(value: &str) -> bool {
+    let mut parts = value.split('-');
+    for width in [8, 4, 4, 4, 12] {
+        let Some(part) = parts.next() else {
+            return false;
+        };
+        if part.len() != width || !part.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    parts.next().is_none()
+}
+
+pub(crate) fn interpret_consume(value: &serde_json::Value) -> Result<(), &'static str> {
+    match value.get("code").and_then(serde_json::Value::as_str) {
+        Some("reset" | "already_redeemed") => Ok(()),
+        Some("nothing_to_reset") => Err("No rate-limit window can be reset right now"),
+        Some("no_credit") => Err("No limit reset credit is available"),
+        _ => Err("Codex did not redeem a reset"),
+    }
+}
+
+/// Email shown on the tray card. Never returns a token.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub(crate) fn account_label() -> Option<String> {
+    let (document, _, _) = load_auth()?;
+    let proof = document["tokens"]["id_token"].as_str()?;
+    let claims = util::jwt_payload(proof)?;
+    claims
+        .get("email")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|email| !email.is_empty() && email.contains('@'))
+        .map(str::to_owned)
+}
+
+pub(crate) fn identity_proof() -> Result<String, String> {
+    let (document, _, _) = load_auth().ok_or("No local Codex authorization found")?;
+    let proof = document["tokens"]["id_token"]
+        .as_str()
+        .filter(|proof| !proof.is_empty())
+        .ok_or("Codex identity proof unavailable; sign in to Codex again")?;
+    let claims = util::jwt_payload(proof).ok_or("Invalid Codex identity proof")?;
+    if claims["https://api.openai.com/auth"]["chatgpt_account_id"].as_str()
+        != local_identity().as_deref()
+    {
+        return Err("Codex identity changed; sign in again before linking".into());
+    }
+    Ok(proof.into())
+}
+
+fn last_refresh_ms(auth: &serde_json::Value) -> Option<i64> {
+    let raw = auth.get("last_refresh")?;
+    util::to_iso(raw).and_then(|iso| {
+        time::OffsetDateTime::parse(&iso, &time::format_description::well_known::Rfc3339)
+            .ok()
+            .map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+    })
+}
+
+fn needs_refresh(auth: &serde_json::Value, now_ms: i64) -> bool {
+    match last_refresh_ms(auth) {
+        Some(last) => now_ms - last > REFRESH_AGE_MS,
+        None => true,
+    }
+}
+
+fn save_auth(auth: &serde_json::Value, source: Source, path: &std::path::Path) {
+    let text = match serde_json::to_string(auth) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    match source {
+        Source::File(_) => {
+            let _ = std::fs::write(path, text);
+        }
+        Source::Secret => {
+            let _ = secret::store(KEYCHAIN_SERVICE, "Codex Auth", &text);
+        }
+    }
+}
+
+fn refresh_if_needed(
+    auth: &mut serde_json::Value,
+    source: Source,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    if !needs_refresh(auth, util::now_ms()) {
+        return Ok(());
+    }
+    let refresh_token = auth
+        .get("tokens")
+        .and_then(|t| t.get("refresh_token"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let refresh_token = match refresh_token {
+        Some(t) => t.to_string(),
+        None => return Ok(()),
+    };
+
+    let body = format!(
+        "grant_type=refresh_token&client_id={}&refresh_token={}",
+        urlencode(CLIENT_ID),
+        urlencode(&refresh_token)
+    );
+    let resp = Request::post(REFRESH_URL)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()?;
+
+    if resp.status == 400 || resp.status == 401 {
+        let code = resp.json().and_then(|b| {
+            b.get("error")
+                .and_then(|e| e.get("code").or(Some(e)))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+        return Err(match code.as_deref() {
+            Some("refresh_token_expired") => "Session expired. Run `codex` to log in again.",
+            Some("refresh_token_reused") => "Token conflict. Run `codex` to log in again.",
+            Some("refresh_token_invalidated") => "Token revoked. Run `codex` to log in again.",
+            _ => "Token expired. Run `codex` to log in again.",
+        }
+        .into());
+    }
+    if !(200..300).contains(&resp.status) {
+        return Ok(());
+    }
+    let json = match resp.json() {
+        Some(j) => j,
+        None => return Ok(()),
+    };
+    let new_access = match json.get("access_token").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return Ok(()),
+    };
+
+    if let Some(tokens) = auth.get_mut("tokens").and_then(|v| v.as_object_mut()) {
+        tokens.insert("access_token".into(), serde_json::json!(new_access));
+        if let Some(rt) = json.get("refresh_token").and_then(|v| v.as_str()) {
+            tokens.insert("refresh_token".into(), serde_json::json!(rt));
+        }
+        if let Some(idt) = json.get("id_token").and_then(|v| v.as_str()) {
+            tokens.insert("id_token".into(), serde_json::json!(idt));
+        }
+    }
+    if let Some(obj) = auth.as_object_mut()
+        && let Some(iso) = util::ms_to_iso(util::now_ms())
+    {
+        obj.insert("last_refresh".into(), serde_json::json!(iso));
+    }
+    save_auth(auth, source, path);
+    Ok(())
+}
+
+/// Display label from `limit_window_seconds` when it matches a known Codex pool.
+/// Review / extra windows keep their fallback so they don't collide with Weekly.
+fn window_label(limit_secs: Option<i64>, fallback: &'static str) -> &'static str {
+    if fallback == "Reviews" || fallback == "Extra" {
+        return fallback;
+    }
+    match limit_secs {
+        Some(18_000) => "5h",
+        Some(604_800) => "Weekly",
+        _ => fallback,
+    }
+}
+
+fn parse_codex_window(
+    win: &serde_json::Value,
+    fallback: &'static str,
+    now_sec: i64,
+) -> Option<crate::usage_stats::RateWindow> {
+    let used = win.get("used_percent")?.as_f64()?;
+    let api_reset = win.get("reset_at").and_then(|r| r.as_i64());
+    let limit = win.get("limit_window_seconds").and_then(|v| v.as_i64());
+    let label = window_label(limit, fallback);
+    crate::usage_stats::RateWindow::from_codex_fields(label, used, api_reset, limit, now_sec)
+}
+
+fn window_progress(
+    win: &serde_json::Value,
+    fallback: &'static str,
+    now_sec: i64,
+) -> Option<MetricLine> {
+    let w = parse_codex_window(win, fallback, now_sec)?;
+    let resets = util::ms_to_iso(w.resets_at_ms);
+    Some(MetricLine::percent(w.label, w.used_percent, resets))
+}
+
+/// Weekly epoch start from `secondary_window` (`reset_at − limit_window_seconds`).
+fn weekly_epoch_start_ms(data: &serde_json::Value, now_sec: i64) -> Option<i64> {
+    let win = data.get("rate_limit")?.get("secondary_window")?;
+    parse_codex_window(win, "Weekly", now_sec).map(|w| w.window_start_ms)
+}
+
+fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
+    let now_sec = util::now_ms() / 1000;
+    let mut lines = Vec::new();
+
+    if let Some(rl) = data.get("rate_limit") {
+        if let Some(w) = rl.get("primary_window")
+            && let Some(l) = window_progress(w, "Session", now_sec)
+        {
+            lines.push(l);
+        }
+        if let Some(w) = rl.get("secondary_window")
+            && let Some(l) = window_progress(w, "Weekly", now_sec)
+        {
+            lines.push(l);
+        }
+        if let Some(obj) = rl.as_object() {
+            for (key, w) in obj {
+                if key == "primary_window" || key == "secondary_window" {
+                    continue;
+                }
+                if !w.is_object() {
+                    continue;
+                }
+                if let Some(l) = window_progress(w, "Extra", now_sec) {
+                    lines.push(l);
+                }
+            }
+        }
+    }
+
+    if let Some(review) = data
+        .get("code_review_rate_limit")
+        .and_then(|c| c.get("primary_window"))
+        && let Some(l) = window_progress(review, "Reviews", now_sec)
+    {
+        lines.push(l);
+    }
+
+    if let Some(credits) = data.get("credits") {
+        let unlimited = credits
+            .get("unlimited")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let has = credits
+            .get("has_credits")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if unlimited {
+            lines.push(MetricLine::Text {
+                kind: MetricKind::Plan,
+                label: "Credits".into(),
+                value: "unlimited".into(),
+                color: None,
+                subtitle: None,
+            });
+        } else if has && let Some(balance) = credits.get("balance").and_then(|v| v.as_f64()) {
+            lines.push(MetricLine::Text {
+                kind: MetricKind::Plan,
+                label: "Credits".into(),
+                value: format!("${balance:.2}"),
+                color: None,
+                subtitle: None,
+            });
+        }
+    }
+
+    lines
+}
+
+fn build_plan(data: &serde_json::Value) -> Option<String> {
+    let plan = data.get("plan_type").and_then(|v| v.as_str())?;
+    let normalized = plan.replace(['_', '-'], " ");
+    let label = util::plan_label(&normalized);
+    if label.is_empty() { None } else { Some(label) }
+}
+
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+impl Provider for Codex {
+    fn id(&self) -> &'static str {
+        ID
+    }
+    fn name(&self) -> &'static str {
+        NAME
+    }
+
+    fn detect(&self) -> bool {
+        if auth_paths().iter().any(|p| p.exists()) || secret::exists(KEYCHAIN_SERVICE) {
+            return true;
+        }
+        // Sessions dir without auth still surfaces a login error instead of hiding Codex.
+        creds::expand("~/.codex").join("sessions").is_dir()
+            || creds::config_home().join("codex").join("sessions").is_dir()
+    }
+
+    fn probe(&self, ports: crate::ports::ProbePorts<'_>) -> ProviderOutput {
+        let _move_lock = match crate::codex_session_move::probe_lock() {
+            Ok(lock) => lock,
+            Err(error) => return ProviderOutput::error(ID, NAME, error),
+        };
+        if crate::codex_session_move::retired() {
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                "Codex session moved to ai-relay. View hosted usage or recover the saved session move.",
+            );
+        }
+        let (mut auth, source, path) = match load_auth() {
+            Some(t) => t,
+            None => {
+                return ProviderOutput::error(
+                    ID,
+                    NAME,
+                    "No credentials found. Run `codex` to log in.",
+                );
+            }
+        };
+
+        if let Err(msg) = refresh_if_needed(&mut auth, source, &path) {
+            return ProviderOutput::error(ID, NAME, msg);
+        }
+
+        let access_token = auth
+            .get("tokens")
+            .and_then(|t| t.get("access_token"))
+            .and_then(|v| v.as_str());
+        let access_token = match access_token {
+            Some(t) if !t.is_empty() => t.to_string(),
+            _ => return ProviderOutput::error(ID, NAME, "No access token in auth file."),
+        };
+        let account_id = auth
+            .get("tokens")
+            .and_then(|t| t.get("account_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        let mut req = Request::get(USAGE_URL)
+            .bearer(&access_token)
+            .header("Accept", "application/json")
+            .header("User-Agent", "spanreed");
+        if let Some(acc) = &account_id {
+            req = req.header("ChatGPT-Account-Id", acc);
+        }
+        let resp = match req.send() {
+            Ok(r) => r,
+            Err(e) => return ProviderOutput::error(ID, NAME, e),
+        };
+        if resp.is_auth_error() {
+            return ProviderOutput::error(ID, NAME, "Token rejected. Run `codex` to log in again.");
+        }
+        if !(200..300).contains(&resp.status) {
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                format!("usage request failed (HTTP {})", resp.status),
+            );
+        }
+        let data = match resp.json() {
+            Some(d) => d,
+            None => return ProviderOutput::error(ID, NAME, "usage response not valid JSON"),
+        };
+        let plan = build_plan(&data);
+        let mut lines = parse_usage(&data);
+        let reset_inventory = crate::resets::codex(&access_token, account_id.as_deref(), &data);
+        crate::resets::append_lines(&mut lines, &reset_inventory);
+        if lines.is_empty() {
+            return ProviderOutput::error(ID, NAME, "no usage windows returned");
+        }
+        let now_sec = util::now_ms() / 1000;
+        let weekly_start = weekly_epoch_start_ms(&data, now_sec);
+        // Local cost estimate; Models/Cache breakdowns are noisy for Codex and hidden.
+        let mut cost: Vec<_> = ports
+            .cost
+            .local_cost_lines(ID, weekly_start)
+            .into_iter()
+            .filter(|l| {
+                !matches!(
+                    l.kind(),
+                    crate::model::MetricKind::Models | crate::model::MetricKind::Cache
+                )
+            })
+            .collect();
+        // Pool-% forecast when Weekly progress is present.
+        if let Some(weekly) = lines.iter().find_map(|l| match l {
+            MetricLine::Progress {
+                label,
+                used,
+                resets_at,
+                ..
+            } if label == "Weekly" => Some((*used, resets_at.clone())),
+            _ => None,
+        }) {
+            let (pct, resets) = weekly;
+            let week_end = resets.as_ref().and_then(|iso| {
+                util::parse_iso_dt(iso).map(|t| (t.unix_timestamp_nanos() / 1_000_000) as i64)
+            });
+            // Tokens/cost so far this week from cost engine since epoch.
+            let (tok, c) = if let Some(start) = weekly_start {
+                ports.cost.local_totals_since(ID, start).unwrap_or((0, 0.0))
+            } else {
+                (0, 0.0)
+            };
+            let week_id = weekly_start
+                .map(|ms| ms.to_string())
+                .unwrap_or_else(|| "codex-week".into());
+            cost.extend(crate::forecast::forecast_lines(
+                crate::forecast::ForecastInput {
+                    provider: "codex",
+                    week_id: &week_id,
+                    weekly_pct: pct,
+                    tokens_week: tok,
+                    cost_week: c,
+                    week_end_ms: week_end,
+                },
+            ));
+        }
+        lines.extend(cost);
+        {
+            let mut output = ProviderOutput::new(ID, NAME, lines).with_plan(plan);
+            output.reset_inventory = Some(reset_inventory);
+            output
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn used(lines: &[MetricLine], label: &str) -> Option<f64> {
+        lines.iter().find_map(|l| match l {
+            MetricLine::Progress {
+                label: lab, used, ..
+            } if lab == label => Some(*used),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn parses_rate_limit_windows_and_reviews_and_credits() {
+        let data = serde_json::json!({
+            "plan_type": "plus",
+            "rate_limit": {
+                "primary_window": { "used_percent": 6, "reset_at": 1738300000, "limit_window_seconds": 18000 },
+                "secondary_window": { "used_percent": 24, "reset_at": 1738900000, "limit_window_seconds": 604800 }
+            },
+            "code_review_rate_limit": {
+                "primary_window": { "used_percent": 2, "reset_at": 1738900000, "limit_window_seconds": 604800 }
+            },
+            "credits": { "has_credits": true, "unlimited": false, "balance": 5.39 }
+        });
+        let lines = parse_usage(&data);
+        assert_eq!(used(&lines, "5h"), Some(6.0));
+        assert_eq!(used(&lines, "Weekly"), Some(24.0));
+        assert_eq!(used(&lines, "Reviews"), Some(2.0));
+        // credits surface as a text line
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Text { label, value, .. } if label == "Credits" && value == "$5.39")));
+        assert_eq!(build_plan(&data).as_deref(), Some("Plus"));
+
+        // Epoch start = reset_at − limit_window_seconds when now is inside the window.
+        let now = 1_738_900_000_i64 - 86_400; // one day before reset
+        let start = weekly_epoch_start_ms(&data, now).unwrap();
+        assert_eq!(start, (1_738_900_000_i64 - 604_800) * 1000);
+    }
+
+    #[test]
+    fn weekly_epoch_moves_on_force_reset() {
+        let now = 1_700_000_000_i64;
+        let limit = 604_800_i64;
+        let mid = serde_json::json!({
+            "rate_limit": {
+                "secondary_window": {
+                    "used_percent": 80,
+                    "reset_at": now + 2 * 86400,
+                    "limit_window_seconds": limit
+                }
+            }
+        });
+        let forced = serde_json::json!({
+            "rate_limit": {
+                "secondary_window": {
+                    "used_percent": 0,
+                    "reset_at": now + limit,
+                    "limit_window_seconds": limit
+                }
+            }
+        });
+        let old_start = weekly_epoch_start_ms(&mid, now).unwrap();
+        let new_start = weekly_epoch_start_ms(&forced, now).unwrap();
+        assert!(new_start > old_start);
+        assert_eq!(new_start, now * 1000);
+    }
+
+    #[test]
+    fn consume_results_use_the_status_code_and_drop_credit_identifiers() {
+        assert!(
+            interpret_consume(
+                &serde_json::json!({"code":"reset","credit":{"id":"RateLimitResetCredit_secret"}})
+            )
+            .is_ok()
+        );
+        assert!(interpret_consume(&serde_json::json!({"code":"already_redeemed"})).is_ok());
+        assert_eq!(
+            interpret_consume(
+                &serde_json::json!({"code":"no_credit","credit":{"id":"RateLimitResetCredit_secret"}})
+            ),
+            Err("No limit reset credit is available")
+        );
+        assert_eq!(
+            interpret_consume(&serde_json::json!({"code":"nothing_to_reset"})),
+            Err("No rate-limit window can be reset right now")
+        );
+        let rejected = interpret_consume(
+            &serde_json::json!({"code":"other","credit":{"id":"RateLimitResetCredit_secret"}}),
+        )
+        .unwrap_err();
+        assert!(!rejected.contains("RateLimitResetCredit"));
+        assert!(valid_redeem_request_id(
+            "55cbe0c1-71ab-4c52-b855-80746f73ff52"
+        ));
+        assert!(!valid_redeem_request_id("not-a-request"));
+        assert!(!valid_redeem_request_id(
+            "55cbe0c1-71ab-4c52-b855-80746f73ff52-extra"
+        ));
+    }
+
+    #[test]
+    fn credits_hidden_without_has_credits() {
+        let data = serde_json::json!({
+            "rate_limit": { "primary_window": { "used_percent": 1, "reset_at": 1, "limit_window_seconds": 18000 } },
+            "credits": { "has_credits": false, "balance": 0 }
+        });
+        let lines = parse_usage(&data);
+        assert!(
+            !lines
+                .iter()
+                .any(|l| matches!(l, MetricLine::Text { label, .. } if label == "Credits"))
+        );
+    }
+
+    #[test]
+    fn plan_type_hyphens_and_team() {
+        let team = serde_json::json!({ "plan_type": "team" });
+        assert_eq!(build_plan(&team).as_deref(), Some("Team"));
+        let ent = serde_json::json!({ "plan_type": "enterprise" });
+        assert_eq!(build_plan(&ent).as_deref(), Some("Enterprise"));
+        let plus = serde_json::json!({ "plan_type": "plus_team" });
+        assert_eq!(build_plan(&plus).as_deref(), Some("Plus Team"));
+    }
+
+    #[test]
+    fn unlimited_credits_and_extra_window() {
+        let data = serde_json::json!({
+            "rate_limit": {
+                "primary_window": { "used_percent": 1, "reset_at": 1, "limit_window_seconds": 18000 },
+                "tertiary_window": { "used_percent": 9, "reset_at": 2, "limit_window_seconds": 86400 }
+            },
+            "credits": { "has_credits": true, "unlimited": true, "balance": 0 }
+        });
+        let lines = parse_usage(&data);
+        assert_eq!(used(&lines, "5h"), Some(1.0));
+        assert_eq!(used(&lines, "Extra"), Some(9.0));
+        assert!(lines.iter().any(|l| matches!(l, MetricLine::Text { label, value, .. } if label == "Credits" && value == "unlimited")));
+    }
+
+    #[test]
+    fn default_auth_paths_prefer_dot_codex_over_xdg() {
+        if creds::env("CODEX_HOME").is_some() {
+            return;
+        }
+        let paths = auth_paths();
+        assert!(
+            paths.len() >= 2,
+            "expected ~/.codex then XDG, got {paths:?}"
+        );
+        assert!(
+            paths[0].ends_with(".codex/auth.json"),
+            "first path should be ~/.codex/auth.json, got {:?}",
+            paths[0]
+        );
+    }
+}

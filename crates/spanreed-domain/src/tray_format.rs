@@ -1,0 +1,406 @@
+//! Pure formatting helpers for the system tray (no GUI deps).
+//!
+//! Always compiled so unit tests cover tooltip / severity without `feature = "tray"`.
+//! Production callers live in `tray.rs` (feature-gated). Without that feature some
+//! helpers are only hit by unit tests (and a few only by the tray UI), so clippy
+//! would otherwise flag dead_code under default features / `-D warnings`.
+
+use std::time::{Duration, Instant};
+
+use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
+use crate::output;
+
+/// Action results such as "Reset used" leave the card and tooltip on their own.
+/// A reset that is still running keeps its line until it finishes.
+pub fn status_expired(
+    status: Option<&str>,
+    status_at: Option<Instant>,
+    reset_in_flight: bool,
+    now: Instant,
+) -> bool {
+    status != Some("Capture proxy is DOWN")
+        && !reset_in_flight
+        && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(8))
+}
+
+/// A reset that is still marked running after a minute has stopped reporting.
+pub fn reset_hung(status_at: Option<Instant>, reset_in_flight: bool, now: Instant) -> bool {
+    reset_in_flight
+        && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(60))
+}
+
+/// After a transient line expires, the outage line returns while capture is down.
+pub fn next_status_after_expiry(capture_up: bool) -> Option<&'static str> {
+    if capture_up {
+        None
+    } else {
+        Some("Capture proxy is DOWN")
+    }
+}
+
+/// A refresh must not cover the capture-down line. Other states show progress.
+pub fn begin_refresh_status(current: Option<&str>) -> Option<&'static str> {
+    if current == Some("Capture proxy is DOWN") {
+        None
+    } else {
+        Some("Refreshing usage…")
+    }
+}
+
+/// A reset that never reports back must not leave "Using reset…" on the card.
+pub fn abandon_reset(reset_in_flight: &mut bool, status: &mut Option<String>) {
+    if !*reset_in_flight {
+        return;
+    }
+    *reset_in_flight = false;
+    if status.as_deref() == Some("Using reset…") {
+        *status = Some("Could not finish the reset".into());
+    }
+}
+
+/// Tray icon / notification band from a utilization percentage (used 0–100).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraySeverity {
+    Ok,
+    Warning,
+    Critical,
+    /// Capture/proxy ports down (overrides quota severity for icon color).
+    ProxyDown,
+}
+
+impl TraySeverity {
+    /// RGBA tint applied to the white Spanreed master icon.
+    ///
+    /// Colors are **dark / saturated** so the silhouette stays visible on light
+    /// Windows taskbars (pale green/white washes out next to ENG/Wi‑Fi icons).
+    pub fn tint_rgba(self) -> [u8; 4] {
+        match self {
+            // Forest green — readable on light and dark shells.
+            TraySeverity::Ok => [20, 120, 70, 255],
+            // Amber / gold.
+            TraySeverity::Warning => [200, 130, 20, 255],
+            // Strong red for high quota.
+            TraySeverity::Critical => [200, 40, 40, 255],
+            // Hot red for proxy down.
+            TraySeverity::ProxyDown => [180, 20, 30, 255],
+        }
+    }
+}
+
+/// Remaining percent for a 0–100 "used" quota line.
+pub fn remaining_pct(used: f64) -> f64 {
+    (100.0 - used).clamp(0.0, 100.0)
+}
+
+/// Highest utilization among percent progress lines (None if none).
+pub fn max_used_pct(outputs: &[ProviderOutput]) -> Option<f64> {
+    outputs
+        .iter()
+        .filter(|o| !o.has_error())
+        .flat_map(|o| o.lines.iter())
+        .filter_map(output::line_percent_public)
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+/// Map capture health + max used% → tray severity.
+pub fn severity(capture_up: bool, max_used: Option<f64>) -> TraySeverity {
+    if !capture_up {
+        return TraySeverity::ProxyDown;
+    }
+    match max_used {
+        Some(p) if p >= 95.0 => TraySeverity::Critical,
+        Some(p) if p >= 80.0 => TraySeverity::Warning,
+        _ => TraySeverity::Ok,
+    }
+}
+
+/// Tooltip / menu helper: community share session (no tokens).
+pub fn format_share_line(logged_in: bool, last_day: Option<&str>, today: &str) -> String {
+    if !logged_in {
+        return "Share: not linked".into();
+    }
+    if last_day == Some(today) {
+        return format!("Share: sent today ({today})");
+    }
+    "Share: linked".into()
+}
+
+/// Multi-line tooltip for the tray icon.
+pub fn format_tooltip(
+    outputs: &[ProviderOutput],
+    capture_up: bool,
+    update_note: Option<&str>,
+) -> String {
+    let mut lines = Vec::new();
+    let cap = if capture_up {
+        "Capture: UP · fabric :18736  /v1 /xai /acct"
+    } else {
+        "Capture: DOWN · run spanreed capture ensure"
+    };
+    lines.push(cap.to_string());
+
+    for out in outputs {
+        if out.has_error() {
+            lines.push(format!("{}: error", out.display_name));
+            continue;
+        }
+        let plan = out
+            .plan
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+            .map(|p| format!(" ({p})"))
+            .unwrap_or_default();
+        let mut bits = Vec::new();
+        for line in &out.lines {
+            if let Some(s) = format_quota_bit(line) {
+                bits.push(s);
+            }
+        }
+        if bits.is_empty() {
+            lines.push(format!("{}{plan}", out.display_name));
+        } else {
+            lines.push(format!("{}{plan}  {}", out.display_name, bits.join(" · ")));
+        }
+    }
+
+    if let Some(note) = update_note
+        && !note.is_empty()
+    {
+        lines.push(note.to_string());
+    }
+    lines.join("\n")
+}
+
+/// Status lines such as "Reset used" sit above the capture summary, and only while set.
+/// Linux tray tooltips are ignored by the icon library. The panel title is the
+/// line the user can see, so a cleared status must return the app name.
+pub fn indicator_title(status: Option<&str>, app_name: &str) -> String {
+    status
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or(app_name)
+        .to_string()
+}
+
+pub fn compose_tooltip(status: Option<&str>, share_line: &str, body: &str) -> String {
+    let mut parts = Vec::new();
+    if let Some(status) = status.map(str::trim).filter(|text| !text.is_empty()) {
+        parts.push(status.to_string());
+    }
+    if !share_line.is_empty() {
+        parts.push(share_line.to_string());
+    }
+    if !body.is_empty() {
+        parts.push(body.to_string());
+    }
+    parts.join("\n")
+}
+
+fn format_quota_bit(line: &MetricLine) -> Option<String> {
+    match line {
+        MetricLine::Progress {
+            label,
+            used,
+            format: ProgressFormat::Percent,
+            ..
+        } => {
+            let left = remaining_pct(*used);
+            Some(format!("{label} {left:.0}% left"))
+        }
+        MetricLine::Progress {
+            label,
+            used,
+            limit,
+            format: ProgressFormat::Dollars,
+            ..
+        } => Some(format!("{label} ${used:.2}/${limit:.2}")),
+        MetricLine::Progress {
+            label,
+            used,
+            limit,
+            format: ProgressFormat::Count { suffix },
+            ..
+        } => Some(format!("{label} {used:.0}/{limit:.0} {suffix}")),
+        _ => None,
+    }
+}
+
+/// Whether any provider crossed into a higher severity band vs previous max used%.
+pub fn crossed_threshold(prev: Option<f64>, next: Option<f64>) -> Option<&'static str> {
+    let n = next?;
+    let p = prev.unwrap_or(0.0);
+    if n >= 95.0 && p < 95.0 {
+        Some("critical")
+    } else if n >= 80.0 && p < 80.0 {
+        Some("warning")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::MetricLine;
+
+    #[test]
+    fn tooltip_drops_a_cleared_status_line() {
+        let body = "Capture: UP";
+        let shown = compose_tooltip(Some("Refreshing usage…"), "", body);
+        assert!(shown.starts_with("Refreshing usage…\n"));
+        let cleared = compose_tooltip(None, "", body);
+        assert_eq!(cleared, body);
+        assert!(!cleared.contains("Reset used"));
+        assert_eq!(
+            indicator_title(Some("Reset used"), "Spanreed"),
+            "Reset used"
+        );
+        assert_eq!(
+            indicator_title(Some("Refreshing usage…"), "Spanreed"),
+            "Refreshing usage…"
+        );
+        assert_eq!(indicator_title(None, "Spanreed"), "Spanreed");
+        assert_eq!(indicator_title(Some("  "), "Spanreed"), "Spanreed");
+    }
+
+    #[test]
+    fn status_lines_expire_without_another_action() {
+        let now = Instant::now();
+        let earlier = now.checked_sub(Duration::from_secs(9)).expect("instant");
+        assert!(!status_expired(Some("Reset used"), Some(now), false, now));
+        assert!(status_expired(
+            Some("Refreshing usage…"),
+            Some(earlier),
+            false,
+            now
+        ));
+        assert!(!status_expired(
+            Some("Reset used"),
+            Some(earlier),
+            true,
+            now
+        ));
+        assert!(!status_expired(None, None, false, now));
+        assert!(!status_expired(
+            Some("Capture proxy is DOWN"),
+            Some(earlier),
+            false,
+            now
+        ));
+        assert_eq!(begin_refresh_status(Some("Capture proxy is DOWN")), None);
+        assert_eq!(
+            begin_refresh_status(Some("Reset used")),
+            Some("Refreshing usage…")
+        );
+        assert_eq!(
+            next_status_after_expiry(false),
+            Some("Capture proxy is DOWN")
+        );
+        assert_eq!(next_status_after_expiry(true), None);
+        let hung = now.checked_sub(Duration::from_secs(61)).expect("instant");
+        assert!(!reset_hung(Some(now), true, now));
+        assert!(reset_hung(Some(hung), true, now));
+        assert!(!reset_hung(Some(hung), false, now));
+    }
+
+    #[test]
+    fn an_unfinished_reset_does_not_keep_its_status_line() {
+        let mut in_flight = true;
+        let mut status = Some("Using reset…".into());
+        abandon_reset(&mut in_flight, &mut status);
+        assert!(!in_flight);
+        assert_eq!(status.as_deref(), Some("Could not finish the reset"));
+        let mut status = Some("Reset used".into());
+        let mut in_flight = false;
+        abandon_reset(&mut in_flight, &mut status);
+        assert_eq!(status.as_deref(), Some("Reset used"));
+    }
+
+    #[test]
+    fn remaining() {
+        assert_eq!(remaining_pct(52.0), 48.0);
+        assert_eq!(remaining_pct(0.0), 100.0);
+        assert_eq!(remaining_pct(100.0), 0.0);
+    }
+
+    #[test]
+    fn tooltip_remaining() {
+        let out = ProviderOutput::new(
+            "grok",
+            "Grok",
+            vec![MetricLine::percent("Weekly", 52.0, None)],
+        )
+        .with_plan(Some("Heavy".into()));
+        let t = format_tooltip(&[out], true, Some("Update: 0.0.3 available"));
+        assert!(t.contains("Capture: UP"));
+        assert!(t.contains("Weekly 48% left"));
+        assert!(t.contains("Update: 0.0.3"));
+    }
+
+    #[test]
+    fn severity_proxy() {
+        assert_eq!(severity(false, Some(10.0)), TraySeverity::ProxyDown);
+        assert_eq!(severity(true, Some(90.0)), TraySeverity::Warning);
+        assert_eq!(severity(true, Some(96.0)), TraySeverity::Critical);
+        assert_eq!(severity(true, Some(10.0)), TraySeverity::Ok);
+    }
+
+    #[test]
+    fn threshold_cross() {
+        assert_eq!(crossed_threshold(Some(70.0), Some(82.0)), Some("warning"));
+        assert_eq!(crossed_threshold(Some(90.0), Some(96.0)), Some("critical"));
+        assert_eq!(crossed_threshold(Some(85.0), Some(90.0)), None);
+    }
+
+    #[test]
+    fn menu_labels_documented_in_tooltip_contract() {
+        // Menu actions are owned by tray.rs (feature-gated); tooltip contract
+        // always includes capture line + remaining quotas for percent lines.
+        let out = ProviderOutput::new(
+            "claude",
+            "Claude",
+            vec![
+                MetricLine::percent("Session", 4.0, None),
+                MetricLine::percent("Weekly", 1.0, None),
+            ],
+        )
+        .with_plan(Some("Max 20x".into()));
+        let t = format_tooltip(&[out], false, None);
+        assert!(t.contains("Capture: DOWN"));
+        assert!(t.contains("Session 96% left"));
+        assert!(t.contains("Weekly 99% left"));
+        assert!(t.contains("Max 20x"));
+    }
+
+    #[test]
+    fn share_line_states() {
+        assert_eq!(
+            format_share_line(false, None, "2026-08-13"),
+            "Share: not linked"
+        );
+        assert_eq!(format_share_line(true, None, "2026-08-13"), "Share: linked");
+        assert_eq!(
+            format_share_line(true, Some("2026-08-13"), "2026-08-13"),
+            "Share: sent today (2026-08-13)"
+        );
+    }
+
+    #[test]
+    fn max_used_and_tint_used_by_tray_contract() {
+        let out = ProviderOutput::new(
+            "grok",
+            "Grok",
+            vec![MetricLine::percent("Weekly", 90.0, None)],
+        );
+        assert_eq!(max_used_pct(&[out]), Some(90.0));
+        let rgba = TraySeverity::Warning.tint_rgba();
+        assert_eq!(rgba[3], 255);
+        assert!(rgba[0] > 0);
+        // Ok must stay dark enough for light taskbars (not near-white).
+        let ok = TraySeverity::Ok.tint_rgba();
+        assert!(
+            (ok[0] as u16 + ok[1] as u16 + ok[2] as u16) < 400,
+            "ok tint too light for Windows light shell: {ok:?}"
+        );
+    }
+}
