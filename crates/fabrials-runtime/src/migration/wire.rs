@@ -1,6 +1,6 @@
 //! Native migration wire contracts shared by the client and hosted boundary.
 use fabrials_accounts::transfer::ApiKeyTransfer;
-use fabrials_core::migration::{MigrationCandidate, MigrationReview};
+use fabrials_types::migration::{MigrationCandidate, MigrationReview};
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

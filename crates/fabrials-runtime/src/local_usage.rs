@@ -1,5 +1,5 @@
 //! Atomic source checkpoints and corrected consumption projections.
-use fabrials_core::usage::{ImportCheckpoint, UsageFilter, UsageRecord};
+use fabrials_types::consumption::{ConsumptionRecord, ImportCheckpoint, UsageFilter};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
@@ -22,7 +22,7 @@ pub struct ImportBatch<'a> {
     pub expected_generation: Option<u64>,
     pub replace: bool,
     pub checkpoint: &'a ImportCheckpoint,
-    pub records: &'a [UsageRecord],
+    pub records: &'a [ConsumptionRecord],
     pub at_ms: i64,
 }
 
@@ -217,7 +217,7 @@ impl UsageStore {
         Ok(revision)
     }
 
-    pub fn records(&self, filter: &UsageFilter) -> Result<Vec<UsageRecord>, String> {
+    pub fn records(&self, filter: &UsageFilter) -> Result<Vec<ConsumptionRecord>, String> {
         // A moved/copied rollout can appear under multiple roots. Deduplicate by
         // parser-provided identity, never by equal timestamps or token counts.
         let mut statement = self.0.prepare(
@@ -236,7 +236,7 @@ impl UsageStore {
             .map_err(|e| e.to_string())?;
         let mut result = Vec::new();
         for row in rows {
-            let record: UsageRecord = serde_json::from_str(&row.map_err(|e| e.to_string())?)
+            let record: ConsumptionRecord = serde_json::from_str(&row.map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
             if [
                 (&filter.provider, &record.provider),
@@ -258,9 +258,9 @@ impl UsageStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_core::usage::{Granularity, Tokens, UsageOrigin};
-    fn record(id: &str, tokens: u64) -> UsageRecord {
-        UsageRecord {
+    use fabrials_types::consumption::{Granularity, Tokens, UsageOrigin};
+    fn record(id: &str, tokens: u64) -> ConsumptionRecord {
+        ConsumptionRecord {
             id: id.into(),
             client: "codex".into(),
             provider: Some("openai".into()),
@@ -282,7 +282,7 @@ mod tests {
             request_id: None,
         }
     }
-    fn apply(store: &mut UsageStore, source: &str, records: &[UsageRecord]) -> u64 {
+    fn apply(store: &mut UsageStore, source: &str, records: &[ConsumptionRecord]) -> u64 {
         let generation = store.source(source).unwrap().map(|s| s.generation);
         store
             .import(ImportBatch {

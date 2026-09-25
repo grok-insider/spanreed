@@ -1,18 +1,18 @@
 //! Shared hop accounting and persistence retry policy.
-use fabrials_core::hop::{HopKind, Transport};
-use fabrials_model::UsageRecord;
+use fabrials_types::hop::{HopKind, Transport};
+use fabrials_types::HopRecord;
 use serde::Deserialize;
 
 pub fn persist_vps_with<P, Q>(
-    rec: &UsageRecord,
+    rec: &HopRecord,
     source: &str,
     owner: Option<&str>,
     mut database: P,
     mut enqueue: Q,
     on_log: &dyn Fn(&str),
 ) where
-    P: FnMut(&UsageRecord, &str, Option<&str>) -> Result<(), String>,
-    Q: FnMut(&UsageRecord, &str, Option<&str>) -> Result<(), String>,
+    P: FnMut(&HopRecord, &str, Option<&str>) -> Result<(), String>,
+    Q: FnMut(&HopRecord, &str, Option<&str>) -> Result<(), String>,
 {
     if database(rec, source, owner).is_ok() {
         return;
@@ -25,7 +25,7 @@ pub fn persist_vps_with<P, Q>(
     on_log(&persistence_diagnostic(message, rec, owner));
 }
 
-pub fn persistence_diagnostic(prefix: &str, rec: &UsageRecord, owner: Option<&str>) -> String {
+pub fn persistence_diagnostic(prefix: &str, rec: &HopRecord, owner: Option<&str>) -> String {
     persistence_identity_diagnostic(prefix, rec.request_id.as_deref(), owner)
 }
 
@@ -42,7 +42,7 @@ pub fn persistence_identity_diagnostic(
 }
 
 /// Operator log line: never includes Authorization, cookies, or bodies.
-pub fn log_line(rec: &UsageRecord, owner: Option<&str>) -> String {
+pub fn log_line(rec: &HopRecord, owner: Option<&str>) -> String {
     let usd = fabrials_metrics::list_cost_usd(rec).unwrap_or(0.0);
     format!(
         "hop request_id={} owner={} provider={} account={} kind={} model={} status={} duration_ms={} unit={} quantity={} usd={:.6}",
@@ -200,7 +200,7 @@ pub fn summarize_media_request(kind: HopKind, request_body: &[u8]) -> MediaReque
 
 /// Fill billing units: TTS characters, STT audio length. Never overwrites wall `duration_ms`.
 pub fn apply_media_units_from_summary(
-    rec: &mut UsageRecord,
+    rec: &mut HopRecord,
     kind: HopKind,
     transport: Transport,
     request: &MediaRequestSummary,
@@ -212,7 +212,7 @@ pub fn apply_media_units_from_summary(
                 rec.model = Some("tts".into());
             }
             let n = request.tts_chars.unwrap_or(0);
-            rec.unit = Some(fabrials_model::UNIT_CHARS.into());
+            rec.unit = Some(fabrials_types::UNIT_CHARS.into());
             rec.quantity = Some(n);
             rec.input_tokens = n;
         }
@@ -220,14 +220,14 @@ pub fn apply_media_units_from_summary(
             if transport == Transport::Http {
                 rec.model = Some("stt-batch".into());
                 if let Some(ms) = stt_audio_duration_ms(response_body) {
-                    rec.unit = Some(fabrials_model::UNIT_AUDIO_MS.into());
+                    rec.unit = Some(fabrials_types::UNIT_AUDIO_MS.into());
                     rec.quantity = Some(ms);
                 }
             } else {
                 if rec.model.as_deref().unwrap_or("").is_empty() {
                     rec.model = Some("stt".into());
                 }
-                rec.unit = Some(fabrials_model::UNIT_AUDIO_MS.into());
+                rec.unit = Some(fabrials_types::UNIT_AUDIO_MS.into());
                 rec.quantity = rec.duration_ms;
             }
         }
@@ -235,21 +235,21 @@ pub fn apply_media_units_from_summary(
             if rec.model.as_deref().unwrap_or("").is_empty() {
                 rec.model = Some("realtime".into());
             }
-            rec.unit = Some(fabrials_model::UNIT_AUDIO_MS.into());
+            rec.unit = Some(fabrials_types::UNIT_AUDIO_MS.into());
             rec.quantity = rec.duration_ms;
         }
         HopKind::Image => {
             if let Some(model) = &request.model {
                 rec.model = Some(model.clone());
             }
-            rec.unit = Some(fabrials_model::UNIT_IMAGES.into());
+            rec.unit = Some(fabrials_types::UNIT_IMAGES.into());
             rec.quantity = Some(request.image_count.unwrap_or(1));
         }
         HopKind::Video => {
             if let Some(model) = &request.model {
                 rec.model = Some(model.clone());
             }
-            rec.unit = Some(fabrials_model::UNIT_VIDEO_MS.into());
+            rec.unit = Some(fabrials_types::UNIT_VIDEO_MS.into());
             rec.quantity = video_duration_ms(&[], response_body).or(request.video_duration_ms);
         }
         _ => {}
@@ -257,7 +257,7 @@ pub fn apply_media_units_from_summary(
 }
 
 pub fn apply_media_units(
-    rec: &mut UsageRecord,
+    rec: &mut HopRecord,
     kind: HopKind,
     transport: Transport,
     request_body: &[u8],
@@ -365,9 +365,9 @@ mod tests {
 
     #[test]
     fn apply_sets_batch_model_and_audio_ms() {
-        let mut rec = UsageRecord {
+        let mut rec = HopRecord {
             duration_ms: Some(12_000),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         apply_media_units(
             &mut rec,
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn tts_sets_chars_unit_not_only_tokens() {
-        let mut rec = UsageRecord::default();
+        let mut rec = HopRecord::default();
         apply_media_units(
             &mut rec,
             HopKind::Tts,
@@ -404,7 +404,7 @@ mod tests {
         let request = summarize_media_request(HopKind::Tts, &body);
         drop(body);
 
-        let mut rec = UsageRecord::default();
+        let mut rec = HopRecord::default();
         apply_media_units_from_summary(&mut rec, HopKind::Tts, Transport::Http, &request, &[]);
         assert_eq!(rec.quantity, Some(1024 * 1024));
         assert!(request.model.is_none());
@@ -412,9 +412,9 @@ mod tests {
 
     #[test]
     fn image_request_counts_n() {
-        let mut rec = UsageRecord {
+        let mut rec = HopRecord {
             model: Some("grok-imagine-image-quality".into()),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         apply_media_units(
             &mut rec,
@@ -429,13 +429,13 @@ mod tests {
 
     #[test]
     fn log_line_has_ids_not_secrets() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             request_id: Some("abc".into()),
             kind: Some("tts".into()),
             status: Some(200),
             unit: Some("chars".into()),
             quantity: Some(3),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         let line = log_line(&rec, Some("42"));
         assert!(line.contains("request_id=abc"));
@@ -449,10 +449,10 @@ mod tests {
 
     #[test]
     fn log_fields_are_single_line_bounded_and_unambiguous() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             request_id: Some("ok\nowner=attacker".into()),
             model: Some("m".repeat(300)),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         let line = log_line(&rec, Some("42\r\nforged=yes"));
         assert_eq!(line.lines().count(), 1);
@@ -463,9 +463,9 @@ mod tests {
 
     #[test]
     fn vps_failure_is_deferred_without_logging_backend_details() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             request_id: Some("req-accounting".into()),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         let mut queued = false;
         let logs = std::sync::Mutex::new(Vec::new());

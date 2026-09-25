@@ -70,7 +70,6 @@ pub mod listener;
 pub mod models;
 pub mod provider;
 pub mod routes;
-pub mod upstreams;
 pub mod wire_compat;
 pub mod ws_tunnel;
 

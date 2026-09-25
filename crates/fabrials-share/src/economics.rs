@@ -3,9 +3,9 @@
 use std::collections::{HashMap, HashSet};
 
 use fabrials_metrics::list_cost_usd;
-use fabrials_model::{
-    MetricKind, MetricLine, ModelEconomics, ProviderEconomics, ProviderOutput, ShareSnapshot,
-    UsageRecord,
+use fabrials_types::{
+    HopRecord, MetricKind, MetricLine, ModelEconomics, ProviderEconomics, ProviderOutput,
+    ShareSnapshot,
 };
 
 use crate::snapshot_from_outputs;
@@ -49,7 +49,7 @@ pub fn scale_tokens_to_full(tokens_obs: u64, pool_pct: f64) -> Option<u64> {
     Some(((tokens_obs as f64) * (100.0 / pool_pct)).round() as u64)
 }
 
-fn dedup_ok(records: &[UsageRecord]) -> Vec<&UsageRecord> {
+fn dedup_ok(records: &[HopRecord]) -> Vec<&HopRecord> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for r in records {
@@ -71,7 +71,7 @@ fn dedup_ok(records: &[UsageRecord]) -> Vec<&UsageRecord> {
     out
 }
 
-fn sum_window(recs: &[&UsageRecord], from_ms: i64, to_ms: i64) -> (u64, f64, Vec<ModelEconomics>) {
+fn sum_window(recs: &[&HopRecord], from_ms: i64, to_ms: i64) -> (u64, f64, Vec<ModelEconomics>) {
     let mut tokens: u64 = 0;
     let mut usd: f64 = 0.0;
     let mut by: HashMap<String, (u64, f64)> = HashMap::new();
@@ -111,7 +111,7 @@ fn sum_window(recs: &[&UsageRecord], from_ms: i64, to_ms: i64) -> (u64, f64, Vec
 ///
 /// Uses list-price per hop (never SuperGrok ticks). Failed hops are skipped.
 /// When the first hop is not near `week_start_ms`, does not scale to 100%.
-pub fn economics_from_hops(records: &[UsageRecord], w: &HopsWindow) -> Option<ProviderEconomics> {
+pub fn economics_from_hops(records: &[HopRecord], w: &HopsWindow) -> Option<ProviderEconomics> {
     let recs = dedup_ok(records);
     let now = if w.now_ms > 0 {
         w.now_ms
@@ -187,7 +187,7 @@ pub struct HopSnapshotInput<'a> {
     pub pool_pct: Option<f64>,
     pub pool_label: Option<&'a str>,
     pub resets_at: Option<String>,
-    pub records: &'a [UsageRecord],
+    pub records: &'a [HopRecord],
     pub week_start_ms: Option<i64>,
     pub now_ms: i64,
     pub app: &'a str,
@@ -249,8 +249,8 @@ pub fn snapshot_from_hops(input: HopSnapshotInput<'_>) -> ShareSnapshot {
 mod tests {
     use super::*;
 
-    fn rec(model: &str, inn: u64, out: u64, ts: i64, id: &str, status: Option<u16>) -> UsageRecord {
-        UsageRecord {
+    fn rec(model: &str, inn: u64, out: u64, ts: i64, id: &str, status: Option<u16>) -> HopRecord {
+        HopRecord {
             ts_ms: ts,
             model: Some(model.into()),
             input_tokens: inn,
@@ -258,7 +258,7 @@ mod tests {
             total_tokens: inn + out,
             request_id: Some(id.into()),
             status,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         }
     }
 

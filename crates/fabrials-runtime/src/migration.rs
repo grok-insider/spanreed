@@ -1,13 +1,13 @@
 //! Credential-bearing migration boundary. Only hosts hold approved reviews.
 use fabrials_accounts::transfer::ApiKeyTransfer;
-use fabrials_core::migration::{MigrationAction, MigrationReview};
+use fabrials_types::migration::{MigrationAction, MigrationReview};
 use std::collections::HashSet;
 pub mod client;
 pub mod wire;
 
 /// Classify source metadata without ever treating an OAuth grant as a static key.
-pub fn credential_kind(document: &serde_json::Value) -> fabrials_core::migration::CredentialKind {
-    use fabrials_core::migration::CredentialKind;
+pub fn credential_kind(document: &serde_json::Value) -> fabrials_types::migration::CredentialKind {
+    use fabrials_types::migration::CredentialKind;
     if fabrials_accounts::transfer::contains_oauth_material(document) {
         return CredentialKind::OAuth;
     }
@@ -230,7 +230,7 @@ fn import_files_using(
 mod file_tests {
     use super::*;
     use fabrials_accounts::transfer::ApiKey;
-    use fabrials_core::migration::MigrationItem;
+    use fabrials_types::migration::MigrationItem;
     #[test]
     fn import_replays_interrupted_batch_and_never_recreates_deleted_accounts() {
         let root = std::env::temp_dir().join(format!(
@@ -311,7 +311,7 @@ mod file_tests {
 mod tests {
     use super::*;
     use fabrials_accounts::transfer::ApiKey;
-    use fabrials_core::migration::MigrationItem;
+    use fabrials_types::migration::MigrationItem;
     #[test]
     fn transfer_cannot_replace_reviewed_identity_or_include_oauth_grants() {
         let review = MigrationReview {

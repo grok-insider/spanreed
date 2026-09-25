@@ -1,5 +1,5 @@
 use super::{complete_lines, number, record, text, timestamp};
-use fabrials_core::usage::{
+use fabrials_types::consumption::{
     CostOrigin, ImportCheckpoint, ParsedUsage, Tokens, UsageCost, UsageParser,
 };
 use serde_json::Value;

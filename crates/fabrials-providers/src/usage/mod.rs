@@ -5,7 +5,7 @@ pub mod codex;
 pub mod files;
 pub mod remote;
 
-use fabrials_core::usage::{Granularity, Tokens, UsageOrigin, UsageRecord};
+use fabrials_types::consumption::{ConsumptionRecord, Granularity, Tokens, UsageOrigin};
 use serde_json::Value;
 
 pub(crate) fn timestamp(value: &Value) -> Option<i64> {
@@ -36,8 +36,8 @@ pub(crate) fn text(value: &Value, name: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-pub(crate) fn record(client: &str, id: String, at_ms: i64, tokens: Tokens) -> UsageRecord {
-    UsageRecord {
+pub(crate) fn record(client: &str, id: String, at_ms: i64, tokens: Tokens) -> ConsumptionRecord {
+    ConsumptionRecord {
         id,
         client: client.into(),
         provider: None,

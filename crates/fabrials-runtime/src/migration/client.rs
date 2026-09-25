@@ -1,7 +1,7 @@
 //! HTTPS-only native transport. Credentials stay out of URLs and diagnostics.
 use super::wire::{Exported, Imported, Inventory, OkResponse, Request, Revision};
 use fabrials_accounts::transfer::ApiKeyTransfer;
-use fabrials_core::migration::{MigrationCandidate, MigrationReview, MigrationSessionView};
+use fabrials_types::migration::{MigrationCandidate, MigrationReview, MigrationSessionView};
 use serde::de::DeserializeOwned;
 #[cfg(test)]
 use serde_json::{json, Value};
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     #[ignore = "Requires isolated HTTPS ai-relay/PostgreSQL fixture and explicit trusted CA"]
     fn trusted_https_hosted_lifecycle() {
-        use fabrials_core::migration::{MigrationAction, MigrationItem};
+        use fabrials_types::migration::{MigrationAction, MigrationItem};
         assert_eq!(std::env::var("FABRIALS_HTTPS_FIXTURE").unwrap(), "1");
         let origin = "https://localhost:19488";
         let cookie = std::env::var("FABRIALS_HTTPS_FIXTURE_COOKIE").unwrap();

@@ -2,6 +2,7 @@
 pub mod claude;
 pub mod codex;
 pub mod grok;
+pub mod grok_cli;
 pub mod kimi;
 pub mod nous;
 

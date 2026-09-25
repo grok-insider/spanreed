@@ -4,7 +4,7 @@
 //! tool calls. `output_tokens` is the provider total and already includes
 //! reasoning, so `reasoning_tokens` is not added again.
 
-use fabrials_model::UsageRecord;
+use fabrials_types::HopRecord;
 
 /// Pooled output tokens and model-active milliseconds.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub struct OutputRate {
 }
 
 impl OutputRate {
-    pub fn observe(&mut self, record: &UsageRecord) {
+    pub fn observe(&mut self, record: &HopRecord) {
         let Some(duration_ms) = chat_duration_ms(record) else {
             return;
         };
@@ -28,7 +28,7 @@ impl OutputRate {
 }
 
 /// Tokens per second for one qualifying chat hop.
-pub fn output_tps(record: &UsageRecord) -> Option<f64> {
+pub fn output_tps(record: &HopRecord) -> Option<f64> {
     let duration_ms = chat_duration_ms(record)?;
     pooled_output_tps(record.output_tokens, duration_ms)
 }
@@ -40,7 +40,7 @@ pub fn pooled_output_tps(tokens: u64, duration_ms: u64) -> Option<f64> {
     Some(tokens as f64 / (duration_ms as f64 / 1000.0))
 }
 
-fn chat_duration_ms(record: &UsageRecord) -> Option<u64> {
+fn chat_duration_ms(record: &HopRecord) -> Option<u64> {
     if record.is_failed() || record.kind.as_deref() != Some("chat") || record.output_tokens == 0 {
         return None;
     }
@@ -51,14 +51,14 @@ fn chat_duration_ms(record: &UsageRecord) -> Option<u64> {
 mod tests {
     use super::*;
 
-    fn chat(output: u64, duration_ms: u64, reasoning: u64) -> UsageRecord {
-        UsageRecord {
+    fn chat(output: u64, duration_ms: u64, reasoning: u64) -> HopRecord {
+        HopRecord {
             kind: Some("chat".into()),
             status: Some(200),
             output_tokens: output,
             reasoning_tokens: reasoning,
             duration_ms: Some(duration_ms),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         }
     }
 
@@ -93,12 +93,12 @@ mod tests {
         assert_eq!(rate.tokens, 200);
         assert_eq!(rate.tps(), Some(40.0));
         rate.observe(&chat(1_000, 1_000, 0));
-        rate.observe(&UsageRecord {
+        rate.observe(&HopRecord {
             kind: Some("chat".into()),
             status: Some(500),
             output_tokens: 9_000,
             duration_ms: Some(1_000),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         });
         assert_eq!(rate.tps(), Some(200.0));
     }

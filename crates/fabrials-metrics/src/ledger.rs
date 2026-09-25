@@ -4,10 +4,10 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
-use fabrials_model::UsageRecord;
+use fabrials_types::HopRecord;
 
 /// Append one usage record. Skips duplicate `request_id` already in the file.
-pub fn append(path: &Path, record: &UsageRecord) -> Result<(), String> {
+pub fn append(path: &Path, record: &HopRecord) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir ledger dir: {e}"))?;
     }
@@ -37,7 +37,7 @@ fn recent_has_request_id(path: &Path, rid: &str) -> bool {
         .any(|line| line.contains(&needle))
 }
 
-pub fn read_all(path: &Path) -> Vec<UsageRecord> {
+pub fn read_all(path: &Path) -> Vec<HopRecord> {
     let Ok(f) = std::fs::File::open(path) else {
         return Vec::new();
     };
@@ -47,7 +47,7 @@ pub fn read_all(path: &Path) -> Vec<UsageRecord> {
         if line.is_empty() {
             continue;
         }
-        if let Ok(rec) = serde_json::from_str::<UsageRecord>(line) {
+        if let Ok(rec) = serde_json::from_str::<HopRecord>(line) {
             out.push(rec);
         }
     }
@@ -57,7 +57,7 @@ pub fn read_all(path: &Path) -> Vec<UsageRecord> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_model::UsageRecord;
+    use fabrials_types::HopRecord;
 
     #[test]
     fn append_roundtrip_and_dedup_request_id() {
@@ -66,7 +66,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("grok-usage.jsonl");
-        let rec = UsageRecord {
+        let rec = HopRecord {
             ts_ms: 42,
             model: Some("grok-4.5".into()),
             input_tokens: 10,
@@ -74,7 +74,7 @@ mod tests {
             request_id: Some("resp_dup".into()),
             account_id: Some("grok/heavy".into()),
             route: Some("grok".into()),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         append(&path, &rec).unwrap();
         append(&path, &rec).unwrap();

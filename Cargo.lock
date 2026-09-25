@@ -256,38 +256,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "fabrials-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "ts-rs",
-]
-
-[[package]]
 name = "fabrials-metrics"
 version = "0.2.0"
 dependencies = [
- "fabrials-model",
+ "fabrials-types",
  "serde",
- "serde_json",
-]
-
-[[package]]
-name = "fabrials-model"
-version = "0.2.0"
-dependencies = [
- "fabrials-core",
- "serde",
- "serde_json",
- "ts-rs",
-]
-
-[[package]]
-name = "fabrials-oauth-grok"
-version = "0.1.2"
-dependencies = [
- "base64 0.22.1",
  "serde_json",
 ]
 
@@ -299,8 +272,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dirs",
- "fabrials-core",
- "fabrials-model",
+ "fabrials-types",
  "iana-time-zone",
  "libc",
  "memchr",
@@ -325,10 +297,8 @@ name = "fabrials-runtime"
 version = "0.1.0"
 dependencies = [
  "fabrials-accounts",
- "fabrials-core",
  "fabrials-metrics",
- "fabrials-model",
- "fabrials-oauth-grok",
+ "fabrials-types",
  "fs2",
  "futures-util",
  "getrandom 0.2.17",
@@ -350,8 +320,33 @@ name = "fabrials-share"
 version = "0.2.0"
 dependencies = [
  "fabrials-metrics",
- "fabrials-model",
+ "fabrials-types",
  "serde_json",
+]
+
+[[package]]
+name = "fabrials-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "fabrials-upstreams"
+version = "0.1.0"
+dependencies = [
+ "fabrials-metrics",
+ "fabrials-providers",
+ "fabrials-runtime",
+ "fabrials-types",
+ "futures-util",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]

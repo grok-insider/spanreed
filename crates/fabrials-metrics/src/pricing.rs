@@ -47,6 +47,12 @@ pub struct Pricing {
     pub cost_per_character: Option<f64>,
     pub cost_per_second: Option<f64>,
     pub cost_per_image: Option<f64>,
+    /// The source published both the input and the output rate.
+    pub token_rates_known: bool,
+    /// The source published a cache-write rate (otherwise `cache_create` is estimated).
+    pub cache_create_known: bool,
+    /// The source published a cache-read rate (otherwise `cache_read` is estimated).
+    pub cache_read_known: bool,
 }
 
 impl Pricing {
@@ -73,6 +79,10 @@ impl Pricing {
             cost_per_character: r.cost_per_character,
             cost_per_second: r.cost_per_second,
             cost_per_image: r.cost_per_image,
+            token_rates_known: r.input_cost_per_token.is_some()
+                && r.output_cost_per_token.is_some(),
+            cache_create_known: r.cache_creation_input_token_cost.is_some(),
+            cache_read_known: r.cache_read_input_token_cost.is_some(),
         })
     }
 
@@ -91,6 +101,12 @@ pub struct Usage {
     pub output: u64,
     pub cache_create: u64,
     pub cache_read: u64,
+}
+
+impl Usage {
+    pub fn total(&self) -> u64 {
+        self.input + self.output + self.cache_create + self.cache_read
+    }
 }
 
 /// Upper bound on remembered `find` results. Live traffic uses a few dozen
@@ -187,19 +203,43 @@ impl PricingMap {
             .or_else(|| self.table.get(&normalize(model)))
     }
 
+    /// Strict lookup: the exact or normalized id only, no dated-variant guess.
+    pub fn exact(&self, model: &str) -> Option<Pricing> {
+        self.table
+            .get(model)
+            .or_else(|| self.normalized.get(&normalize(model)))
+            .copied()
+            .filter(|pricing| pricing.token_rates_known)
+    }
+
+    /// Strict cost for local logs: `None` when the model is not priced exactly
+    /// or the usage needs a cache rate the source did not publish.
+    pub fn exact_cost(&self, model: &str, usage: Usage) -> Option<(f64, Pricing)> {
+        let p = self.exact(model)?;
+        if usage.cache_create > 0 && !p.cache_create_known
+            || usage.cache_read > 0 && !p.cache_read_known
+        {
+            return None;
+        }
+        let cost = tiered_cost(&p, usage);
+        (cost.is_finite() && cost >= 0.0).then_some((cost, p))
+    }
+
     pub fn cost(&self, model: &str, usage: Usage) -> Option<f64> {
         let p = self.find(model)?;
-        Some(
-            tiered(usage.input, p.input, p.input_above_200k)
-                + tiered(usage.output, p.output, p.output_above_200k)
-                + tiered(
-                    usage.cache_create,
-                    p.cache_create,
-                    p.cache_create_above_200k,
-                )
-                + tiered(usage.cache_read, p.cache_read, p.cache_read_above_200k),
-        )
+        Some(tiered_cost(&p, usage))
     }
+}
+
+fn tiered_cost(p: &Pricing, usage: Usage) -> f64 {
+    tiered(usage.input, p.input, p.input_above_200k)
+        + tiered(usage.output, p.output, p.output_above_200k)
+        + tiered(
+            usage.cache_create,
+            p.cache_create,
+            p.cache_create_above_200k,
+        )
+        + tiered(usage.cache_read, p.cache_read, p.cache_read_above_200k)
 }
 
 fn tiered(tokens: u64, base: f64, above_200k: Option<f64>) -> f64 {
@@ -225,16 +265,19 @@ fn parse_table(json: &str) -> HashMap<String, Pricing> {
         .collect()
 }
 
+/// Layers, later wins: the embedded snapshot, the remote refresh, the
+/// published list prices upstream lacks, then the user's override.
 pub fn build_table(embedded: &str, remote: Option<&str>, user: Option<&str>) -> PricingMap {
     let mut table = parse_table(embedded);
-    for layer in [remote, user].into_iter().flatten() {
-        for (k, p) in parse_table(layer) {
-            table.insert(k, p);
-        }
+    if let Some(remote) = remote {
+        table.extend(parse_table(remote));
     }
     overlay_xai_media_prices(&mut table);
     overlay_codex_list_prices(&mut table);
     overlay_claude_list_prices(&mut table);
+    if let Some(user) = user {
+        table.extend(parse_table(user));
+    }
     PricingMap::new(table)
 }
 
@@ -260,6 +303,9 @@ fn overlay_codex_list_prices(table: &mut HashMap<String, Pricing>) {
             cost_per_character: None,
             cost_per_second: None,
             cost_per_image: None,
+            token_rates_known: true,
+            cache_create_known: true,
+            cache_read_known: true,
         },
     );
 }
@@ -287,6 +333,9 @@ fn overlay_claude_list_prices(table: &mut HashMap<String, Pricing>) {
             cost_per_character: None,
             cost_per_second: None,
             cost_per_image: None,
+            token_rates_known: true,
+            cache_create_known: true,
+            cache_read_known: true,
         });
     }
 }
@@ -326,6 +375,9 @@ fn xai_media_list_prices() -> Vec<(String, Pricing)> {
             cost_per_character,
             cost_per_second,
             cost_per_image,
+            token_rates_known: false,
+            cache_create_known: false,
+            cache_read_known: false,
         }
     }
     vec![

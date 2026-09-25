@@ -1,5 +1,5 @@
 use super::{complete_lines, number, record, text, timestamp};
-use fabrials_core::usage::{ImportCheckpoint, ParsedUsage, Tokens, UsageParser};
+use fabrials_types::consumption::{ImportCheckpoint, ParsedUsage, Tokens, UsageParser};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

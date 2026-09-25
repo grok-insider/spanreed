@@ -10,6 +10,6 @@ authors = ["Grok Insider <admin@grokinsider.net>"]
 publish = false
 
 [dependencies]
-fabrials-model = { path = "../fabrials-model" }
+fabrials-types = { path = "../fabrials-types" }
 fabrials-metrics = { path = "../fabrials-metrics" }
 serde_json = "1"

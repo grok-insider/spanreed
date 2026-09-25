@@ -2,10 +2,10 @@
 
 use std::io::Write;
 
-use fabrials_model::UsageRecord;
+use fabrials_types::HopRecord;
 use serde_json::Value;
 
-use fabrials_core::hop::HopClass;
+use fabrials_types::hop::HopClass;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Upstream {
@@ -42,7 +42,7 @@ pub trait Provider: Send + Sync {
     fn websocket_hop(&self, _hop: crate::forward::WebSocketHop<'_>) -> Option<Result<(), String>> {
         None
     }
-    fn parse_usage(&self, response_body: &[u8]) -> Option<UsageRecord>;
+    fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord>;
     /// What this hop is. Default: chat over HTTP (no voice tunnel).
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
         let _ = (hop, upgrade);
@@ -52,7 +52,7 @@ pub trait Provider: Send + Sync {
     /// adapters must opt into every additional media family.
     fn allows_request(&self, method: &str, hop: &Upstream, upgrade: bool) -> bool {
         let _ = upgrade;
-        fabrials_core::hop::core_request_allowed(method, &hop.path)
+        fabrials_types::hop::core_request_allowed(method, &hop.path)
     }
     /// `Some` = this provider wrote the HTTP response (no reverse-proxy hop).
     fn translated_hop(
@@ -63,7 +63,7 @@ pub trait Provider: Send + Sync {
         token: &str,
         secret: Option<&Value>,
         client: &mut dyn Write,
-    ) -> Option<Result<Option<UsageRecord>, String>> {
+    ) -> Option<Result<Option<HopRecord>, String>> {
         let _ = (method, routed_path, body, token, secret, client);
         None
     }

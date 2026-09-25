@@ -1,6 +1,6 @@
 //! Parse official `usage` objects out of Responses API / SSE bodies.
 
-use fabrials_model::UsageRecord;
+use fabrials_types::HopRecord;
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
@@ -22,8 +22,8 @@ impl UsagePartial {
         session_id: Option<String>,
         account_id: Option<String>,
         route: Option<String>,
-    ) -> UsageRecord {
-        UsageRecord {
+    ) -> HopRecord {
+        HopRecord {
             ts_ms,
             session_id,
             model: self.model,

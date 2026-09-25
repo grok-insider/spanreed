@@ -3,15 +3,15 @@ use crate::http::{
     is_hop_by_hop_header, pipe_upstream, write_status, write_upstream_bytes, HttpRequestReader,
 };
 use crate::provider::{Provider, Upstream};
-use fabrials_core::hop::{HopClass, HopKind, Transport};
-use fabrials_model::UsageRecord;
+use fabrials_types::hop::{HopClass, HopKind, Transport};
+use fabrials_types::HopRecord;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::TcpStream;
 use std::time::Duration;
 
 pub trait HopObserver {
-    fn record(&self, record: UsageRecord);
+    fn record(&self, record: HopRecord);
     fn log(&self, message: &str);
     fn authorize_response(
         &self,
@@ -154,7 +154,7 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
             Ok(result) => (Some(result.status), Some(result.duration_ms)),
             Err(error) => (Some(error.status.unwrap_or(502)), Some(wall)),
         };
-        let mut rec = fabrials_model::UsageRecord {
+        let mut rec = fabrials_types::HopRecord {
             ts_ms: now_ms(),
             request_id: Some(request_id.clone()),
             account_id: alias.as_ref().map(|a| format!("{}/{a}", prov.id())),
@@ -271,7 +271,7 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
                 } else {
                     msg
                 };
-                let mut rec = fabrials_model::UsageRecord {
+                let mut rec = fabrials_types::HopRecord {
                     ts_ms: now_ms(),
                     request_id: Some(request_id.clone()),
                     account_id: alias.as_ref().map(|a| format!("{}/{a}", prov.id())),
@@ -603,7 +603,7 @@ fn models_body_etag(body: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::provider::Provider;
-    use fabrials_core::hop::HopClass;
+    use fabrials_types::hop::HopClass;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
@@ -621,10 +621,10 @@ mod tests {
         fn inject(&self, token: &str) -> Vec<(String, String)> {
             vec![("authorization".into(), format!("Bearer {token}"))]
         }
-        fn parse_usage(&self, response_body: &[u8]) -> Option<UsageRecord> {
+        fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
             let value: serde_json::Value = serde_json::from_slice(response_body).ok()?;
             let usage = value.get("usage")?;
-            Some(UsageRecord {
+            Some(HopRecord {
                 output_tokens: usage.get("output_tokens")?.as_u64()?,
                 ..Default::default()
             })
@@ -635,11 +635,11 @@ mod tests {
     struct TestObserver {
         offer_retry: bool,
         errors: Mutex<Vec<(u16, String)>>,
-        records: Mutex<Vec<UsageRecord>>,
+        records: Mutex<Vec<HopRecord>>,
     }
 
     impl HopObserver for TestObserver {
-        fn record(&self, record: UsageRecord) {
+        fn record(&self, record: HopRecord) {
             self.records.lock().unwrap().push(record);
         }
         fn log(&self, _: &str) {}

@@ -177,6 +177,32 @@ fn parse_models_dev(json: &str) -> Result<ModelsDevRoot, String> {
 
 /// Reduce a models.dev `api.json` to a limits table.
 ///
+/// Channels Fabrials routes through that LiteLLM does not price.
+pub const PRICED_CHANNELS: &[&str] = &["opencode-go"];
+/// Local ids that alias a channel model. The relay picker uses the first.
+pub const CHANNEL_ALIASES: &[(&str, &str)] = &[("deepseek-flash", "deepseek-v4.1-flash")];
+
+/// Prices and context windows reduced from one pair of upstream documents.
+pub struct UpstreamTables {
+    pub prices: String,
+    pub limits: String,
+}
+
+/// Reduce a LiteLLM price document and a models.dev catalog to the price and
+/// limits tables a host caches. LiteLLM keeps every id it prices; the channels
+/// supply the models it does not carry, plus their context windows.
+pub fn compose_upstream(
+    litellm_json: &str,
+    models_dev_json: &str,
+) -> Result<UpstreamTables, String> {
+    let litellm = crate::pricing::filter_upstream(litellm_json)?;
+    let channels = models_dev_prices(models_dev_json, PRICED_CHANNELS, CHANNEL_ALIASES)?;
+    Ok(UpstreamTables {
+        prices: merge_price_tables(&[&channels, &litellm])?,
+        limits: filter_models_dev(models_dev_json, PRICED_CHANNELS, CHANNEL_ALIASES)?,
+    })
+}
+
 /// `providers` is precedence order: the first provider that publishes a model
 /// supplies its limits, so a channel with its own caps (OpenCode Go) is listed
 /// before the upstream vendor. `aliases` copies a canonical id's limits onto a
