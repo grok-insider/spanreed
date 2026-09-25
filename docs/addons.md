@@ -14,7 +14,7 @@ The same operations exist as an in-process Rust trait so the first addon
 
 ## Discovery
 
-1. Compiled-in addons registered in `src/addons/mod.rs`.
+1. Compiled-in addons registered in `crates/spanreed-app/src/addons/mod.rs`.
 2. Manifests `~/.config/spanreed/addons/<id>.toml`:
 
 ```toml

@@ -180,6 +180,21 @@ From a checkout: `nix build` / `nix run . -- probe`. From GitHub, see **With Nix
 On Linux, `secret-tool` (libsecret) is only needed if a provider keeps its token
 in the Secret Service instead of a file.
 
+### Source layout
+
+A Cargo workspace; dependencies point one way:
+
+| Path | Role |
+|------|------|
+| `crates/spanreed-domain` | Output model, pure formatting and statistics, ports. No I/O. |
+| `crates/spanreed-app` | `AppContext` and the `app` facade, plus providers, accounts, stores, pricing, the capture relay, setup, sharing and sync. |
+| `crates/spanreed-tray` | The system tray (`--features tray`). |
+| `src/` | The `spanreed` binary: `src/cli/` has one file per subcommand. |
+| `desktop/` | Tauri desktop app; its host depends on `spanreed-app` only. |
+
+The CLI, the tray, the desktop app and the local HTTP API all call the same
+`app` functions. See `AGENTS.md` for the module map.
+
 ## Usage
 
 ```sh

@@ -25,7 +25,7 @@ impl Vault {
     pub(crate) fn registry(&self) -> Result<Registry, String> {
         routing_registry_at(&dir())
     }
-    pub(super) fn commit(
+    pub(crate) fn commit(
         &self,
         registry: &Registry,
         mut changes: Vec<fabrials_runtime::file_set::Change>,
@@ -203,7 +203,7 @@ pub fn get_secret(provider: &str, alias: &str) -> Option<String> {
     get_secret_using(provider, alias, secret::lookup_user)
 }
 
-pub(super) fn get_secret_using(
+pub(crate) fn get_secret_using(
     provider: &str,
     alias: &str,
     lookup: impl FnOnce(&str, &str) -> Option<String>,
@@ -255,7 +255,7 @@ pub fn read_secret_document(
         .map_err(|_| "Invalid credential document".into())
 }
 
-pub(super) fn rotation(
+pub(crate) fn rotation(
     provider: &str,
     alias: &str,
 ) -> Result<fabrials_runtime::credential_journal::Rotation, String> {
@@ -270,7 +270,7 @@ pub(super) fn rotation(
     )
 }
 
-pub(super) fn file_secret_path(provider: &str, alias: &str) -> PathBuf {
+pub(crate) fn file_secret_path(provider: &str, alias: &str) -> PathBuf {
     dir().join(provider).join(format!("{alias}.json"))
 }
 

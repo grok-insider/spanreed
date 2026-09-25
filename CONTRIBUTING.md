@@ -45,17 +45,18 @@ Release PR.
 A provider is one file implementing the `Provider` trait. Use an existing one as
 a template:
 
-- **Simplest** (env/file API key): `src/providers/zai.rs`
-- **OAuth file + refresh**: `src/providers/codex.rs`
-- **SQLite-backed token**: `src/providers/cursor.rs`
-- **Local process discovery**: `src/providers/antigravity.rs`
+- **Simplest** (env/file API key): `crates/spanreed-app/src/providers/zai.rs`
+- **OAuth file + refresh**: `crates/spanreed-app/src/providers/codex.rs`
+- **SQLite-backed token**: `crates/spanreed-app/src/providers/cursor.rs`
+- **Local process discovery**: `crates/spanreed-app/src/providers/antigravity.rs`
 
-### 1. Create `src/providers/<id>.rs`
+### 1. Create `crates/spanreed-app/src/providers/<id>.rs`
 
 ```rust
 use crate::creds;
 use crate::http::Request;
 use crate::model::{MetricLine, ProviderOutput};
+use crate::ports::ProbePorts;
 use crate::providers::Provider;
 
 const ID: &str = "example";
@@ -72,7 +73,7 @@ impl Provider for Example {
         creds::env("EXAMPLE_API_KEY").is_some()
     }
 
-    fn probe(&self) -> ProviderOutput {
+    fn probe(&self, _ports: ProbePorts<'_>) -> ProviderOutput {
         let key = match creds::env("EXAMPLE_API_KEY") {
             Some(k) => k,
             None => return ProviderOutput::error(ID, NAME, "No EXAMPLE_API_KEY set."),
@@ -104,7 +105,7 @@ impl Provider for Example {
 }
 ```
 
-### 2. Register it in `src/providers/mod.rs`
+### 2. Register it in `crates/spanreed-app/src/providers/mod.rs`
 
 ```rust
 pub mod example;

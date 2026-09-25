@@ -6,8 +6,8 @@ Reviewed 2026-09-09. This is a source audit, not a claim that the parser improve
 
 Spanreed already reads two independent sources:
 
-- Account quota and resets: the authenticated ChatGPT usage/reset endpoints, through `src/providers/codex.rs` and the reset inventory helpers.
-- Local tokens and estimated API-equivalent cost: Codex rollout JSONL, through `src/cost.rs`. This does not require routing requests through ai-relay.
+- Account quota and resets: the authenticated ChatGPT usage/reset endpoints, through `crates/spanreed-app/src/providers/codex.rs` and the reset inventory helpers.
+- Local tokens and estimated API-equivalent cost: Codex rollout JSONL, through `crates/spanreed-app/src/cost.rs`. This does not require routing requests through ai-relay.
 
 The proxy measures requests actually routed through it. Local logs can include those same requests, so the two totals must remain separate. A subscription quota percentage cannot be reconstructed by dividing local tokens by a fixed token allowance. Local logs also cannot describe usage on other machines unless those machines synchronize their own observations.
 

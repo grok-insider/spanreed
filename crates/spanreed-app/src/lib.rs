@@ -31,6 +31,8 @@ mod grok_ledger;
 mod history;
 pub mod hosted_client_configuration;
 mod http;
+#[cfg(test)]
+mod lifecycle_tests;
 mod local_control;
 pub mod local_relay;
 mod local_tokens;

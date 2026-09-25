@@ -207,3 +207,15 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod icon_tests {
+    #[test]
+    fn every_spanreed_provider_has_a_mark() {
+        for provider in super::all() {
+            let svg = crate::provider_icons::icon(provider.id());
+            assert!(!svg.contains("data-icon=\"fallback\""), "{}", provider.id());
+            assert!(svg.contains("<title>"), "{}", provider.id());
+        }
+    }
+}
