@@ -29,6 +29,7 @@ import { Radio, RadioGroup } from "./radio-group.js";
 import { ThemeSwitcher, ToggleGroup, ToggleGroupItem } from "./toggle-group.js";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./accordion.js";
 import { Breadcrumb, BreadcrumbEllipsis, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator, Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "./navigation.js";
+import { MultiSelect } from "./multi-select.js";
 import { buttonVariants } from "./button-variants.js";
 import { toast } from "sonner";
 export {
@@ -133,6 +134,7 @@ export {
   Kbd,
   Label,
   Meter,
+  MultiSelect,
   NativeCheckbox,
   NativeSelect,
   NavigationMenu,

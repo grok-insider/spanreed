@@ -96,6 +96,58 @@
     border-radius: var(--fui-radius-lg);
     text-align: center;
   }
+  .fb-history {
+    display: grid;
+    gap: var(--fui-space-4);
+    min-width: 0;
+  }
+  .fb-log {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--fui-radius-lg);
+    background: var(--card);
+    overflow: hidden;
+  }
+  .fb-log-item {
+    display: grid;
+    gap: var(--fui-space-1);
+    padding: var(--fui-space-3) var(--fui-space-4);
+    border-top: 1px solid var(--border);
+  }
+  .fb-log-item:first-child {
+    border-top: 0;
+  }
+  .fb-log-item p {
+    margin: 0;
+    line-height: 1.5;
+  }
+  .fb-log-button {
+    display: grid;
+    gap: 0.125rem;
+    width: 100%;
+    min-height: 2.75rem;
+    padding: var(--fui-space-3) var(--fui-space-4);
+    border: 0;
+    border-top: 1px solid var(--border);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+  .fb-log > .fb-log-button:first-child,
+  .fb-log > li:first-child .fb-log-button {
+    border-top: 0;
+  }
+  .fb-log-button:hover {
+    background: var(--accent);
+  }
+  .fb-mono {
+    font-family: var(--fui-font-mono);
+    font-size: 0.92em;
+  }
   .fb-form {
     max-width: 40rem;
     display: grid;
