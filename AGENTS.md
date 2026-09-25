@@ -9,11 +9,13 @@ tracker: one Rust binary (`spanreed`) that acts as a CLI, a background daemon,
 and a data source for status bars. It reads local AI-CLI credentials, queries
 each provider's usage API, and renders the result.
 
-- CLI/library crate with an optional Tauri host under `desktop/`. Shared DTOs/pricing/accounts live in crates.io
-  `fabrials-*` crates (local path patch in `~/dev/fabrials/.cargo`).
+- CLI/library crate with an optional Tauri host under `desktop/`. Shared DTOs/pricing/accounts live in the
+  `fabrials-libs` workspace, carried in-tree at `vendor/fabrials-libs` (git subtree, `path` deps). Change the
+  crates in `~/dev/fabrials/libs/fabrials-libs`, then run `scripts/sync-fabrials-libs.sh`; CI runs
+  `scripts/check-fabrials-libs.sh` and rejects direct edits to the copy.
   `src/model.rs` re-exports `fabrials-model`.
 - `spanreed capture serve` runs the shared `fabrials-runtime` directly; no ai-relay executable is required. The optional xAI compatibility listener shares the runtime.
-- Cargo workspace includes the vendored core, provider and runtime crates. Binary target `spanreed` (`src/main.rs`) delegates to `src/lib.rs`.
+- The Cargo workspace excludes `vendor/fabrials-libs`; CI tests it with `--manifest-path`. Binary target `spanreed` (`src/main.rs`) delegates to `src/lib.rs`.
 - Probes are blocking I/O fanned out over threads. The shared runtime contains Tokio transport; Tauri runs blocking probes off the renderer thread.
 - Providers are **native Rust** modules implementing one trait. There is no
   embedded scripting engine and no plugin sandbox.
