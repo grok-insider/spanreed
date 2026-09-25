@@ -285,10 +285,10 @@ pub fn render(cards: &[TrayCard], capture_up: bool, status: Option<&str>) -> Str
         "<p class=\"banner\">Capture is down. Ensure capture before new hops are recorded.</p>"
             .into()
     };
-    let status = status
-        .filter(|text| !text.is_empty())
-        .map(|text| format!("<p class=\"status\">{}</p>", esc(text)))
-        .unwrap_or_default();
+    // The open card paints status with a script. Baking it into the document
+    // lets a late reload put "Reset used" back after the tray cleared it.
+    let _ = status;
+    let status = "";
     format!(
         r##"<!DOCTYPE html>
 <html lang="en" data-gem="stormlight">
@@ -1392,7 +1392,8 @@ mod tests {
         let shown = present(&[], true, Some("Reset used"), 0);
         assert!(shown.contains("data-act=\"dashboard\""));
         assert!(shown.contains("data-act=\"settings\""));
-        assert!(shown.contains("<p class=\"status\">Reset used</p>"));
+        assert!(!shown.contains("Reset used"));
+        assert!(!shown.contains("class=\"status\""));
         let cleared = present(&[], true, None, 0);
         assert!(!cleared.contains("Reset used"));
         assert!(!cleared.contains("class=\"status\""));
