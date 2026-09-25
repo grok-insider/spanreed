@@ -262,7 +262,84 @@ fn run_full(args: &[&str], offline: bool) -> (String, String, std::process::Exit
         .env_remove("CLAUDE_CONFIG_DIR")
         // Host machine may have Grok capture wired in the parent environment;
         // that would make `setup status` exit 1 when ports are down.
-        .env_remove("GROK_CLI_CHAT_PROXY_BASE_URL");
+        .env_remove("GROK_CLI_CHAT_PROXY_BASE_URL")
+        .env_remove("OPENAI_ADMIN_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .env_remove("CLINE_API_KEY")
+        .env_remove("CLINEPASS_API_KEY")
+        .env_remove("FIREWORKS_API_KEY")
+        .env_remove("FIREWORKS_KEY")
+        .env_remove("FIREWORKS_ACCOUNT_SLUG")
+        .env_remove("MANUS_SESSION_TOKEN")
+        .env_remove("MANUS_COOKIE")
+        .env_remove("KILO_API_KEY")
+        .env_remove("MOONSHOT_API_KEY")
+        .env_remove("MOONSHOT_KEY")
+        .env_remove("MOONSHOT_BASE_URL")
+        .env_remove("MOONSHOT_API_BASE")
+        .env_remove("OLLAMA_API_KEY")
+        .env_remove("OPENROUTER_API_KEY")
+        .env_remove("OPENROUTER_API_BASE")
+        .env_remove("ELEVENLABS_API_KEY")
+        .env_remove("XI_API_KEY")
+        .env_remove("ELEVENLABS_API_URL")
+        .env_remove("BASE_URL")
+        .env_remove("WARP_API_KEY")
+        .env_remove("WARP_TOKEN")
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("DEEPSEEK_KEY")
+        .env_remove("DEEPINFRA_API_KEY")
+        .env_remove("DEEPINFRA_TOKEN")
+        .env_remove("CODEBUFF_API_KEY")
+        .env_remove("CODEBUFF_API_URL")
+        .env_remove("VENICE_API_KEY")
+        .env_remove("VENICE_KEY")
+        .env_remove("GROQ_API_KEY")
+        .env_remove("GROQ_API_URL")
+        .env_remove("GROQ_SESSION_TOKEN")
+        .env_remove("GROQ_SESSION_JWT")
+        .env_remove("LLM_PROXY_API_KEY")
+        .env_remove("LLM_PROXY_BASE_URL")
+        .env_remove("LITELLM_API_KEY")
+        .env_remove("LITELLM_BASE_URL")
+        .env_remove("BIFROST_API_KEY")
+        .env_remove("BIFROST_BASE_URL")
+        .env_remove("DEEPGRAM_API_KEY")
+        .env_remove("DEEPGRAM_PROJECT_ID")
+        .env_remove("DEEPGRAM_API_URL")
+        .env_remove("POE_API_KEY")
+        .env_remove("CHUTES_API_KEY")
+        .env_remove("CHUTES_API_URL")
+        .env_remove("NEURALWATT_API_KEY")
+        .env_remove("NEURALWATT_API_URL")
+        .env_remove("CLAWROUTER_API_KEY")
+        .env_remove("CLAWROUTER_BASE_URL")
+        .env_remove("SUB2API_API_KEY")
+        .env_remove("SUB2API_BASE_URL")
+        .env_remove("WAYFINDER_GATEWAY_URL")
+        .env_remove("ZENMUX_MANAGEMENT_API_KEY")
+        .env_remove("AIAND_API_KEY")
+        .env_remove("XAI_MANAGEMENT_API_KEY")
+        .env_remove("XAI_TEAM_ID")
+        .env_remove("BOBSHELL_API_KEY")
+        .env_remove("MUSE_AUTH_PATH")
+        .env_remove("CODERABBIT_CLI_PATH")
+        .env_remove("HF_TOKEN")
+        .env_remove("HUGGING_FACE_HUB_TOKEN")
+        .env_remove("HF_TOKEN_PATH")
+        .env_remove("HF_HOME")
+        .env_remove("V0_API_KEY")
+        .env_remove("V0_SCOPE")
+        .env_remove("HYPER_API_KEY")
+        .env_remove("GITKRAKEN_API_TOKEN")
+        .env_remove("GITKRAKEN_ORG_ID")
+        .env_remove("DEVPASS_API_KEY")
+        .env_remove("ATLASCLOUD_API_KEY")
+        .env_remove("AI_GATEWAY_API_KEY")
+        .env_remove("LLMMAN_API_KEY")
+        .env_remove("LLMMAN_HOST")
+        .env_remove("PERPLEXITY_COOKIE")
+        .env_remove("PERPLEXITY_SESSION_TOKEN");
     if offline {
         cmd.env("SPANREED_OFFLINE", "1");
     } else {
@@ -281,6 +358,10 @@ fn run_full(args: &[&str], offline: bool) -> (String, String, std::process::Exit
 fn list_shows_all_providers() {
     let (stdout, status) = run(&["list"]);
     assert!(status.success(), "list should exit 0");
+    let listed: Vec<&str> = stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
     for id in [
         "codex",
         "cursor",
@@ -298,9 +379,77 @@ fn list_shows_all_providers() {
         "kiro",
         "antigravity",
         "perplexity",
+        "claude",
+        "nous",
+        "openai",
+        "azureopenai",
+        "clinepass",
+        "opencode",
+        "alibaba",
+        "alibabatokenplan",
+        "qwencloud",
+        "fireworks",
+        "gemini",
+        "manus",
+        "kilo",
+        "vertexai",
+        "augment",
+        "moonshot",
+        "t3chat",
+        "ollama",
+        "openrouter",
+        "elevenlabs",
+        "warp",
+        "windsurf",
+        "zed",
+        "mimo",
+        "doubao",
+        "sakana",
+        "abacus",
+        "mistral",
+        "deepseek",
+        "deepinfra",
+        "codebuff",
+        "venice",
+        "commandcode",
+        "qoder",
+        "stepfun",
+        "bedrock",
+        "groq",
+        "llmproxy",
+        "litellm",
+        "bifrost",
+        "deepgram",
+        "poe",
+        "chutes",
+        "neuralwatt",
+        "helmcode",
+        "clawrouter",
+        "longcat",
+        "sub2api",
+        "wayfinder",
+        "zenmux",
+        "aiand",
+        "zoommate",
+        "xai",
+        "notion",
+        "ibmbob",
+        "muse",
+        "coderabbit",
+        "replicate",
+        "huggingface",
+        "pi",
+        "v0",
+        "typesafe",
+        "hyper",
+        "gitkraken",
+        "devpass",
+        "atlascloud",
+        "vercel",
+        "llmman",
     ] {
         assert!(
-            stdout.contains(id),
+            listed.contains(&id),
             "list missing provider '{id}'\n{stdout}"
         );
     }

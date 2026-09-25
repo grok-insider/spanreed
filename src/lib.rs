@@ -32,6 +32,7 @@ pub mod codex_session_move;
 mod cost;
 mod creds;
 pub mod desktop;
+pub mod desktop_open;
 mod drivers;
 mod epoch;
 pub mod fabrials_login;
@@ -44,6 +45,7 @@ mod http;
 mod local_control;
 pub mod local_relay;
 mod local_tokens;
+mod machine_name;
 pub mod migration;
 pub mod model;
 mod output;
@@ -61,6 +63,7 @@ mod secret;
 mod self_update;
 mod setup;
 pub use setup::review as client_configuration;
+mod provider_icons;
 mod share;
 mod share_economics;
 mod share_schedule;
@@ -68,6 +71,7 @@ mod share_session;
 pub mod sharing_control;
 pub mod sync;
 mod sync_store;
+mod tray_card;
 mod tray_format;
 pub mod usage;
 mod usage_stats;
@@ -75,6 +79,8 @@ mod util;
 
 #[cfg(feature = "tray")]
 mod tray;
+#[cfg(feature = "tray")]
+mod tray_popover;
 
 use std::process::ExitCode;
 
@@ -125,20 +131,13 @@ pub fn run_cli() -> ExitCode {
         "privacy" => privacy::cmd(rest),
         "profile" => profiles::cmd(rest),
         "widget" => profiles::widget(rest),
-        "gui" => {
-            match std::process::Command::new("spanreed-desktop")
-                .args(rest)
-                .spawn()
-            {
-                Ok(_) => ExitCode::SUCCESS,
-                Err(error) => {
-                    eprintln!(
-                        "Could not open Spanreed Desktop: {error}. Install the desktop package."
-                    );
-                    ExitCode::FAILURE
-                }
+        "gui" => match crate::desktop_open::request("overview") {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
             }
-        }
+        },
         "sync" => crate::sync::cmd(rest),
         "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),
@@ -211,9 +210,8 @@ fn print_help() {
          \tspanreed tray [--interval S] System tray companion (needs --features tray)\n\
          \tspanreed account …           Identities (add/import/use/login grok)\n\
          \tspanreed plugin list         Drivers (in-process / toml / PATH)\n\n\
-         PROVIDERS: codex, cursor, grok, opencode-go, amp, zai, minimax,\n\
-         \t           synthetic, kimi, copilot, factory, devin,\n\
-         \t           jetbrains-ai-assistant, kiro, antigravity, perplexity\n\
+         PROVIDERS: `spanreed list` shows every provider and whether it is detected.\n\
+         \t           `spanreed probe <id>` fetches one provider.\n\
          \t           (copilot requires `spanreed auth copilot`)"
     );
 }

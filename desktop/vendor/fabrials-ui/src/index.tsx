@@ -114,15 +114,16 @@ export function ProviderCard({ provider }: { provider: ProviderOutput }) {
   </article>;
 }
 
-export function WorkspaceShell({ title, navigation, active, onNavigate, actions, children }: {
+export function WorkspaceShell({ title, navigation, active, onNavigate, actions, children, brandMark, chrome }: {
   title: string; navigation: { id: string; label: string }[]; active: string;
   onNavigate: (id: string) => void; actions?: React.ReactNode; children: React.ReactNode;
+  brandMark?: React.ReactNode; chrome?: React.ReactNode;
 }) {
   return <div className="fb-workspace"><a className="fb-skip" href="#main-content">Skip to content</a>
-    <aside className="fb-sidebar"><div className="fb-brand"><span className="fb-brand-symbol" aria-hidden>F</span><span>{title}<small>Fabrials</small></span></div>
+    <aside className="fb-sidebar"><div className="fb-brand" data-tauri-drag-region>{brandMark ?? <span className="fb-brand-symbol" aria-hidden>F</span>}<span>{title}<small>Fabrials</small></span></div>
       <nav aria-label="Workspace">{navigation.map(item => <button key={item.id} aria-current={active === item.id ? "page" : undefined} onClick={() => onNavigate(item.id)}>{item.label}</button>)}</nav>
       <p className="fb-sidebar-note">Your tools.<br/>A clearer picture.</p>
-    </aside><div className="fb-main"><header className="fb-topbar"><span className="fb-muted">{navigation.find(item => item.id === active)?.label}</span>{actions}</header><main id="main-content">{children}</main></div>
+    </aside><div className="fb-main"><header className="fb-topbar"><div className="fb-chrome-drag" data-tauri-drag-region><span className="fb-muted">{navigation.find(item => item.id === active)?.label}</span></div><div className="fb-chrome-actions">{actions}{chrome}</div></header><main id="main-content">{children}</main></div>
   </div>;
 }
 export { MigrationReviewDetails } from "./migration-review";

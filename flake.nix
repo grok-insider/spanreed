@@ -32,8 +32,10 @@
           # Keep source builds independent from local node_modules, target and dist.
           source = lib.cleanSourceWith {
             src = ./.;
+            # Vendored UI packages ship their own dist; only the renderer build output is excluded.
             filter = path: type:
-              !(builtins.elem (builtins.baseNameOf path) [ "target" "node_modules" "dist" ".git" ]);
+              !(builtins.elem (builtins.baseNameOf path) [ "target" "node_modules" ".git" ])
+              && lib.removePrefix "${toString ./.}/" (toString path) != "desktop/dist";
           };
           nodeModules = pkgs.stdenvNoCC.mkDerivation {
             pname = "spanreed-desktop-node-modules";
@@ -50,12 +52,12 @@
               bun install --frozen-lockfile --ignore-scripts --no-progress --cpu '*' --os linux
             '';
             installPhase = ''
-              rm -rf node_modules/@fabrials/ui
+              rm -rf node_modules/@fabrials
               cp -R node_modules "$out"
             '';
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-PwGNtq0k/gx+xCs8YudQdlBgAYdVGnKJgwjZFL7xZ24=";
+            outputHash = "sha256-1nYRYZo2YPP0/A78GFlPFWDtSHKNBrgWG2lY0+j58nk=";
           };
         in pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed-desktop";
@@ -70,14 +72,17 @@
           preBuild = ''
             cp -R ${nodeModules} desktop/node_modules
             chmod -R u+w desktop/node_modules
-            # Local UI source must not come from the fixed-output dependency cache.
-            rm -rf desktop/node_modules/@fabrials/ui
-            ln -s ../../vendor/fabrials-ui desktop/node_modules/@fabrials/ui
+            # Local UI packages must not come from the fixed-output dependency cache.
+            rm -rf desktop/node_modules/@fabrials
+            mkdir -p desktop/node_modules/@fabrials
+            ln -s ../../vendor/fabrials-ui-0.4.0 desktop/node_modules/@fabrials/ui
+            ln -s ../../vendor/fabrials-ai-ui-0.4.0 desktop/node_modules/@fabrials/ai-ui
             patchShebangs desktop/node_modules
             (cd desktop && bun run build)
           '';
           postInstall = ''
             install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/com.fabrials.spanreed.png"
+            install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/spanreed-desktop.png"
             mkdir -p "$out/share/applications"
             cat > "$out/share/applications/com.fabrials.spanreed.desktop" <<EOF
             [Desktop Entry]
@@ -88,14 +93,14 @@
             Icon=com.fabrials.spanreed
             Categories=Development;Utility;
             Terminal=false
-            StartupWMClass=spanreed-desktop
+            StartupWMClass=com.fabrials.spanreed
             EOF
           '';
           dontWrapGApps = true;
           postFixup = ''
             wrapProgram "$out/bin/spanreed-desktop" \
               --set-default WEBKIT_DISABLE_DMABUF_RENDERER 1 \
-              --prefix PATH : "${lib.makeBinPath [ pkgs.libsecret pkgs.xdg-utils pkgs.libnotify ]}" \
+              --prefix PATH : "${lib.makeBinPath [ pkgs.libsecret pkgs.xdg-utils pkgs.libnotify pkgs.glib pkgs.zenity ]}" \
               --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath [ pkgs.libayatana-appindicator pkgs.gtk3 ]}" \
               "''${gappsWrapperArgs[@]}"
           '';
@@ -109,7 +114,11 @@
           };
         };
 
-      packageFor = system:
+      # `tray` pulls wry, which compiles javascriptcore against WebKitGTK.
+      # That belongs on the tray derivation only. `.#default` stays a CLI
+      # package and must not see those headers.
+      packageFor =
+        { system, tray ? false }:
         let
           pkgs = import nixpkgs { inherit system; };
 
@@ -122,12 +131,17 @@
             pkgs.libsecret
             pkgs.xdg-utils
             pkgs.libnotify
+            pkgs.glib
+            pkgs.zenity
           ];
           # tray-icon dlopens Ayatana at runtime (not a link-time NEEDED).
-          trayLibPath = lib.makeLibraryPath [
-            pkgs.libayatana-appindicator
-            pkgs.gtk3
-          ];
+          trayLibPath = lib.makeLibraryPath (
+            [
+              pkgs.libayatana-appindicator
+              pkgs.gtk3
+            ]
+            ++ lib.optionals tray [ pkgs.webkitgtk_4_1 ]
+          );
         in
         pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed";
@@ -139,9 +153,10 @@
             lockFile = ./Cargo.lock;
           };
 
-          # GNU Linux desktop build: SNI tray (GTK3 + Ayatana). musl GH
-          # release zips stay headless and are not this derivation.
-          buildFeatures = [ "tray" ];
+          # Headless CLI by default. The SNI tray (GTK3 + Ayatana + WebKit
+          # popover) is a separate derivation. musl GH release zips stay
+          # headless and are not this derivation.
+          buildFeatures = lib.optionals tray [ "tray" ];
 
           nativeBuildInputs = [
             pkgs.makeBinaryWrapper
@@ -152,10 +167,14 @@
             pkgs.stdenv.cc
           ];
 
-          buildInputs = [
+          # GTK, Soup, and WebKit are only needed to compile the tray popover.
+          # The default CLI derivation leaves `tray` off so soup3-sys is not built.
+          buildInputs = lib.optionals tray [
             pkgs.gtk3
             pkgs.libayatana-appindicator
             pkgs.xdotool
+            pkgs.libsoup_3
+            pkgs.webkitgtk_4_1
           ];
 
           # wrapGAppsHook3 + wrapProgram: apply GLib/GTK env in our wrapper.
@@ -178,7 +197,7 @@
     in
     {
       packages = forAllSystems (system: rec {
-        default = packageFor system;
+        default = packageFor { inherit system; };
         spanreed = default;
         spanreed-desktop = desktopFor system;
       });
@@ -389,7 +408,15 @@
               };
 
               Service = {
-                ExecStart = "${cfg.package}/bin/spanreed tray --interval ${toString cfg.tray.interval}";
+                ExecStart = "${
+                  packageFor {
+                    system = pkgs.stdenv.hostPlatform.system;
+                    tray = true;
+                  }
+                }/bin/spanreed tray --interval ${toString cfg.tray.interval}";
+                Environment = lib.optionals cfg.desktop.enable [
+                  "SPANREED_DESKTOP=${cfg.desktop.package}/bin/spanreed-desktop"
+                ];
                 Restart = "on-failure";
                 RestartSec = 5;
               };
@@ -430,6 +457,8 @@
               pkgs.libayatana-appindicator
               pkgs.xdotool
               pkgs.libnotify
+              pkgs.glib
+              pkgs.zenity
               pkgs.xdg-utils
             ];
           };

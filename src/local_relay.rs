@@ -31,6 +31,7 @@ impl LocalRelay {
                 Arc::new(upstreams::codex::CodexAdapter::default()),
                 Arc::new(upstreams::nous::NousAdapter::default()),
                 Arc::new(upstreams::openai::OpenAiAdapter::default()),
+                Arc::new(upstreams::opencode_go::OpenCodeGoAdapter::default()),
             ],
             credentials: Arc::new(credential),
             usage: Arc::new(LocalUsage),
@@ -363,6 +364,10 @@ pub(crate) fn models_for_account(id: &str) -> Result<Vec<String>, String> {
             Box::new(upstreams::openai::OpenAiAdapter::default()),
             "/openai/v1/models",
         ),
+        "opencode-go" => (
+            Box::new(upstreams::opencode_go::OpenCodeGoAdapter::default()),
+            "/opencode-go/v1/models",
+        ),
         _ => return Err("Model discovery is unavailable for this provider".into()),
     };
     let upstream = provider.resolve(path).ok_or("Model endpoint unavailable")?;
@@ -493,11 +498,57 @@ mod tests {
         check_forward("grok", true);
     }
 
+    fn accept_within(
+        listener: &std::net::TcpListener,
+        timeout: std::time::Duration,
+    ) -> std::net::TcpStream {
+        listener.set_nonblocking(true).expect("accept deadline");
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match listener.accept() {
+                Ok((socket, _)) => {
+                    socket.set_nonblocking(false).expect("blocking socket");
+                    return socket;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        panic!("accept timed out after {timeout:?}");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept failed: {error}"),
+            }
+        }
+    }
+
+    fn join_within<T: Send + 'static>(
+        handle: std::thread::JoinHandle<T>,
+        timeout: std::time::Duration,
+    ) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(handle.join());
+        });
+        match rx.recv_timeout(timeout) {
+            Ok(Ok(value)) => value,
+            Ok(Err(payload)) => std::panic::resume_unwind(payload),
+            Err(_) => panic!("join timed out after {timeout:?}"),
+        }
+    }
+
     fn check_forward(provider_id: &'static str, xai_compat: bool) {
+        let forward_wait = std::time::Duration::from_secs(5);
+        let upstream_token = if xai_compat {
+            "xai-fixture-upstream"
+        } else {
+            "fixture-upstream"
+        };
+        let expected_bearer = format!("Bearer {upstream_token}");
         let upstream = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let upstream_address = upstream.local_addr().unwrap();
         let upstream_worker = std::thread::spawn(move || {
-            let (mut socket, _) = upstream.accept().unwrap();
+            let mut socket = accept_within(&upstream, forward_wait);
             socket
                 .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                 .unwrap();
@@ -507,7 +558,7 @@ mod tests {
             assert_eq!(head.path, "/v1/responses");
             assert_eq!(
                 head.headers.get("authorization").map(String::as_str),
-                Some("Bearer fixture-upstream")
+                Some(expected_bearer.as_str())
             );
             assert!(!head.headers.contains_key("cookie"));
             assert!(!head.headers.contains_key("x-forwarded-for"));
@@ -536,7 +587,7 @@ mod tests {
             assert_eq!(alias, if xai_compat { None } else { Some("work") });
             Ok(Credential {
                 alias: Some("canonical".into()),
-                token: Some("fixture-upstream".into()),
+                token: Some(upstream_token.to_string()),
                 document: None,
             })
         });
@@ -546,7 +597,7 @@ mod tests {
         let address = inbound.local_addr().unwrap();
         relay.bind = address.to_string();
         let worker = std::thread::spawn(move || {
-            let (socket, _) = inbound.accept().unwrap();
+            let socket = accept_within(&inbound, forward_wait);
             relay.handle(socket, &Mutex::new(0)).unwrap();
         });
         let mut client = TcpStream::connect(address).unwrap();
@@ -562,8 +613,8 @@ mod tests {
         write!(client, "POST {path} HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer client-fixture\r\nCookie: fixture-private\r\nX-Forwarded-For: 1.2.3.4\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();
-        worker.join().unwrap();
-        upstream_worker.join().unwrap();
+        join_within(worker, forward_wait);
+        join_within(upstream_worker, forward_wait);
         assert!(response.starts_with("HTTP/1.1 200"), "{response}");
         let records = usage.0.lock().unwrap();
         assert_eq!(records.len(), 1);

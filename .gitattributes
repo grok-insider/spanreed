@@ -1,3 +1,7 @@
 # Generated TypeScript contracts are compared byte-for-byte with Rust output.
 # Keep their LF line endings on Windows checkouts too.
 *.ts text eol=lf
+
+# Vendored UI distributions are hash-verified. Leave every byte as committed,
+# including JavaScript and CSS, so Windows checkout does not rewrite endings.
+desktop/vendor/** -text
