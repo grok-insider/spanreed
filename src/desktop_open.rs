@@ -142,10 +142,13 @@ fn desktop_alive() -> bool {
     if !alive {
         return false;
     }
-    match process_command(pid) {
-        Some(command) => command_is_desktop(&command),
-        None => true,
-    }
+    command_confirms_desktop(process_command(pid).as_deref())
+}
+
+/// An unreadable command is not the desktop. Otherwise a live pid that is not
+/// the app would keep the tray from opening the dashboard.
+fn command_confirms_desktop(command: Option<&str>) -> bool {
+    command.is_some_and(command_is_desktop)
 }
 
 fn command_is_desktop(command: &str) -> bool {
@@ -504,6 +507,8 @@ mod tests {
         assert!(!command_is_desktop("bash"));
         assert!(!command_is_desktop("spanreed.exe"));
         assert_eq!(command_is_desktop("Spanreed.exe"), cfg!(windows));
+        assert!(!command_confirms_desktop(None));
+        assert!(command_confirms_desktop(Some(desktop_binary_names()[0])));
     }
 
     #[test]
