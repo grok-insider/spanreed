@@ -7,8 +7,58 @@
 
 #![cfg_attr(not(feature = "tray"), allow(dead_code))]
 
+use std::time::{Duration, Instant};
+
 use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
 use crate::output;
+
+/// Action results such as "Reset used" leave the card and tooltip on their own.
+/// A reset that is still running keeps its line until it finishes.
+pub fn status_expired(
+    status: Option<&str>,
+    status_at: Option<Instant>,
+    reset_in_flight: bool,
+    now: Instant,
+) -> bool {
+    status != Some("Capture proxy is DOWN")
+        && !reset_in_flight
+        && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(8))
+}
+
+/// A reset that is still marked running after a minute has stopped reporting.
+pub fn reset_hung(status_at: Option<Instant>, reset_in_flight: bool, now: Instant) -> bool {
+    reset_in_flight
+        && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(60))
+}
+
+/// After a transient line expires, the outage line returns while capture is down.
+pub fn next_status_after_expiry(capture_up: bool) -> Option<&'static str> {
+    if capture_up {
+        None
+    } else {
+        Some("Capture proxy is DOWN")
+    }
+}
+
+/// A refresh must not cover the capture-down line. Other states show progress.
+pub fn begin_refresh_status(current: Option<&str>) -> Option<&'static str> {
+    if current == Some("Capture proxy is DOWN") {
+        None
+    } else {
+        Some("Refreshing usage…")
+    }
+}
+
+/// A reset that never reports back must not leave "Using reset…" on the card.
+pub fn abandon_reset(reset_in_flight: &mut bool, status: &mut Option<String>) {
+    if !*reset_in_flight {
+        return;
+    }
+    *reset_in_flight = false;
+    if status.as_deref() == Some("Using reset…") {
+        *status = Some("Could not finish the reset".into());
+    }
+}
 
 /// Tray icon / notification band from a utilization percentage (used 0–100).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +173,31 @@ pub fn format_tooltip(
     lines.join("\n")
 }
 
+/// Status lines such as "Reset used" sit above the capture summary, and only while set.
+/// Linux tray tooltips are ignored by the icon library. The panel title is the
+/// line the user can see, so a cleared status must return the app name.
+pub fn indicator_title(status: Option<&str>, app_name: &str) -> String {
+    status
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or(app_name)
+        .to_string()
+}
+
+pub fn compose_tooltip(status: Option<&str>, share_line: &str, body: &str) -> String {
+    let mut parts = Vec::new();
+    if let Some(status) = status.map(str::trim).filter(|text| !text.is_empty()) {
+        parts.push(status.to_string());
+    }
+    if !share_line.is_empty() {
+        parts.push(share_line.to_string());
+    }
+    if !body.is_empty() {
+        parts.push(body.to_string());
+    }
+    parts.join("\n")
+}
+
 fn format_quota_bit(line: &MetricLine) -> Option<String> {
     match line {
         MetricLine::Progress {
@@ -169,6 +244,79 @@ pub fn crossed_threshold(prev: Option<f64>, next: Option<f64>) -> Option<&'stati
 mod tests {
     use super::*;
     use crate::model::MetricLine;
+
+    #[test]
+    fn tooltip_drops_a_cleared_status_line() {
+        let body = "Capture: UP";
+        let shown = compose_tooltip(Some("Refreshing usage…"), "", body);
+        assert!(shown.starts_with("Refreshing usage…\n"));
+        let cleared = compose_tooltip(None, "", body);
+        assert_eq!(cleared, body);
+        assert!(!cleared.contains("Reset used"));
+        assert_eq!(
+            indicator_title(Some("Reset used"), "Spanreed"),
+            "Reset used"
+        );
+        assert_eq!(
+            indicator_title(Some("Refreshing usage…"), "Spanreed"),
+            "Refreshing usage…"
+        );
+        assert_eq!(indicator_title(None, "Spanreed"), "Spanreed");
+        assert_eq!(indicator_title(Some("  "), "Spanreed"), "Spanreed");
+    }
+
+    #[test]
+    fn status_lines_expire_without_another_action() {
+        let now = Instant::now();
+        let earlier = now.checked_sub(Duration::from_secs(9)).expect("instant");
+        assert!(!status_expired(Some("Reset used"), Some(now), false, now));
+        assert!(status_expired(
+            Some("Refreshing usage…"),
+            Some(earlier),
+            false,
+            now
+        ));
+        assert!(!status_expired(
+            Some("Reset used"),
+            Some(earlier),
+            true,
+            now
+        ));
+        assert!(!status_expired(None, None, false, now));
+        assert!(!status_expired(
+            Some("Capture proxy is DOWN"),
+            Some(earlier),
+            false,
+            now
+        ));
+        assert_eq!(begin_refresh_status(Some("Capture proxy is DOWN")), None);
+        assert_eq!(
+            begin_refresh_status(Some("Reset used")),
+            Some("Refreshing usage…")
+        );
+        assert_eq!(
+            next_status_after_expiry(false),
+            Some("Capture proxy is DOWN")
+        );
+        assert_eq!(next_status_after_expiry(true), None);
+        let hung = now.checked_sub(Duration::from_secs(61)).expect("instant");
+        assert!(!reset_hung(Some(now), true, now));
+        assert!(reset_hung(Some(hung), true, now));
+        assert!(!reset_hung(Some(hung), false, now));
+    }
+
+    #[test]
+    fn an_unfinished_reset_does_not_keep_its_status_line() {
+        let mut in_flight = true;
+        let mut status = Some("Using reset…".into());
+        abandon_reset(&mut in_flight, &mut status);
+        assert!(!in_flight);
+        assert_eq!(status.as_deref(), Some("Could not finish the reset"));
+        let mut status = Some("Reset used".into());
+        let mut in_flight = false;
+        abandon_reset(&mut in_flight, &mut status);
+        assert_eq!(status.as_deref(), Some("Reset used"));
+    }
 
     #[test]
     fn remaining() {

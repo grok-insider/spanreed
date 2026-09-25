@@ -1,4 +1,6 @@
 import * as React from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Boxes, ChartColumn, CircleGauge, Plug, RefreshCw, Route as RouteIcon } from "lucide-react";
 import { Button, StatusDot } from "@fabrials/ui";
 import { useClock } from "@fabrials/ai-ui";
@@ -21,6 +23,7 @@ function useHashRoute() {
   React.useEffect(() => {
     const sync = () => setRoute(parseRoute(location.hash, storedWorkspace()));
     if (!location.hash) history.replaceState(null, "", routeHref(parseRoute("", storedWorkspace())));
+    sync();
     addEventListener("hashchange", sync);
     return () => removeEventListener("hashchange", sync);
   }, []);
@@ -72,6 +75,23 @@ export function App() {
   const [appError, setAppError] = React.useState<string | null>(null);
   const [theme, setTheme] = useThemePreference(setAppError);
   const route = useHashRoute();
+  React.useEffect(() => {
+    let active = true;
+    const pull = () => {
+      void invoke<string | null>("take_desktop_route").then((href) => {
+        if (!active || !href) return;
+        if (location.hash !== href) location.hash = href;
+        else window.dispatchEvent(new HashChangeEvent("hashchange"));
+        const host = getCurrentWindow();
+        void host.unminimize();
+        void host.show();
+        void host.setFocus();
+      }).catch(() => undefined);
+    };
+    pull();
+    const timer = window.setInterval(pull, 1000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
   if (route.workspace === "hosted") return <HostedWorkspace route={route} theme={theme} onThemeChange={setTheme} />;
   return <LocalDataProvider><LocalWorkspace route={route} theme={theme} onThemeChange={setTheme} appError={appError} /></LocalDataProvider>;
 }

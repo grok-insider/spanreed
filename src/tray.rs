@@ -19,10 +19,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use image::RgbaImage;
-use tao::event::Event;
+use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::api;
 use crate::capture_log;
@@ -49,6 +49,8 @@ pub const MENU_UPDATE: &str = "Install update…";
 pub const MENU_LINK_SHARE: &str = "Link share (X)…";
 pub const MENU_SHARE_NOW: &str = "Share now";
 pub const MENU_UNLINK_SHARE: &str = "Unlink share";
+pub const MENU_DASHBOARD: &str = "Open dashboard";
+pub const MENU_SETTINGS: &str = "Settings";
 pub const MENU_QUIT: &str = "Quit tray";
 
 struct TrayState {
@@ -60,10 +62,16 @@ struct TrayState {
     share_line: String,
     /// Short status line shown at the top of the tooltip (action feedback).
     status_note: Option<String>,
+    status_at: Option<Instant>,
     last_notify_proxy: Option<Instant>,
     last_notify_quota: Option<Instant>,
     /// Background thread sets this; UI thread clears after repaint.
     dirty: bool,
+    /// Bumped when the card body changes. Status text does not bump it.
+    content_epoch: u64,
+    /// Idempotency key for an in-progress Codex reset. Reused until success.
+    reset_request_id: Option<String>,
+    reset_in_flight: bool,
 }
 
 impl Default for TrayState {
@@ -76,9 +84,13 @@ impl Default for TrayState {
             share_logged_in: false,
             share_line: tray_format::format_share_line(false, None, ""),
             status_note: None,
+            status_at: None,
             last_notify_proxy: None,
             last_notify_quota: None,
             dirty: true,
+            content_epoch: 0,
+            reset_request_id: None,
+            reset_in_flight: false,
         }
     }
 }
@@ -111,7 +123,9 @@ pub fn cmd(args: &[String]) -> ExitCode {
                 println!(
                     "spanreed tray — system tray status (Spanreed icon)\n\n\
                      \t--interval S   Refresh every S seconds (default {DEFAULT_INTERVAL_SECS})\n\
-                     Menu: Refresh, Ensure, Open log, Link/Share/Unlink, Check/Install update, Quit tray"
+                     Left click opens the usage card. Right click keeps the menu:\n\
+                     \tOpen dashboard, Settings, Refresh, Ensure, Open log,\n\
+                     \tLink/Share/Unlink, Check/Install update, Quit tray"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -144,7 +158,15 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     let item_update = MenuItem::new(MENU_UPDATE, false, None);
     let item_share_primary = MenuItem::new(MENU_LINK_SHARE, true, None);
     let item_unlink = MenuItem::new(MENU_UNLINK_SHARE, false, None);
+    let item_dashboard = MenuItem::new(MENU_DASHBOARD, true, None);
+    let item_settings = MenuItem::new(MENU_SETTINGS, true, None);
     let item_quit = MenuItem::new(MENU_QUIT, true, None);
+    menu.append(&item_dashboard)
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&item_settings)
+        .map_err(|e| format!("menu: {e}"))?;
+    menu.append(&PredefinedMenuItem::separator())
+        .map_err(|e| format!("menu: {e}"))?;
     menu.append(&item_refresh)
         .map_err(|e| format!("menu: {e}"))?;
     menu.append(&item_ensure)
@@ -172,15 +194,19 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     let id_unlink = item_unlink.id().clone();
     let id_check = item_check.id().clone();
     let id_update = item_update.id().clone();
+    let id_dashboard = item_dashboard.id().clone();
+    let id_settings = item_settings.id().clone();
     let id_quit = item_quit.id().clone();
 
     let state = Arc::new(Mutex::new(TrayState::default()));
     // First probe on main thread so tooltip is ready.
     refresh_state(&state);
 
+    let mut popover = crate::tray_popover::Popover::new(&event_loop)?;
     let icon = icon_for_severity(TraySeverity::Ok)?;
     let mut tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
+        .with_menu_on_left_click(false)
         .with_tooltip(tooltip_from(&state))
         .with_icon(icon)
         .with_title(crate::app::APP_NAME)
@@ -209,56 +235,148 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             refresh_state(&state_bg);
         }
     });
+    let proxy = event_loop.create_proxy();
+    let stop_tick = stop.clone();
+    thread::spawn(move || {
+        while !stop_tick.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(250));
+            if proxy.send_event(()).is_err() {
+                break;
+            }
+        }
+    });
 
     let menu_channel = MenuEvent::receiver();
+    let click_channel = TrayIconEvent::receiver();
+    let mut loaded_epoch = 0_u64;
+    let mut blur_close_at: Option<Instant> = None;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
+        {
+            let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+            let now = Instant::now();
+            if tray_format::reset_hung(guard.status_at, guard.reset_in_flight, now) {
+                let mut in_flight = guard.reset_in_flight;
+                let mut status = guard.status_note.clone();
+                let before = status.clone();
+                tray_format::abandon_reset(&mut in_flight, &mut status);
+                guard.reset_in_flight = in_flight;
+                guard.status_note = status;
+                if guard.status_note != before {
+                    guard.status_at = Some(now);
+                    guard.dirty = true;
+                    guard.content_epoch = guard.content_epoch.wrapping_add(1);
+                }
+            } else if tray_format::status_expired(
+                guard.status_note.as_deref(),
+                guard.status_at,
+                guard.reset_in_flight,
+                now,
+            ) {
+                match tray_format::next_status_after_expiry(guard.capture_up) {
+                    Some(note) => {
+                        guard.status_note = Some(note.into());
+                        guard.status_at = Some(now);
+                    }
+                    None => {
+                        guard.status_note = None;
+                        guard.status_at = None;
+                    }
+                }
+                guard.dirty = true;
+            }
+        }
 
-        if let Event::NewEvents(_) = event {
-            let dirty = state.lock().map(|g| g.dirty).unwrap_or(false);
-            if dirty {
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
+        if let Event::WindowEvent {
+            event: WindowEvent::Focused(focused),
+            ..
+        } = &event
+        {
+            if *focused {
+                blur_close_at = None;
+            } else if popover.blur_should_close() {
+                // A click inside the card can blur the window before the button
+                // message arrives. Hide on the next tick unless that message comes.
+                blur_close_at = Some(Instant::now() + Duration::from_millis(200));
+            }
+        }
+
+        while let Ok(click) = click_channel.try_recv() {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                rect,
+                ..
+            } = click
+            {
+                let html = usage_card(&state);
+                popover.toggle(rect, html);
+                if popover.visible() {
+                    loaded_epoch = state
+                        .lock()
+                        .map(|guard| guard.content_epoch)
+                        .unwrap_or(loaded_epoch);
+                }
+            }
+        }
+
+        while let Some(message) = popover.poll() {
+            blur_close_at = None;
+            if message == "close" {
+                popover.hide();
+            } else if message == "refresh" {
+                begin_refresh(&state);
+            } else if message == "ensure" {
+                set_status(&state, "Ensuring capture…");
+                let st = state.clone();
+                thread::spawn(move || {
+                    let msg = match setup::service_ensure(false) {
+                        Ok(m) => format!("Capture: {m}"),
+                        Err(e) => format!("Capture ensure failed: {e}"),
+                    };
+                    set_status(&st, &msg);
+                    refresh_state(&st);
+                });
+            } else if message == "log" {
+                let path = capture_log::capture_log_path();
+                match open_path(&path) {
+                    Ok(()) => set_status(&state, "Opened capture log"),
+                    Err(e) => set_status(&state, &format!("Could not open log: {e}")),
+                }
+            } else if message == "dashboard" || message == "settings" {
+                let page = if message == "settings" { "settings" } else { "overview" };
+                match crate::desktop_open::request(page) {
+                    Ok(()) => set_status(&state, "Opened Spanreed"),
+                    Err(error) => set_status(&state, &format!("Could not open Spanreed: {error}")),
+                }
+            } else if message == "quit" {
+                stop.store(true, Ordering::Relaxed);
+                *control_flow = ControlFlow::Exit;
+            } else if let Some(url) = message.strip_prefix("buy ") {
+                if crate::tray_popover::allowed_buy_url(url.trim()) {
+                    let _ = open_url(url.trim());
+                }
+            } else if message == "reset" {
+                redeem_from_card(&state);
             }
         }
 
         while let Ok(ev) = menu_channel.try_recv() {
             let id = ev.id;
-            if id == id_quit {
+            if id == id_dashboard || id == id_settings {
+                let page = if id == id_settings { "settings" } else { "overview" };
+                match crate::desktop_open::request(page) {
+                    Ok(()) => set_status(&state, "Opened Spanreed"),
+                    Err(error) => set_status(&state, &format!("Could not open Spanreed: {error}")),
+                }
+            } else if id == id_quit {
                 stop.store(true, Ordering::Relaxed);
                 *control_flow = ControlFlow::Exit;
             } else if id == id_refresh {
-                set_status(&state, "Refreshing usage…");
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
-                let st = state.clone();
-                thread::spawn(move || {
-                    refresh_state(&st);
-                    set_status(&st, "Usage refreshed");
-                });
+                begin_refresh(&state);
             } else if id == id_ensure {
                 set_status(&state, "Ensuring capture…");
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                 let st = state.clone();
                 thread::spawn(move || {
                     let msg = match setup::service_ensure(false) {
@@ -281,27 +399,11 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     Ok(()) => {
                         let msg = format!("Opened log:\n{}", path.display());
                         set_status(&state, "Opened capture log");
-                        apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                         log::info!("tray: {msg}");
                     }
                     Err(e) => {
                         let msg = format!("Could not open log:\n{}\n\n{}", path.display(), e);
                         set_status(&state, "Failed to open capture log");
-                        apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                         user_notify("spanreed — capture log", &msg, true);
                     }
                 }
@@ -312,14 +414,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     .unwrap_or(false);
                 if logged_in {
                     set_status(&state, "Sharing usage…");
-                    apply_visual(
-                        &state,
-                        &mut tray,
-                        &item_update,
-                        &item_check,
-                        &item_share_primary,
-                        &item_unlink,
-                    );
                     let st = state.clone();
                     thread::spawn(move || {
                         let msg = match share::share_once(false) {
@@ -332,14 +426,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     });
                 } else {
                     set_status(&state, "Starting share login…");
-                    apply_visual(
-                        &state,
-                        &mut tray,
-                        &item_update,
-                        &item_check,
-                        &item_share_primary,
-                        &item_unlink,
-                    );
                     let st = state.clone();
                     thread::spawn(move || match share_session::start_device_login() {
                         Ok(pending) => {
@@ -378,14 +464,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     Ok(()) => {
                         set_status(&state, "Share unlinked");
                         refresh_state(&state);
-                        apply_visual(
-                            &state,
-                            &mut tray,
-                            &item_update,
-                            &item_check,
-                            &item_share_primary,
-                            &item_unlink,
-                        );
                         user_notify("spanreed — share", "Local share session removed.", false);
                     }
                     Err(e) => {
@@ -396,14 +474,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             } else if id == id_check {
                 item_check.set_text("Checking for updates…");
                 set_status(&state, "Checking for updates…");
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                 let st = state.clone();
                 thread::spawn(move || {
                     let summary = run_update_check(&st);
@@ -413,26 +483,10 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             } else if id == id_update {
                 if let Some(why) = self_update::apply_blocked_reason() {
                     set_status(&state, why);
-                    apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                     user_notify("spanreed — updates", why, true);
                     continue;
                 }
                 set_status(&state, "Starting self-update…");
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                 let exe = std::env::current_exe().unwrap_or_default();
                 let st = state.clone();
                 thread::spawn(move || match Command::new(&exe)
@@ -461,13 +515,165 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 });
             }
         }
+
+        if blur_close_at.is_some_and(|at| Instant::now() >= at) {
+            popover.hide();
+            blur_close_at = None;
+        }
+
+        let dirty = state.lock().map(|guard| guard.dirty).unwrap_or(false);
+        if dirty {
+            apply_visual(
+                &state,
+                &mut tray,
+                &item_update,
+                &item_check,
+                &item_share_primary,
+                &item_unlink,
+            );
+            if popover.visible() {
+                let epoch = state
+                    .lock()
+                    .map(|guard| guard.content_epoch)
+                    .unwrap_or(loaded_epoch);
+                if epoch != loaded_epoch {
+                    popover.load(usage_card(&state));
+                    loaded_epoch = epoch;
+                }
+            }
+        }
+        if popover.visible() {
+            let status = state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .status_note
+                .clone();
+            popover.sync_status(status.as_deref());
+        }
+    });
+}
+
+fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
+    let request_id = {
+        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+        if guard.reset_in_flight {
+            return;
+        }
+        if !guard.outputs.iter().any(crate::tray_card::can_use_reset) {
+            stamp_status(&mut guard, "No limit reset credit is available");
+            return;
+        }
+        if guard.reset_request_id.is_none() {
+            match new_redeem_request_id() {
+                Ok(id) => guard.reset_request_id = Some(id),
+                Err(message) => {
+                    stamp_status(&mut guard, message);
+                    return;
+                }
+            }
+        }
+        guard.reset_in_flight = true;
+        stamp_status(&mut guard, "Using reset…");
+        guard
+            .reset_request_id
+            .clone()
+            .unwrap_or_else(|| "invalid".into())
+    };
+    if !crate::providers::codex::valid_redeem_request_id(&request_id) {
+        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+        guard.reset_in_flight = false;
+        guard.reset_request_id = None;
+        stamp_status(&mut guard, "Could not start the reset");
+        return;
+    }
+    let state = state.clone();
+    thread::spawn(move || {
+        let _reset = ResetFlight {
+            state: state.clone(),
+        };
+        let result = crate::providers::codex::redeem_reset(&request_id);
+        {
+            let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+            guard.reset_in_flight = false;
+            match result {
+                Ok(()) => {
+                    guard.reset_request_id = None;
+                    stamp_status(&mut guard, "Reset used");
+                }
+                Err(message) => stamp_status(&mut guard, message),
+            }
+        }
+        refresh_state(&state);
+    });
+}
+
+struct ResetFlight {
+    state: Arc<Mutex<TrayState>>,
+}
+
+impl Drop for ResetFlight {
+    fn drop(&mut self) {
+        let mut guard = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut in_flight = guard.reset_in_flight;
+        let mut status = guard.status_note.clone();
+        let before = status.clone();
+        tray_format::abandon_reset(&mut in_flight, &mut status);
+        guard.reset_in_flight = in_flight;
+        guard.status_note = status;
+        if guard.status_note != before {
+            guard.status_at = Some(Instant::now());
+            guard.dirty = true;
+            guard.content_epoch = guard.content_epoch.wrapping_add(1);
+        }
+    }
+}
+
+fn new_redeem_request_id() -> Result<String, &'static str> {
+    let mut bytes = [0_u8; 16];
+    getrandom::getrandom(&mut bytes).map_err(|_| "Could not start the reset")?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let mut id = String::with_capacity(36);
+    for (index, byte) in bytes.iter().enumerate() {
+        if matches!(index, 4 | 6 | 8 | 10) {
+            id.push('-');
+        }
+        id.push_str(&format!("{byte:02x}"));
+    }
+    Ok(id)
+}
+
+fn begin_refresh(state: &Arc<Mutex<TrayState>>) {
+    {
+        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(note) = tray_format::begin_refresh_status(guard.status_note.as_deref()) {
+            stamp_status(&mut guard, note);
+        }
+    }
+    let state = state.clone();
+    thread::spawn(move || {
+        refresh_state(&state);
+        note_refreshed(&state);
     });
 }
 
 fn set_status(state: &Arc<Mutex<TrayState>>, note: &str) {
     let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
-    g.status_note = Some(note.to_string());
-    g.dirty = true;
+    stamp_status(&mut g, note);
+}
+
+fn note_refreshed(state: &Arc<Mutex<TrayState>>) {
+    let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+    if guard.status_note.as_deref() == Some("Capture proxy is DOWN") {
+        return;
+    }
+    stamp_status(&mut guard, "Usage refreshed");
+}
+
+fn stamp_status(guard: &mut TrayState, note: impl Into<String>) {
+    guard.status_note = Some(note.into());
+    guard.status_at = Some(Instant::now());
+    guard.dirty = true;
 }
 
 fn refresh_state(state: &Arc<Mutex<TrayState>>) {
@@ -479,6 +685,10 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
     let prev_used = g.max_used;
     let prev_up = g.capture_up;
     g.capture_up = capture_up;
+    if capture_up && g.status_note.as_deref() == Some("Capture proxy is DOWN") {
+        g.status_note = None;
+        g.status_at = None;
+    }
     g.outputs = outputs;
     g.max_used = max_used;
     g.share_logged_in = share_session::is_logged_in();
@@ -489,6 +699,7 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
         &today,
     );
     g.dirty = true;
+    g.content_epoch = g.content_epoch.wrapping_add(1);
 
     let now = Instant::now();
     if prev_up && !capture_up {
@@ -499,7 +710,7 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
         if cool {
             log::warn!("spanreed tray: capture proxy is DOWN");
             g.last_notify_proxy = Some(now);
-            g.status_note = Some("Capture proxy is DOWN".into());
+            stamp_status(&mut g, "Capture proxy is DOWN");
             drop(g);
             user_notify(
                 "spanreed — capture",
@@ -509,6 +720,9 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
             return;
         }
     }
+    if !capture_up && g.status_note.is_none() {
+        stamp_status(&mut g, "Capture proxy is DOWN");
+    }
     if let Some(band) = tray_format::crossed_threshold(prev_used, max_used) {
         let cool = g
             .last_notify_quota
@@ -517,6 +731,13 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
         if cool {
             log::warn!("spanreed tray: quota entered {band} band");
             g.last_notify_quota = Some(now);
+            drop(g);
+            let body = if band == "critical" {
+                "Usage is at or above 95%."
+            } else {
+                "Usage is at or above 80%."
+            };
+            user_notify("spanreed — usage", body, false);
         }
     }
 }
@@ -563,23 +784,23 @@ fn run_update_check(state: &Arc<Mutex<TrayState>>) -> String {
     }
 }
 
+fn usage_card(state: &Arc<Mutex<TrayState>>) -> String {
+    let guard = state.lock().unwrap_or_else(|error| error.into_inner());
+    crate::tray_card::present(
+        &guard.outputs,
+        guard.capture_up,
+        guard.status_note.as_deref(),
+        crate::util::now_ms(),
+    )
+}
+
 fn tooltip_from(state: &Arc<Mutex<TrayState>>) -> String {
     let g = state.lock().unwrap_or_else(|e| e.into_inner());
-    let mut parts = Vec::new();
-    if let Some(s) = g.status_note.as_deref() {
-        if !s.is_empty() {
-            parts.push(s.to_string());
-        }
-    }
-    if !g.share_line.is_empty() {
-        parts.push(g.share_line.clone());
-    }
-    parts.push(tray_format::format_tooltip(
-        &g.outputs,
-        g.capture_up,
-        g.update_note.as_deref(),
-    ));
-    parts.join("\n")
+    tray_format::compose_tooltip(
+        g.status_note.as_deref(),
+        &g.share_line,
+        &tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref()),
+    )
 }
 
 fn apply_visual(
@@ -590,25 +811,16 @@ fn apply_visual(
     item_share_primary: &MenuItem,
     item_unlink: &MenuItem,
 ) {
-    let (sev, tip, update_enabled, check_label, share_logged_in) = {
+    let (sev, tip, title, update_enabled, check_label, share_logged_in) = {
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.dirty = false;
         let sev = tray_format::severity(g.capture_up, g.max_used);
-        let mut tip_parts = Vec::new();
-        if let Some(s) = g.status_note.as_deref() {
-            if !s.is_empty() {
-                tip_parts.push(s.to_string());
-            }
-        }
-        if !g.share_line.is_empty() {
-            tip_parts.push(g.share_line.clone());
-        }
-        tip_parts.push(tray_format::format_tooltip(
-            &g.outputs,
-            g.capture_up,
-            g.update_note.as_deref(),
-        ));
-        let tip = tip_parts.join("\n");
+        let title = tray_format::indicator_title(g.status_note.as_deref(), crate::app::APP_NAME);
+        let tip = tray_format::compose_tooltip(
+            g.status_note.as_deref(),
+            &g.share_line,
+            &tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref()),
+        );
         let update_enabled = self_update::can_apply_self_update()
             && g.update_note
                 .as_deref()
@@ -616,7 +828,14 @@ fn apply_visual(
                 .unwrap_or(false);
         let check_label = MENU_CHECK.to_string();
         let share_logged_in = g.share_logged_in;
-        (sev, tip, update_enabled, check_label, share_logged_in)
+        (
+            sev,
+            tip,
+            title,
+            update_enabled,
+            check_label,
+            share_logged_in,
+        )
     };
     item_share_primary.set_text(if share_logged_in {
         MENU_SHARE_NOW
@@ -631,9 +850,10 @@ fn apply_visual(
     if current != "Checking for updates…" {
         item_check.set_text(check_label);
     }
+    let _ = tray.set_tooltip(Some(tip));
+    tray.set_title(Some(title));
     if let Ok(icon) = icon_for_severity(sev) {
         let _ = tray.set_icon(Some(icon));
-        let _ = tray.set_tooltip(Some(tip));
     }
 }
 
@@ -852,49 +1072,24 @@ pub fn open_path(path: &std::path::Path) -> Result<(), String> {
 
 /// User-visible notification.
 ///
-/// `modal`: Windows MessageBox for long copy (update check). Refresh/ensure use
-/// tooltip + Linux `notify-send` only — do not spawn WPF for every click.
+/// Every alert goes through the platform path: notify-send, a Windows toast,
+/// or macOS Notification Center. macOS and Windows also show a dialog, because
+/// a successful command does not prove the banner was shown.
 fn user_notify(title: &str, body: &str, modal: bool) {
     log::info!("tray notify: {title}: {body}");
-    #[cfg(windows)]
-    {
-        if !modal {
-            return;
-        }
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let t = title.replace('\'', "''");
-        let b = body.replace('\'', "''");
-        let script = format!(
-            "Add-Type -AssemblyName PresentationFramework; \
-             [System.Windows.MessageBox]::Show('{b}','{t}') | Out-Null"
-        );
-        let _ = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                &script,
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
+    if modal {
+        eprintln!("spanreed tray: {title}: {body}");
     }
-    #[cfg(not(windows))]
-    {
-        let short = if body.len() > 280 {
-            format!("{}…", body.chars().take(277).collect::<String>())
-        } else {
-            body.to_string()
-        };
-        let _ = Command::new("notify-send")
-            .args(["-a", "spanreed", "--", title, &short])
-            .spawn();
-        if modal {
-            eprintln!("spanreed tray: {title}: {body}");
+    let title = title.to_string();
+    let body = body.to_string();
+    thread::spawn(move || {
+        // Deliver before asking the desktop. The desktop handshake waits, and a
+        // successful plugin show can still drop the banner.
+        if let Err(error) = crate::notifications::deliver_user_visible(&title, &body) {
+            log::warn!("tray notify failed: {error}");
         }
-    }
+        let _handed_to_desktop = crate::desktop_open::hand_off_alert(&title, &body);
+    });
 }
 
 #[cfg(test)]

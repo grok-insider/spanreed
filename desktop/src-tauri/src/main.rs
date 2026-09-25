@@ -340,6 +340,17 @@ fn open_device_login(id: String) -> Result<(), String> {
     open_url(&spanreed::account_login::verification_url(&id)?)
 }
 
+#[tauri::command]
+fn take_desktop_route(app: tauri::AppHandle) -> Option<String> {
+    let href = spanreed::desktop_open::take()?;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    Some(href)
+}
+
 fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let result = std::process::Command::new("xdg-open").arg(url).spawn();
@@ -353,18 +364,91 @@ fn open_url(url: &str) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![disconnect_usage_source, connect_usage_source, usage_report, usage_sources, save_usage_sources, preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
+        .invoke_handler(tauri::generate_handler![take_desktop_route, disconnect_usage_source, connect_usage_source, usage_report, usage_sources, save_usage_sources, preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
         .setup(|app| {
-            let show = tauri::menu::MenuItem::with_id(app, "show", "Open Spanreed", true, None::<&str>)?;
+            spanreed::desktop_open::mark_running();
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let mut applied = String::new();
+                loop {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(href) = spanreed::desktop_open::peek() {
+                    use tauri::Manager;
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        if applied != href {
+                            if let Some(script) = spanreed::desktop_open::route_location_script(&href) {
+                                if window.eval(&script).is_ok() {
+                                    applied.clone_from(&href);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    applied.clear();
+                }
+                if let Some(alert) = spanreed::desktop_open::take_alert() {
+                    use tauri::plugin::PermissionState;
+                    use tauri_plugin_notification::NotificationExt;
+                    let permitted = handle
+                        .notification()
+                        .permission_state()
+                        .ok()
+                        .is_some_and(|state| state == PermissionState::Granted);
+                    let shown = permitted
+                        && handle
+                            .notification()
+                            .builder()
+                            .title(alert.title)
+                            .body(alert.body)
+                            .show()
+                            .is_ok();
+                    if shown {
+                        spanreed::desktop_open::ack_alert(&alert.id);
+                    }
+                }
+                }));
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+            });
+            let show = tauri::menu::MenuItem::with_id(app, "show", "Open dashboard", true, None::<&str>)?;
+            let settings = tauri::menu::MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit Spanreed", true, None::<&str>)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &quit])?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show, &settings, &quit])?;
             tauri::tray::TrayIconBuilder::new().menu(&menu).tooltip("Spanreed")
                 .icon(app.default_window_icon().expect("bundled application icon").clone())
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => { if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); } }
-                    "quit" => app.exit(0), _ => {}
+                .on_menu_event(|app, event| {
+                    let page = match event.id.as_ref() {
+                        "show" => "overview",
+                        "settings" => "settings",
+                        "quit" => {
+                            app.exit(0);
+                            return;
+                        }
+                        _ => return,
+                    };
+                    let _ = spanreed::desktop_open::request(page);
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
                 }).build(app)?;
             Ok(())
         })
-        .run(tauri::generate_context!()).expect("could not start Spanreed desktop");
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("could not start Spanreed desktop")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                spanreed::desktop_open::unmark_running();
+            }
+        });
 }
