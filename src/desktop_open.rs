@@ -179,7 +179,26 @@ fn process_command(pid: u32) -> Option<String> {
         }
         Some(text.to_string())
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let output = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let image = text.split(',').next()?.trim().trim_matches('"');
+        if image.is_empty() || image.eq_ignore_ascii_case("INFO:") {
+            return None;
+        }
+        Some(image.to_string())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = pid;
         None
@@ -470,6 +489,8 @@ mod tests {
         )));
         assert!(!command_is_desktop("/usr/bin/spanreed\0"));
         assert!(!command_is_desktop("bash"));
+        assert!(!command_is_desktop("spanreed.exe"));
+        assert_eq!(command_is_desktop("Spanreed.exe"), cfg!(windows));
     }
 
     #[test]
