@@ -109,7 +109,7 @@
             description = "Local AI accounts, usage and routing console";
             homepage = "https://fabrials.com";
             mainProgram = "spanreed-desktop";
-            license = lib.licenses.mit;
+            license = lib.licenses.agpl3Plus;
             platforms = systems;
           };
         };
@@ -184,13 +184,15 @@
               --prefix PATH : "${runtimePath}" \
               --prefix LD_LIBRARY_PATH : "${trayLibPath}" \
               "''${gappsWrapperArgs[@]}"
+            # `grok-bridge` keeps working for existing scripts and autostart entries.
+            makeWrapper "$out/bin/spanreed" "$out/bin/grok-bridge" --add-flags agent
           '';
 
           meta = {
             description = "Linux-native AI subscription usage tracker (daemon + CLI + Waybar + tray)";
             homepage = "https://github.com/grok-insider/spanreed";
             mainProgram = "spanreed";
-            license = lib.licenses.mit;
+            license = lib.licenses.agpl3Plus;
             platforms = systems;
           };
         };

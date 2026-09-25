@@ -1,6 +1,6 @@
 {
   "name": "spanreed-desktop",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -28,5 +28,6 @@
     "@vitejs/plugin-react": "^4",
     "typescript": "^5",
     "vite": "^6"
-  }
+  },
+  "license": "AGPL-3.0-or-later"
 }

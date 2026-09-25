@@ -1,0 +1,53 @@
+[package]
+name = "spanreed-adapters"
+description = "Spanreed adapters: implementations of the spanreed-app ports (providers, stores, keyring, HTTP, OS services, capture relay, agent host)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+contracts = ["spanreed-app/contracts"]
+default = []
+# Set when the `spanreed` binary includes the tray (self-update and dead-code rules).
+tray = []
+
+[dependencies]
+spanreed-app = { path = "../spanreed-app" }
+spanreed-domain = { path = "../spanreed-domain" }
+fabrials-fabric = { path = "../../vendor/fabrials-libs/crates/fabrials-fabric" }
+fabrials-store-sqlite = { path = "../../vendor/fabrials-libs/crates/fabrials-store-sqlite" }
+fabrials-usage-import = { path = "../../vendor/fabrials-libs/crates/fabrials-usage-import" }
+fabrials-providers = { path = "../../vendor/fabrials-libs/crates/fabrials-providers" }
+fabrials-types = { path = "../../vendor/fabrials-libs/crates/fabrials-types" }
+fabrials-upstreams = { path = "../../vendor/fabrials-libs/crates/fabrials-upstreams" }
+fabrials-pricing = { path = "../../vendor/fabrials-libs/crates/fabrials-pricing" }
+fabrials-accounts = { path = "../../vendor/fabrials-libs/crates/fabrials-accounts" }
+fabrials-share = { path = "../../vendor/fabrials-libs/crates/fabrials-share" }
+fabrials-agent-host = { path = "../../vendor/fabrials-libs/crates/fabrials-agent-host" }
+reqwest = { version = "0.12", features = ["blocking", "json", "socks", "rustls-tls"], default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+toml_edit = "0.20"
+regex-lite = "0.1"
+time = { version = "0.3", features = ["formatting", "parsing", "macros", "local-offset"] }
+dirs = "5"
+log = "0.4"
+memchr = "2"
+sha2 = "0.10"
+getrandom = "0.2"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+jsonc-parser = { version = "0.33.1", features = ["cst", "serde"] }
+# The embedded agent host runs on its own runtime (desktop and tray).
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[example]]
+name = "compare-codex"

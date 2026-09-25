@@ -19,6 +19,15 @@ store, probes each provider’s usage API, and prints:
 
 Linux-first (Hyprland/Wayland); the same code also builds for macOS and Windows.
 
+`spanreed agent` is the local host for [desktop.grok.me](https://desktop.grok.me)
+(formerly the standalone `grok-bridge`): it runs your Grok Build CLI over ACP
+and serves the browser on its own loopback port, separate from the capture
+relay. `spanreed agent serve|open|status|doctor|stop|repair|workspace` replace
+the old commands; a program named `grok-bridge` that points at `spanreed` runs
+`spanreed agent`, and existing grok-bridge state (install id, port,
+workspaces) is adopted on first start. On macOS, `spanreed agent service
+install` keeps it running at login (LaunchAgent).
+
 ## Install
 
 ### From fabrials.com (one command)
@@ -171,6 +180,22 @@ From a checkout: `nix build` / `nix run . -- probe`. From GitHub, see **With Nix
 On Linux, `secret-tool` (libsecret) is only needed if a provider keeps its token
 in the Secret Service instead of a file.
 
+### Source layout
+
+A Cargo workspace; dependencies point one way:
+
+| Path | Role |
+|------|------|
+| `crates/spanreed-domain` | Output model, pure formatting and statistics, ports. No I/O. |
+| `crates/spanreed-app` | `AppContext`, the `app` facade and the ports it calls. No I/O. |
+| `crates/spanreed-adapters` | The port implementations: providers, accounts and secrets, stores, pricing, the capture relay, setup, sharing, sync, the agent host. |
+| `crates/spanreed-tray` | The system tray (`--features tray`). |
+| `src/` | The `spanreed` binary: `src/cli/` has one file per subcommand; `src/compose.rs` builds the context. |
+| `desktop/` | Tauri desktop app; its host depends on `spanreed-app` and composes it with `spanreed-adapters`. |
+
+The CLI, the tray, the desktop app and the local HTTP API all call the same
+`app` functions. See `AGENTS.md` for the module map.
+
 ## Usage
 
 ```sh
@@ -252,7 +277,7 @@ Pricing overrides: `~/.config/spanreed/pricing.json`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+AGPL-3.0-or-later — see [LICENSE](LICENSE). Releases up to v0.6.x were published under MIT.
 
 #### Private certificate authorities
 

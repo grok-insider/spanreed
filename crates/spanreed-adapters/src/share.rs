@@ -1,0 +1,429 @@
+//! Opt-in **authenticated** share of aggregated usage snapshots to
+//! fabrials.com (Fabrials account via Sign in with X).
+//!
+//! Contributions are tied to a stable `user_id` on the server (not the raw
+//! install UUID). They feed a public pool used to compare how much value
+//! (limits / pool pressure / token signals) different subscription plans
+//! deliver over time.
+//!
+//! **Login once:** `spanreed share login` (device code → browser X login).
+//! **At most one meaningful sample per product day** (Europe/Madrid); the
+//! server **upserts** the same day. Auto-share is installed by
+//! `spanreed setup` via [`crate::setup::share_schedule`].
+//!
+//! Never includes provider tokens, API keys, or raw capture logs.
+
+use crate::http::Request;
+use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
+use crate::util;
+
+use crate::share_state::{api_base, is_due_today, is_offline, mark_shared_day};
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct ShareSnapshot {
+    pub schema_version: u32,
+    pub captured_at: String,
+    pub source: ShareSource,
+    pub providers: Vec<ShareProvider>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct ShareSource {
+    pub app: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct ShareProvider {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    pub lines: Vec<ShareLine>,
+    /// Structured plan economics (100% pool API $). Schema v2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub economics: Option<crate::share_economics::ProviderEconomics>,
+    /// Early pool resets observed on this install (does not change at 100% week).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resets: Vec<crate::epoch::ResetEvent>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct ShareLine {
+    pub kind: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+/// Map probe outputs → community share API snapshot.
+///
+/// Includes quota/plan/cost lines (and errors) plus structured **economics**
+/// (observed API $ and at 100% pool estimates). Multi-model mixes are valued in
+/// the CLI, not re-blended on the web.
+pub fn snapshot_from_outputs(
+    outputs: &[ProviderOutput],
+    version: &str,
+    pricing: &crate::pricing::PricingMap,
+) -> ShareSnapshot {
+    let mut providers = Vec::new();
+    let mut any_econ = false;
+    for o in outputs {
+        let lines: Vec<ShareLine> = o
+            .lines
+            .iter()
+            .filter(|l| {
+                matches!(
+                    l.kind(),
+                    MetricKind::Quota | MetricKind::Plan | MetricKind::Cost | MetricKind::Error
+                )
+            })
+            .filter_map(line_to_share)
+            .collect();
+        if lines.is_empty() {
+            continue;
+        }
+        let by_model = crate::share_economics::model_breakdown_for(&o.provider_id, pricing);
+        let economics = crate::share_economics::from_output(o, by_model);
+        if economics.is_some() {
+            any_econ = true;
+        }
+        let since = util::now_ms().saturating_sub(2 * 86_400_000);
+        let resets: Vec<_> = crate::epoch::recent_events(since)
+            .into_iter()
+            .filter(|e| e.provider == o.provider_id)
+            .collect();
+        providers.push(ShareProvider {
+            id: o.provider_id.clone(),
+            plan: o.plan.clone().filter(|p| !p.trim().is_empty()),
+            lines,
+            economics,
+            resets,
+        });
+    }
+    ShareSnapshot {
+        // v2 when any economics block present; API still accepts v1 lines-only.
+        schema_version: if any_econ { 2 } else { 1 },
+        captured_at: util::ms_to_iso(util::now_ms())
+            .unwrap_or_else(|| "1970-01-01T00:00:00Z".into()),
+        source: ShareSource {
+            app: "spanreed".into(),
+            version: version.into(),
+        },
+        providers,
+    }
+}
+
+fn line_to_share(line: &MetricLine) -> Option<ShareLine> {
+    match line {
+        MetricLine::Progress {
+            label,
+            used,
+            limit,
+            format,
+            resets_at,
+            ..
+        } => {
+            // Keep format kinds distinct so the web does not render absolute
+            // counts (Cursor/Factory/Kiro) as percentages.
+            let kind = match format {
+                ProgressFormat::Percent => "percent",
+                ProgressFormat::Dollars => "dollars",
+                ProgressFormat::Count { .. } => "count",
+            };
+            Some(ShareLine {
+                kind: kind.into(),
+                label: label.clone(),
+                used: Some(*used),
+                limit: Some(*limit),
+                resets_at: resets_at.clone(),
+                value: None,
+            })
+        }
+        MetricLine::Text { label, value, .. } => Some(ShareLine {
+            kind: "text".into(),
+            label: label.clone(),
+            used: None,
+            limit: None,
+            resets_at: None,
+            value: Some(value.clone()),
+        }),
+        MetricLine::Badge { label, text, .. } => Some(ShareLine {
+            kind: "badge".into(),
+            label: label.clone(),
+            used: None,
+            limit: None,
+            resets_at: None,
+            value: Some(text.clone()),
+        }),
+        MetricLine::BarChart { .. } => None,
+    }
+}
+
+/// Outcome of a share POST (for due-gate bookkeeping).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostOutcome {
+    /// Accepted by the API (2xx).
+    Accepted(u16),
+    /// Rate-limited — treat as already counted for the day when possible.
+    AlreadyCounted,
+}
+
+/// POST authenticated snapshot (Bearer + install client id).
+pub fn post_snapshot(
+    base: &str,
+    access_token: &str,
+    snap: &ShareSnapshot,
+    client_id: &str,
+) -> Result<PostOutcome, String> {
+    let url = format!("{}/v1/usage/snapshots", base.trim_end_matches('/'));
+    let body = serde_json::to_string(snap).map_err(|e| e.to_string())?;
+    let res = Request::post(url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("X-Spanreed-Client", client_id)
+        .header(
+            "User-Agent",
+            format!("spanreed/{} (+share)", env!("CARGO_PKG_VERSION")),
+        )
+        .body(body)
+        .send()
+        .map_err(|e| e.to_string())?;
+    if res.status >= 200 && res.status < 300 {
+        Ok(PostOutcome::Accepted(res.status))
+    } else if res.status == 429 {
+        Ok(PostOutcome::AlreadyCounted)
+    } else if res.status == 401 {
+        Err("share unauthorized — run: spanreed share login".into())
+    } else {
+        Err(format!(
+            "share failed HTTP {}: {}",
+            res.status,
+            res.body.chars().take(200).collect::<String>()
+        ))
+    }
+}
+
+/// Probe + POST. `force` bypasses the local same-day skip.
+pub fn share_once(ctx: &crate::context::AppContext, force: bool) -> Result<String, String> {
+    if !crate::privacy::load().share_metrics {
+        return Err(
+            "Metrics sharing is off. Enable explicitly: spanreed privacy metrics on".into(),
+        );
+    }
+    if is_offline() {
+        return Err("share: SPANREED_OFFLINE=1 — not sending".into());
+    }
+
+    let day = util::today_day_key_madrid();
+    if !force && !is_due_today() {
+        return Err(format!(
+            "share: already sent for {day} (use --force to retry)"
+        ));
+    }
+
+    let base = api_base();
+    let access = crate::share_session::ensure_access(&base)?;
+
+    let outputs = ctx.probe_detected();
+    let version = env!("CARGO_PKG_VERSION");
+    let snap = snapshot_from_outputs(&outputs, version, &ctx.pricing().table());
+    if snap.providers.is_empty() {
+        return Err("share: no shareable metrics from detected providers".into());
+    }
+
+    let client_id = crate::client_id::ensure().map_err(|e| format!("share: client_id: {e}"))?;
+
+    let outcome = match post_snapshot(&base, &access, &snap, &client_id) {
+        Ok(o) => o,
+        Err(e) if e.contains("unauthorized") => {
+            let sess = crate::share_session::refresh_access(&base)?;
+            post_snapshot(&base, &sess.access_token, &snap, &client_id)?
+        }
+        Err(e) => return Err(e),
+    };
+
+    match outcome {
+        PostOutcome::Accepted(status) => {
+            if let Err(e) = mark_shared_day(&day) {
+                return Ok(format!(
+                    "shared {} provider(s) to {base} (HTTP {status}, day {day}); warning: {e}",
+                    snap.providers.len()
+                ));
+            }
+            Ok(format!(
+                "shared {} provider(s) to {base} (HTTP {status}, day {day})",
+                snap.providers.len()
+            ))
+        }
+        PostOutcome::AlreadyCounted => {
+            let _ = mark_shared_day(&day);
+            Ok(format!(
+                "share: rate-limited for {day} (HTTP 429) — marked local day"
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
+
+    #[test]
+    fn maps_quota_progress_and_skips_cost_charts() {
+        let out = ProviderOutput {
+            reset_inventory: None,
+            provider_id: "grok".into(),
+            display_name: "Grok".into(),
+            plan: Some("SuperGrok".into()),
+            lines: vec![
+                MetricLine::Progress {
+                    kind: MetricKind::Quota,
+                    label: "Weekly".into(),
+                    used: 42.5,
+                    limit: 100.0,
+                    format: ProgressFormat::Percent,
+                    resets_at: Some("2026-08-17T00:00:00Z".into()),
+                    color: None,
+                },
+                MetricLine::Text {
+                    kind: MetricKind::Cost,
+                    label: "Last 30 Days".into(),
+                    value: "$31 · 46M tokens".into(),
+                    color: None,
+                    subtitle: None,
+                },
+                MetricLine::BarChart {
+                    kind: MetricKind::Cost,
+                    label: "Spend".into(),
+                    points: vec![],
+                    note: None,
+                    color: None,
+                },
+            ],
+        };
+        let snap = snapshot_from_outputs(&[out], "0.0.1", &crate::pricing::table_from(None, None));
+        // Cost text + weekly pool → schema v2 economics payload.
+        assert_eq!(snap.schema_version, 2);
+        assert_eq!(snap.source.app, "spanreed");
+        assert_eq!(snap.source.version, "0.0.1");
+        assert_eq!(snap.providers.len(), 1);
+        assert_eq!(snap.providers[0].id, "grok");
+        // Quota + cost text; bar charts still skipped.
+        assert_eq!(snap.providers[0].lines.len(), 2);
+        assert_eq!(snap.providers[0].lines[0].kind, "percent");
+        assert_eq!(snap.providers[0].lines[0].used, Some(42.5));
+        assert_eq!(snap.providers[0].lines[1].kind, "text");
+        assert!(snap.providers[0].economics.is_some());
+        // No secret fields in serialized JSON.
+        let v = serde_json::to_value(&snap).unwrap();
+        let s = v.to_string().to_ascii_lowercase();
+        assert!(!s.contains("\"token\""));
+        assert!(!s.contains("password"));
+    }
+
+    #[test]
+    fn maps_count_progress_as_count_not_percent() {
+        // Absolute used/limit (e.g. request pools) must not become "50%".
+        let out = ProviderOutput {
+            reset_inventory: None,
+            provider_id: "cursor".into(),
+            display_name: "Cursor".into(),
+            plan: None,
+            lines: vec![MetricLine::Progress {
+                kind: MetricKind::Quota,
+                label: "Requests".into(),
+                used: 50.0,
+                limit: 500.0,
+                format: ProgressFormat::Count {
+                    suffix: "reqs".into(),
+                },
+                resets_at: None,
+                color: None,
+            }],
+        };
+        let snap = snapshot_from_outputs(&[out], "0.0.1", &crate::pricing::table_from(None, None));
+        assert_eq!(snap.providers[0].lines[0].kind, "count");
+        assert_eq!(snap.providers[0].lines[0].used, Some(50.0));
+        assert_eq!(snap.providers[0].lines[0].limit, Some(500.0));
+        assert_ne!(snap.providers[0].lines[0].kind, "percent");
+    }
+
+    #[test]
+    fn snapshot_json_has_no_secret_field_names() {
+        if std::env::var_os("SPANREED_SNAPSHOT_FIXTURE").is_none() {
+            let directory =
+                std::env::temp_dir().join(format!("spanreed-snapshot-test-{}", std::process::id()));
+            std::fs::create_dir_all(&directory).unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "share::tests::snapshot_json_has_no_secret_field_names",
+                ])
+                .env("SPANREED_SNAPSHOT_FIXTURE", "1")
+                .env("HOME", &directory)
+                .env("XDG_CONFIG_HOME", directory.join("config"))
+                .env("XDG_DATA_HOME", directory.join("data"))
+                .env("XDG_CACHE_HOME", directory.join("cache"))
+                .env("CODEX_HOME", directory.join("codex"))
+                .env("SPANREED_OFFLINE", "1")
+                .status()
+                .unwrap();
+            let _ = std::fs::remove_dir_all(directory);
+            assert!(status.success());
+            return;
+        }
+        let out = ProviderOutput {
+            reset_inventory: None,
+            provider_id: "codex".into(),
+            display_name: "Codex".into(),
+            plan: None,
+            lines: vec![MetricLine::Progress {
+                kind: MetricKind::Quota,
+                label: "5h".into(),
+                used: 1.0,
+                limit: 100.0,
+                format: ProgressFormat::Percent,
+                resets_at: None,
+                color: None,
+            }],
+        };
+        let snap = snapshot_from_outputs(&[out], "0.0.1", &crate::pricing::table_from(None, None));
+        let keys = collect_keys(&serde_json::to_value(&snap).unwrap());
+        for bad in [
+            "token",
+            "secret",
+            "password",
+            "authorization",
+            "api_key",
+            "credential",
+            "hostname",
+        ] {
+            assert!(
+                keys.iter().all(|k| !k.to_ascii_lowercase().contains(bad)),
+                "forbidden key substring {bad} in {keys:?}"
+            );
+        }
+    }
+
+    fn collect_keys(v: &serde_json::Value) -> Vec<String> {
+        match v {
+            serde_json::Value::Object(m) => {
+                let mut out = Vec::new();
+                for (k, child) in m {
+                    out.push(k.clone());
+                    out.extend(collect_keys(child));
+                }
+                out
+            }
+            serde_json::Value::Array(a) => a.iter().flat_map(collect_keys).collect(),
+            _ => vec![],
+        }
+    }
+}

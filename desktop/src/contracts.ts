@@ -57,6 +57,12 @@ export type ProxyState = "running" | "stopping" | "stopped";
 
 export type Status = { state: ProxyState, bind: string, error: string | null, };
 
+export type AgentStatus = { state: ProxyState, 
+/**
+ * Loopback origin once listening, e.g. `http://<id>.grok-light.localhost:23456`.
+ */
+origin: string | null, port: number | null, error: string | null, };
+
 export type ConfigurationClient = "opencode" | "grok";
 
 export type Operation = "create" | "update" | "remove";
