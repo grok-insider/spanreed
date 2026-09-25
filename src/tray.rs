@@ -249,6 +249,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     let menu_channel = MenuEvent::receiver();
     let click_channel = TrayIconEvent::receiver();
     let mut loaded_epoch = 0_u64;
+    let mut blur_close_at: Option<Instant> = None;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
@@ -288,12 +289,16 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         }
 
         if let Event::WindowEvent {
-            event: WindowEvent::Focused(false),
+            event: WindowEvent::Focused(focused),
             ..
         } = &event
         {
-            if popover.blur_should_close() {
-                popover.hide();
+            if *focused {
+                blur_close_at = None;
+            } else if popover.blur_should_close() {
+                // A click inside the card can blur the window before the button
+                // message arrives. Hide on the next tick unless that message comes.
+                blur_close_at = Some(Instant::now() + Duration::from_millis(200));
             }
         }
 
@@ -317,6 +322,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         }
 
         while let Some(message) = popover.poll() {
+            blur_close_at = None;
             if message == "close" {
                 popover.hide();
             } else if message == "refresh" {
@@ -508,6 +514,11 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     }
                 });
             }
+        }
+
+        if blur_close_at.is_some_and(|at| Instant::now() >= at) {
+            popover.hide();
+            blur_close_at = None;
         }
 
         let dirty = state.lock().map(|guard| guard.dirty).unwrap_or(false);
