@@ -19,6 +19,15 @@ store, probes each provider’s usage API, and prints:
 
 Linux-first (Hyprland/Wayland); the same code also builds for macOS and Windows.
 
+`spanreed agent` is the local host for [desktop.grok.me](https://desktop.grok.me)
+(formerly the standalone `grok-bridge`): it runs your Grok Build CLI over ACP
+and serves the browser on its own loopback port, separate from the capture
+relay. `spanreed agent serve|open|status|doctor|stop|repair|workspace` replace
+the old commands; a program named `grok-bridge` that points at `spanreed` runs
+`spanreed agent`, and existing grok-bridge state (install id, port,
+workspaces) is adopted on first start. On macOS, `spanreed agent service
+install` keeps it running at login (LaunchAgent).
+
 ## Install
 
 ### From fabrials.com (one command)

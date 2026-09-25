@@ -458,12 +458,12 @@ fn list_shows_all_providers() {
 }
 
 #[test]
-fn addon_list_shows_grok_bridge() {
+fn addon_list_shows_grok_accounts() {
     let (stdout, status) = run(&["plugin", "list"]);
     assert!(status.success(), "plugin list: {stdout}");
     assert!(
-        stdout.contains("grok-bridge"),
-        "expected grok-bridge in\n{stdout}"
+        stdout.contains("grok-accounts"),
+        "expected grok-accounts in\n{stdout}"
     );
 }
 

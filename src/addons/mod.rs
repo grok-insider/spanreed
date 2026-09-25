@@ -1,6 +1,6 @@
 //! Addon host: in-process trait + JSON protocol + PATH/toml discovery.
 
-pub mod grok_bridge;
+pub mod grok_accounts;
 pub mod host;
 pub mod protocol;
 
@@ -18,7 +18,7 @@ pub trait Addon: Send + Sync {
 }
 
 pub fn compiled_in() -> Vec<Box<dyn Addon>> {
-    vec![Box::new(grok_bridge::GrokBridge)]
+    vec![Box::new(grok_accounts::GrokAccounts)]
 }
 
 pub fn command_owner(prefix: &str) -> Option<Box<dyn Addon>> {

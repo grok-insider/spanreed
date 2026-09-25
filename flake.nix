@@ -184,6 +184,8 @@
               --prefix PATH : "${runtimePath}" \
               --prefix LD_LIBRARY_PATH : "${trayLibPath}" \
               "''${gappsWrapperArgs[@]}"
+            # `grok-bridge` keeps working for existing scripts and autostart entries.
+            makeWrapper "$out/bin/spanreed" "$out/bin/grok-bridge" --add-flags agent
           '';
 
           meta = {

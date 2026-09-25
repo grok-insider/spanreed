@@ -9,6 +9,7 @@
 //!   spanreed capture serve        Fabric :18736 (/v1 grok, /xai api.x.ai).
 //!   spanreed capture serve --watchdog  Restart capture if it exits.
 //!   spanreed capture ensure       Start capture (with watchdog) if ports down.
+//!   spanreed agent <command>      Local host for desktop.grok.me (was grok-bridge).
 //!   spanreed grok-proxy [--bind]  Alias for `capture serve --grok-cli-bind`.
 //!   spanreed setup [...]          Install CLI, optional capture service, wire Grok/OpenCode.
 //!   spanreed auth copilot [...]   Opt-in link a GitHub token for Copilot.
@@ -22,6 +23,7 @@ pub mod account_login;
 pub mod accounts;
 mod activity;
 mod addons;
+pub mod agent;
 mod api;
 mod app;
 mod capture;
@@ -109,13 +111,18 @@ pub fn run_cli() -> ExitCode {
     util::init_local_offset();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
+    let argv0 = std::env::args().next().unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if agent::invoked_as_legacy_bridge(&argv0) {
+        return agent::cmd(&args);
+    }
     let cmd = args.first().map(String::as_str).unwrap_or("probe");
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
 
     match cmd {
         "list" => cmd_list(),
         "account" => accounts::cmd(rest),
+        "agent" => agent::cmd(rest),
         "addon" => addons::cmd_addon(rest),
         "plugin" => addons::cmd_addon(rest),
         "probe" => cmd_probe(rest),
@@ -178,8 +185,11 @@ fn print_help() {
          \t                               Windows: windowless / FreeConsole)\n\
          \tspanreed capture ensure      Start capture+watchdog if ports are down\n\
          \tspanreed capture status      Exit 0 if listening, 1 if DOWN; print log path\n\
+         \tspanreed agent serve|open|status|doctor|stop|repair|workspace\n\
+         \t                               Local host for desktop.grok.me (Grok Build over ACP;\n\
+         \t                               also runs when invoked as `grok-bridge`)\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
-         \t                               Single-listener capture (compat)\n\
+         \t                               Alias for `capture serve --grok-cli-bind`\n\
          \tspanreed setup               Install CLI, ledger, optional capture service,\n\
          \t                               and wire Grok Build + OpenCode xAI to the proxy\n\
          \t  --yes / -y                   Non-interactive defaults (service off unless --service)\n\

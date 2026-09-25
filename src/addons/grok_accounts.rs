@@ -4,12 +4,12 @@ use super::Addon;
 use super::protocol::{AddonCaps, AddonHello};
 use crate::model::ProviderOutput;
 
-pub struct GrokBridge;
+pub struct GrokAccounts;
 
-impl Addon for GrokBridge {
+impl Addon for GrokAccounts {
     fn hello(&self) -> AddonHello {
         AddonHello {
-            id: "grok-bridge".into(),
+            id: "grok-accounts".into(),
             name: "Grok identity driver".into(),
             caps: AddonCaps {
                 providers: vec![],
@@ -97,8 +97,8 @@ mod tests {
 
     #[test]
     fn protocol_hello() {
-        let h = GrokBridge.hello();
-        assert_eq!(h.id, "grok-bridge");
+        let h = GrokAccounts.hello();
+        assert_eq!(h.id, "grok-accounts");
         assert!(h.caps.commands.contains(&"grok".into()));
     }
 }

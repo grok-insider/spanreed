@@ -9,8 +9,8 @@ The host speaks a small JSON protocol over stdin/stdout to:
 - optional **listeners** the addon process binds on loopback
 
 The same operations exist as an in-process Rust trait so the first addon
-(`grok-bridge`) can ship inside the `spanreed` binary and as
-`spanreed-addon-grok-bridge`.
+(`grok-accounts`) can ship inside the `spanreed` binary and as
+`spanreed-addon-grok-accounts`.
 
 ## Discovery
 
@@ -18,8 +18,8 @@ The same operations exist as an in-process Rust trait so the first addon
 2. Manifests `~/.config/spanreed/addons/<id>.toml`:
 
 ```toml
-id = "grok-bridge"
-command = "/usr/local/bin/spanreed-addon-grok-bridge"
+id = "grok-accounts"
+command = "/usr/local/bin/spanreed-addon-grok-accounts"
 enabled = true
 ```
 
@@ -41,10 +41,10 @@ then reads one JSON object.
   "v": 1,
   "ok": true,
   "hello": {
-    "id": "grok-bridge",
+    "id": "grok-accounts",
     "name": "Grok account bridge",
     "caps": {
-      "providers": ["grok-bridge"],
+      "providers": ["grok-accounts"],
       "commands": ["grok"],
       "listeners": true
     }

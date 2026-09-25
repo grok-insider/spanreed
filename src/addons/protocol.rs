@@ -207,21 +207,21 @@ pub fn dispatch_inproc(addon: &dyn crate::addons::Addon, req: &AddonRequest) -> 
 mod tests {
     use super::*;
     use crate::addons::Addon;
-    use crate::addons::grok_bridge::GrokBridge;
+    use crate::addons::grok_accounts::GrokAccounts;
 
     #[test]
     fn hello_roundtrip() {
-        let resp = dispatch_inproc(&GrokBridge, &AddonRequest::hello());
+        let resp = dispatch_inproc(&GrokAccounts, &AddonRequest::hello());
         assert!(resp.ok);
         let h = resp.hello.expect("hello");
-        assert_eq!(h.id, GrokBridge.hello().id);
+        assert_eq!(h.id, GrokAccounts.hello().id);
         assert!(h.caps.commands.iter().any(|c| c == "grok"));
     }
 
     #[test]
     fn unknown_op() {
         let resp = dispatch_inproc(
-            &GrokBridge,
+            &GrokAccounts,
             &AddonRequest {
                 v: 1,
                 op: "nope".into(),

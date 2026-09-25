@@ -44,7 +44,8 @@ declare it in `src/lib.rs`.
 | `src/history.rs` | Quota observations in `runtime.sqlite3` through shared `fabrials-runtime::history`; one-time import preserves `usage-history.jsonl`. CLI and desktop read the same store. |
 | `src/local_tokens.rs` | Grok refresh through shared durable rotation journal and scoped advisory locks; journal is separate from usage data. Nous uses the same journal from its driver. |
 | `src/profiles.rs` | Built-in Waybar, Eww and SketchyBar fragments; explicit new-file installation. |
-| `src/addons/`           | Addon protocol, host (PATH/toml/inproc), grok-bridge shim. |
+| `src/agent.rs`           | `spanreed agent …`: embeds `fabrials-agent-host` (the absorbed grok-bridge), `grok-bridge` argv0 alias, macOS LaunchAgent (`agent service`). |
+| `src/addons/`           | Addon protocol, host (PATH/toml/inproc), `grok-accounts` shim (`spanreed grok` → `spanreed account`). |
 | `src/accounts.rs`       | Host identity registry + secrets; shared recoverable file transactions coordinate mutations with refreshes. Account generations prevent stale authorization writes. |
 | `src/drivers/`          | First-party identity drivers (`grok` login/probe/fabric token). |
 | `src/app.rs`            | Product identity (`spanreed`): dirs, bin name, GitHub repo. |
