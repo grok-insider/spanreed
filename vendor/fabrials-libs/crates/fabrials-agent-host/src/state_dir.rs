@@ -104,6 +104,12 @@ fn platform_state_root(
 fn platform_state_root(
     lookup: &impl Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, StateDirError> {
+    macos_state_root(lookup)
+}
+
+/// `~/Library/Application Support`, the macOS root for per-user app state.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn macos_state_root(lookup: &impl Fn(&str) -> Option<OsString>) -> Result<PathBuf, StateDirError> {
     lookup("HOME")
         .map(|home| {
             PathBuf::from(home)
@@ -310,6 +316,18 @@ mod tests {
 
         assert_eq!(
             resolve_state_dirs_from(env(&[])),
+            Err(StateDirError::NoPlatformRoot("HOME"))
+        );
+    }
+
+    #[test]
+    fn the_macos_root_is_application_support_on_every_platform() {
+        assert_eq!(
+            super::macos_state_root(&env(&[("HOME", "/Users/u")])).expect("root"),
+            PathBuf::from("/Users/u/Library/Application Support")
+        );
+        assert_eq!(
+            super::macos_state_root(&env(&[])),
             Err(StateDirError::NoPlatformRoot("HOME"))
         );
     }

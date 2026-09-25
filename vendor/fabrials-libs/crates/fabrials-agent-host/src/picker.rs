@@ -172,12 +172,13 @@ pub fn parse_osascript_choice(
     }))
 }
 
-/// The macOS implementation, backed by `osascript`.
-#[cfg(target_os = "macos")]
+/// The macOS implementation, backed by `osascript`. It compiles on every Unix
+/// so Linux CI type-checks it; only macOS selects it.
+#[cfg(unix)]
 #[derive(Debug, Default)]
 pub struct OsascriptDirectoryPicker;
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl DirectoryPicker for OsascriptDirectoryPicker {
     async fn pick_directory(&self) -> Result<PathBuf, PickerError> {
@@ -238,6 +239,14 @@ pub enum PickOutcome {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn the_macos_picker_is_a_directory_picker() {
+        let picker: std::sync::Arc<dyn super::DirectoryPicker> =
+            std::sync::Arc::new(super::OsascriptDirectoryPicker);
+        drop(picker);
+    }
+
     use super::{PickerError, parse_osascript_choice, uri_to_directory};
 
     #[test]
