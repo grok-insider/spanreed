@@ -291,8 +291,8 @@ fn iso_utc(value: &Value) -> Option<String> {
 }
 
 /// `/v1/usages`: the first windowed quota is the session, `usage` is the weekly pool.
-pub fn usage_output(usage: &Value, _now_ms: i64) -> fabrials_model::ProviderOutput {
-    use fabrials_model::ProviderOutput;
+pub fn usage_output(usage: &Value, _now_ms: i64) -> fabrials_types::ProviderOutput {
+    use fabrials_types::ProviderOutput;
 
     let mut lines = Vec::new();
     if let Some(window) = usage
@@ -313,14 +313,14 @@ pub fn usage_output(usage: &Value, _now_ms: i64) -> fabrials_model::ProviderOutp
     output
 }
 
-fn percent_line(label: &str, window: &Value) -> Option<fabrials_model::MetricLine> {
+fn percent_line(label: &str, window: &Value) -> Option<fabrials_types::MetricLine> {
     let limit = numf(window.get("limit"))?;
     let remaining = numf(window.get("remaining"))?;
     if !limit.is_finite() || limit <= 0.0 || !remaining.is_finite() {
         return None;
     }
     let used = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
-    Some(fabrials_model::MetricLine::percent(
+    Some(fabrials_types::MetricLine::percent(
         label,
         used,
         window.get("resetTime").and_then(iso_utc),
@@ -373,7 +373,7 @@ fn membership_level(usage: &Value) -> Option<&str> {
 mod tests {
 
     use super::*;
-    use fabrials_model::MetricLine;
+    use fabrials_types::MetricLine;
 
     fn progress(lines: &[MetricLine], label: &str) -> Option<(f64, Option<String>)> {
         lines.iter().find_map(|line| match line {

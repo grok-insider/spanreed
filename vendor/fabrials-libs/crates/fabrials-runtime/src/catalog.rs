@@ -47,9 +47,9 @@ impl CatalogRoute {
 
     pub fn allows(self, method: &str, path: &str) -> bool {
         match self.surface {
-            CatalogSurface::OpenAi => fabrials_core::hop::core_request_allowed(method, path),
+            CatalogSurface::OpenAi => fabrials_types::hop::core_request_allowed(method, path),
             CatalogSurface::Messages => {
-                fabrials_core::hop::messages_request_allowed(method, path)
+                fabrials_types::hop::messages_request_allowed(method, path)
                     || (method.eq_ignore_ascii_case("GET")
                         && path.split('?').next().unwrap_or(path).trim_end_matches('/')
                             == "/v1/models")
@@ -275,7 +275,7 @@ pub fn by_id(id: &str) -> Option<&'static CatalogRoute> {
 }
 
 /// Prefixes owned by a dedicated adapter rather than
-/// [`crate::upstreams::catalog::CatalogAdapter`]. The entry stays as pinned data
+/// `fabrials_upstreams::catalog::CatalogAdapter`. The entry stays as pinned data
 /// (origin, surface, credential headers) for hosts that probe it, and the dedicated
 /// adapter must resolve the same origin.
 pub fn dedicated_adapter(id: &str) -> bool {

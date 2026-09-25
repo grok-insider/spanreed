@@ -1,4 +1,4 @@
-pub use fabrials_model::HistorySample;
+pub use fabrials_types::HistorySample;
 
 /// Whether `curr` should be treated as a new rate-limit epoch vs `prev`.
 pub fn is_reset_event(prev: &HistorySample, curr: &HistorySample) -> bool {

@@ -5,14 +5,17 @@ workspace, one version line, never published to crates.io (`publish = false`).
 
 | Crate | Purpose |
 |-------|---------|
-| `fabrials-core` | Portable contracts: provider capabilities, observations, migration |
-| `fabrials-model` | DTOs: metric lines, usage records, share snapshots |
+| `fabrials-types` | Data types and portable contracts: hop and consumption records, metric lines, share snapshots, observations, provider capabilities, migration |
 | `fabrials-metrics` | Price table, list-price cost, JSONL ledger, SSE usage |
 | `fabrials-share` | Community snapshot economics |
 | `fabrials-accounts` | Account registry and autosteer scoring |
-| `fabrials-oauth-grok` | Grok CLI auth blobs and capture headers |
-| `fabrials-providers` | Provider protocols, OAuth flows, and local session readers |
-| `fabrials-runtime` | Proxy engine: listener, forwarding, upstream adapters, stores |
+| `fabrials-providers` | Provider protocols: OAuth and device flows, Grok CLI auth, usage parsers, local session readers |
+| `fabrials-runtime` | Proxy engine: listener, routing, forwarding, hop and history stores; defines the `Provider` port |
+| `fabrials-upstreams` | Provider adapters that implement the engine's `Provider` port |
+
+Dependencies point one way: `types` at the bottom; `metrics`, `accounts`
+and `providers` above it; the engine (`runtime`) knows no provider;
+`upstreams` depends on the engine and on `providers`.
 
 ## Consumers
 

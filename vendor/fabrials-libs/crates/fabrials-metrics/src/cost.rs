@@ -1,18 +1,18 @@
-//! Public list-price USD for a [`fabrials_model::UsageRecord`].
+//! Public list-price USD for a [`fabrials_types::HopRecord`].
 //!
 //! xAI long-context rule: when prompt tokens ≥ 200k, **all** token types in
 //! the request use the higher rate (not progressive Anthropic-style tiers).
 
-use fabrials_model::UsageRecord;
+use fabrials_types::HopRecord;
 
 use crate::pricing;
 
 /// Public API list-price USD for this record, or None if the model is unknown.
-pub fn list_cost_usd(record: &UsageRecord) -> Option<f64> {
+pub fn list_cost_usd(record: &HopRecord) -> Option<f64> {
     list_cost_usd_with(record, pricing::table())
 }
 
-pub fn list_cost_usd_with(record: &UsageRecord, table: &pricing::PricingMap) -> Option<f64> {
+pub fn list_cost_usd_with(record: &HopRecord, table: &pricing::PricingMap) -> Option<f64> {
     if record.is_failed() {
         return None;
     }
@@ -44,7 +44,7 @@ pub fn list_cost_usd_with(record: &UsageRecord, table: &pricing::PricingMap) -> 
     Some(uncached as f64 * rin + cached as f64 * rcache + record.output_tokens as f64 * rout)
 }
 
-fn voice_billing_key(record: &UsageRecord) -> Option<&'static str> {
+fn voice_billing_key(record: &HopRecord) -> Option<&'static str> {
     match record.kind.as_deref().map(str::trim).unwrap_or("") {
         "tts" => Some("tts"),
         "realtime" => Some("realtime"),
@@ -63,7 +63,7 @@ fn voice_billing_key(record: &UsageRecord) -> Option<&'static str> {
     }
 }
 
-fn media_cost(record: &UsageRecord, table: &pricing::PricingMap) -> Option<f64> {
+fn media_cost(record: &HopRecord, table: &pricing::PricingMap) -> Option<f64> {
     match record.kind.as_deref().map(str::trim).unwrap_or("") {
         "image" => {
             let model = record
@@ -93,7 +93,7 @@ fn media_cost(record: &UsageRecord, table: &pricing::PricingMap) -> Option<f64> 
     voice_cost(record, table)
 }
 
-fn voice_cost(record: &UsageRecord, table: &pricing::PricingMap) -> Option<f64> {
+fn voice_cost(record: &HopRecord, table: &pricing::PricingMap) -> Option<f64> {
     let key = voice_billing_key(record)?;
     let p = table.get(key)?;
     if let Some(per_char) = p.cost_per_character {
@@ -116,17 +116,17 @@ fn voice_cost(record: &UsageRecord, table: &pricing::PricingMap) -> Option<f64> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_model::UsageRecord;
+    use fabrials_types::HopRecord;
 
     #[test]
     fn grok_list_price_splits_cached_input() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             model: Some("grok-4.5".into()),
             input_tokens: 100,
             output_tokens: 20,
             cached_input_tokens: 40,
             total_tokens: 120,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         let list = list_cost_usd(&rec).expect("priced");
         let expected = 60.0 * 2e-6 + 40.0 * 3e-7 + 20.0 * 6e-6;
@@ -138,13 +138,13 @@ mod tests {
 
     #[test]
     fn grok_long_context_all_or_nothing() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             model: Some("grok-4.5".into()),
             input_tokens: 200_000,
             output_tokens: 1_000,
             cached_input_tokens: 100_000,
             total_tokens: 201_000,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         let expected = 100_000.0 * 4e-6 + 100_000.0 * 6e-7 + 1_000.0 * 1.2e-5;
         let got = list_cost_usd(&rec).unwrap();
@@ -164,32 +164,32 @@ mod tests {
             );
         }
         // 100k stays under the 200k all-or-nothing long-context tier.
-        let inn = UsageRecord {
+        let inn = HopRecord {
             model: Some("grok-4.6".into()),
             input_tokens: 100_000,
             output_tokens: 0,
             cached_input_tokens: 0,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&inn), 100_000.0 * 2e-6);
-        let build = UsageRecord {
+        let build = HopRecord {
             model: Some("grok-4.6-build".into()),
             input_tokens: 100_000,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&build), 100_000.0 * 2e-6);
-        let cached = UsageRecord {
+        let cached = HopRecord {
             model: Some("grok-4.6".into()),
             input_tokens: 100_000,
             cached_input_tokens: 100_000,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&cached), 100_000.0 * 5e-7);
-        let four_five_cached = UsageRecord {
+        let four_five_cached = HopRecord {
             model: Some("grok-4.5".into()),
             input_tokens: 100_000,
             cached_input_tokens: 100_000,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&four_five_cached), 100_000.0 * 3e-7);
     }
@@ -204,69 +204,69 @@ mod tests {
             );
         }
         for model in ["grok-4.7", "grok-4.7-build"] {
-            let inn = UsageRecord {
+            let inn = HopRecord {
                 model: Some(model.into()),
                 input_tokens: 100_000,
-                ..UsageRecord::default()
+                ..HopRecord::default()
             };
             close(list_cost_usd(&inn), 100_000.0 * 2e-6);
-            let cached = UsageRecord {
+            let cached = HopRecord {
                 model: Some(model.into()),
                 input_tokens: 100_000,
                 cached_input_tokens: 100_000,
-                ..UsageRecord::default()
+                ..HopRecord::default()
             };
             close(list_cost_usd(&cached), 100_000.0 * 5e-7);
         }
         for model in ["grok-4.7-build-fast", "grok-4.7-fast"] {
-            let fast = UsageRecord {
+            let fast = HopRecord {
                 model: Some(model.into()),
                 input_tokens: 100_000,
-                ..UsageRecord::default()
+                ..HopRecord::default()
             };
             close(list_cost_usd(&fast), 100_000.0 * 4e-6);
         }
-        let fast_cached = UsageRecord {
+        let fast_cached = HopRecord {
             model: Some("grok-4.7-build-fast".into()),
             input_tokens: 100_000,
             cached_input_tokens: 100_000,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&fast_cached), 100_000.0 * 1e-6);
         // ≥200k reprices every token. Fast long context is $6 / $1.50 / $18,
         // not another 2× on top of the standard long tier ($4 / $1 / $12).
-        let fast_long = UsageRecord {
+        let fast_long = HopRecord {
             model: Some("grok-4.7-build-fast".into()),
             input_tokens: 200_000,
             output_tokens: 1_000,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(
             list_cost_usd(&fast_long),
             200_000.0 * 6e-6 + 1_000.0 * 1.8e-5,
         );
-        let fast_long_cached = UsageRecord {
+        let fast_long_cached = HopRecord {
             model: Some("grok-4.7-build-fast".into()),
             input_tokens: 200_000,
             cached_input_tokens: 200_000,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&fast_long_cached), 200_000.0 * 1.5e-6);
     }
 
     #[test]
     fn unknown_model_is_none() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             model: Some("not-a-real-model-xyz".into()),
             input_tokens: 10,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         assert!(list_cost_usd(&rec).is_none());
     }
 
     #[test]
     fn open_mail_synthetic_usage_has_a_positive_go_price() {
-        let mut record = UsageRecord {
+        let mut record = HopRecord {
             provider: Some("opencode-go".into()),
             model: Some("deepseek-v4.1-flash".into()),
             ts_ms: 1_789_409_220_431,
@@ -290,98 +290,98 @@ mod tests {
 
     #[test]
     fn tts_million_chars_is_fifteen_dollars() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             kind: Some("tts".into()),
             model: Some("tts".into()),
             unit: Some("chars".into()),
             quantity: Some(1_000_000),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&rec), 15.0);
     }
 
     #[test]
     fn legacy_tts_without_unit_uses_input_tokens_as_chars() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             kind: Some("tts".into()),
             model: Some("tts".into()),
             input_tokens: 1_000_000,
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&rec), 15.0);
     }
 
     #[test]
     fn failed_hop_is_not_priced() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             kind: Some("tts".into()),
             model: Some("tts".into()),
             unit: Some("chars".into()),
             quantity: Some(1_000_000),
             status: Some(502),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         assert!(list_cost_usd(&rec).is_none());
     }
 
     #[test]
     fn stt_stream_hour_is_twenty_cents() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             kind: Some("stt".into()),
             model: Some("stt".into()),
             unit: Some("audio_ms".into()),
             quantity: Some(3_600_000),
             duration_ms: Some(50),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&rec), 0.20);
     }
 
     #[test]
     fn stt_batch_hour_is_ten_cents() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             kind: Some("stt".into()),
             model: Some("stt-batch".into()),
             unit: Some("audio_ms".into()),
             quantity: Some(3_600_000),
             duration_ms: Some(12_000),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&rec), 0.10);
     }
 
     #[test]
     fn imagine_quality_1k_is_five_cents() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             kind: Some("image".into()),
             model: Some("grok-imagine-image-quality".into()),
             unit: Some("images".into()),
             quantity: Some(1),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&rec), 0.05);
     }
 
     #[test]
     fn imagine_video_1s_720p_is_list_price() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             kind: Some("video".into()),
             model: Some("grok-imagine-video-1.5".into()),
             unit: Some("video_ms".into()),
             quantity: Some(1_000),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&rec), 0.14);
     }
 
     #[test]
     fn realtime_minute_is_five_cents() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             kind: Some("realtime".into()),
             model: Some("realtime".into()),
             unit: Some("audio_ms".into()),
             quantity: Some(60_000),
-            ..UsageRecord::default()
+            ..HopRecord::default()
         };
         close(list_cost_usd(&rec), 0.05);
     }

@@ -1,5 +1,5 @@
 //! Durable, idempotent completed-hop ledger. Contains metadata and usage, never bodies.
-use fabrials_model::UsageRecord;
+use fabrials_types::HopRecord;
 use rusqlite::{params, OptionalExtension};
 use std::path::Path;
 
@@ -7,7 +7,7 @@ pub struct HopStore {
     connection: rusqlite::Connection,
 }
 impl HopStore {
-    pub fn recent(&self, namespace: &str, limit: usize) -> Result<Vec<UsageRecord>, String> {
+    pub fn recent(&self, namespace: &str, limit: usize) -> Result<Vec<HopRecord>, String> {
         validate_namespace(namespace)?;
         let mut query = self.connection.prepare("SELECT document FROM usage_hops WHERE namespace=?1 ORDER BY ts_ms DESC,identity DESC LIMIT ?2").map_err(|e| e.to_string())?;
         let rows = query
@@ -32,7 +32,7 @@ impl HopStore {
         CREATE TABLE IF NOT EXISTS hop_imports (namespace TEXT NOT NULL, source TEXT NOT NULL, PRIMARY KEY(namespace,source));").map_err(|e| e.to_string())?;
         Ok(Self { connection })
     }
-    pub fn append(&mut self, namespace: &str, record: &UsageRecord) -> Result<bool, String> {
+    pub fn append(&mut self, namespace: &str, record: &HopRecord) -> Result<bool, String> {
         validate_namespace(namespace)?;
         let identity = record_identity(record)
             .unwrap_or_else(|| format!("generated:{}", crate::accounting::new_request_id()));
@@ -45,7 +45,7 @@ impl HopStore {
         provider: Option<&str>,
         from_ms: i64,
         to_ms: i64,
-    ) -> Result<Vec<UsageRecord>, String> {
+    ) -> Result<Vec<HopRecord>, String> {
         validate_namespace(namespace)?;
         let mut query = self.connection.prepare("SELECT document FROM usage_hops WHERE namespace=?1 AND (?2 IS NULL OR provider=?2) AND ts_ms>=?3 AND ts_ms<=?4 ORDER BY ts_ms,identity").map_err(|e| e.to_string())?;
         let rows = query
@@ -111,7 +111,7 @@ impl HopStore {
                     if line.iter().all(u8::is_ascii_whitespace) {
                         continue;
                     }
-                    let record: UsageRecord = serde_json::from_slice(&line)
+                    let record: HopRecord = serde_json::from_slice(&line)
                         .map_err(|_| format!("Invalid legacy hop at line {number}"))?;
                     let identity = record_identity(&record)
                         .unwrap_or_else(|| format!("import:{source}:{number}"));
@@ -136,7 +136,7 @@ fn validate_namespace(value: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn record_identity(record: &UsageRecord) -> Option<String> {
+fn record_identity(record: &HopRecord) -> Option<String> {
     record
         .request_id
         .as_ref()
@@ -147,7 +147,7 @@ fn insert(
     connection: &rusqlite::Connection,
     namespace: &str,
     identity: &str,
-    record: &UsageRecord,
+    record: &HopRecord,
 ) -> Result<bool, String> {
     let document = serde_json::to_string(record).map_err(|e| e.to_string())?;
     if document.len() > 16_384 || identity.len() > 1024 {
@@ -178,8 +178,8 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
-    fn record(provider: &str) -> UsageRecord {
-        UsageRecord {
+    fn record(provider: &str) -> HopRecord {
+        HopRecord {
             ts_ms: 100,
             provider: Some(provider.into()),
             request_id: Some("fixture-request".into()),

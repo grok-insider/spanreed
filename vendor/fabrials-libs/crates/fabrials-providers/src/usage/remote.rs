@@ -1,6 +1,8 @@
 //! Read-only usage protocols. The host owns HTTP, credentials and persistence.
 //! API shapes researched in Tokscale 0d621ca (MIT; see formats/TOKSCALE-LICENSE).
-use fabrials_core::usage::{CostOrigin, Granularity, UsageCost, UsageOrigin, UsageRecord};
+use fabrials_types::consumption::{
+    ConsumptionRecord, CostOrigin, Granularity, UsageCost, UsageOrigin,
+};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -17,7 +19,7 @@ pub fn collect(
     account: &str,
     now_ms: i64,
     mut send: impl FnMut(Request) -> Result<Value, String>,
-) -> Result<Vec<UsageRecord>, String> {
+) -> Result<Vec<ConsumptionRecord>, String> {
     let mut records = match client {
         "cursor" | "trae" => {
             let mut rows = Vec::new();
@@ -170,7 +172,7 @@ mod tests {
 /// Local Antigravity language-server protocol. Only normalized usage leaves it.
 pub fn antigravity(
     mut rpc: impl FnMut(&str, Value) -> Result<Value, String>,
-) -> Result<Vec<UsageRecord>, String> {
+) -> Result<Vec<ConsumptionRecord>, String> {
     let response = rpc("GetAllCascadeTrajectories", json!({}))?;
     let summaries = response
         .get("trajectorySummaries")
@@ -297,7 +299,7 @@ pub fn antigravity(
                     "antigravity",
                     id.clone(),
                     at,
-                    fabrials_core::usage::Tokens {
+                    fabrials_types::consumption::Tokens {
                         input: input.saturating_add(cached),
                         output: output.saturating_add(reasoning),
                         cache_read: cached,

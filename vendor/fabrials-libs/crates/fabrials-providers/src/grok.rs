@@ -1,4 +1,4 @@
-use fabrials_core::{ResetCredit, ResetInventory};
+use fabrials_types::{ResetCredit, ResetInventory};
 
 pub const RESET_URL: &str = "https://grok.com/prod_mc_billing.ConsumerUiSvc/GetRemainingResets";
 

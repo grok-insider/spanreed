@@ -576,8 +576,8 @@ pub fn refresh_rejection(body: &Value) -> String {
 /// names a model or surface becomes one more quota line, using that name as
 /// the label. A later provider can emit the same progress lines and the
 /// account card will show them without a separate layout.
-pub fn usage_output(usage: &Value, now_ms: i64) -> fabrials_model::ProviderOutput {
-    use fabrials_model::ProviderOutput;
+pub fn usage_output(usage: &Value, now_ms: i64) -> fabrials_types::ProviderOutput {
+    use fabrials_types::ProviderOutput;
 
     let mut lines = Vec::new();
     for (key, label) in [("five_hour", "Session"), ("seven_day", "Weekly")] {
@@ -633,7 +633,7 @@ pub fn usage_output(usage: &Value, now_ms: i64) -> fabrials_model::ProviderOutpu
 }
 
 /// Session and weekly plan windows, when the flat fields are absent.
-fn append_plan_windows_from_limits(usage: &Value, lines: &mut Vec<fabrials_model::MetricLine>) {
+fn append_plan_windows_from_limits(usage: &Value, lines: &mut Vec<fabrials_types::MetricLine>) {
     let Some(limits) = usage.get("limits").and_then(Value::as_array) else {
         return;
     };
@@ -654,17 +654,17 @@ fn plan_limit_line(
     limits: &[Value],
     kind: &str,
     label: &str,
-) -> Option<fabrials_model::MetricLine> {
+) -> Option<fabrials_types::MetricLine> {
     let entry = limits.iter().find(|entry| {
         entry.get("kind").and_then(Value::as_str) == Some(kind) && scope_name(entry).is_none()
     })?;
     let percent = limit_percent(entry)?;
     let resets = entry.get("resets_at").and_then(iso_utc);
-    Some(fabrials_model::MetricLine::percent(label, percent, resets))
+    Some(fabrials_types::MetricLine::percent(label, percent, resets))
 }
 
 /// Model and surface windows from `limits`, in payload order.
-fn append_scoped_limits(usage: &Value, lines: &mut Vec<fabrials_model::MetricLine>) {
+fn append_scoped_limits(usage: &Value, lines: &mut Vec<fabrials_types::MetricLine>) {
     let Some(limits) = usage.get("limits").and_then(Value::as_array) else {
         return;
     };
@@ -682,7 +682,7 @@ fn append_scoped_limits(usage: &Value, lines: &mut Vec<fabrials_model::MetricLin
             continue;
         };
         let resets = entry.get("resets_at").and_then(iso_utc);
-        lines.push(fabrials_model::MetricLine::percent(label, percent, resets));
+        lines.push(fabrials_types::MetricLine::percent(label, percent, resets));
     }
 }
 
@@ -721,9 +721,9 @@ fn limit_percent(entry: &Value) -> Option<f64> {
         .filter(|percent| percent.is_finite() && (0.0..=100.0).contains(percent))
 }
 
-fn has_progress_label(lines: &[fabrials_model::MetricLine], label: &str) -> bool {
+fn has_progress_label(lines: &[fabrials_types::MetricLine], label: &str) -> bool {
     lines.iter().any(|line| match line {
-        fabrials_model::MetricLine::Progress { label: found, .. } => {
+        fabrials_types::MetricLine::Progress { label: found, .. } => {
             found.eq_ignore_ascii_case(label)
         }
         _ => false,
@@ -737,15 +737,15 @@ fn window_percent(value: &Value) -> Option<f64> {
         .filter(|percent| percent.is_finite() && (0.0..=100.0).contains(percent))
 }
 
-fn window_line(usage: &Value, key: &str, label: &str) -> Option<fabrials_model::MetricLine> {
+fn window_line(usage: &Value, key: &str, label: &str) -> Option<fabrials_types::MetricLine> {
     let window = usage.get(key)?;
     let percent = window_percent(window)?;
     let resets = window.get("resets_at").and_then(iso_utc);
-    Some(fabrials_model::MetricLine::percent(label, percent, resets))
+    Some(fabrials_types::MetricLine::percent(label, percent, resets))
 }
 
-fn extra_usage_line(usage: &Value) -> Option<fabrials_model::MetricLine> {
-    use fabrials_model::{MetricKind, MetricLine};
+fn extra_usage_line(usage: &Value) -> Option<fabrials_types::MetricLine> {
+    use fabrials_types::{MetricKind, MetricLine};
     let extra = usage.get("extra_usage")?;
     if extra.get("is_enabled").and_then(Value::as_bool) != Some(true) {
         return None;
@@ -765,8 +765,8 @@ fn extra_usage_line(usage: &Value) -> Option<fabrials_model::MetricLine> {
 }
 
 /// The OAuth session exposes the subscription start, not the period end.
-fn plan_start_line(usage: &Value, now_ms: i64) -> Option<fabrials_model::MetricLine> {
-    use fabrials_model::{MetricKind, MetricLine};
+fn plan_start_line(usage: &Value, now_ms: i64) -> Option<fabrials_types::MetricLine> {
+    use fabrials_types::{MetricKind, MetricLine};
     let created = usage
         .get("subscription_created_at")
         .and_then(iso_utc)
@@ -862,7 +862,7 @@ mod tests {
     }
 
     use super::*;
-    use fabrials_model::{MetricLine, ProgressFormat};
+    use fabrials_types::{MetricLine, ProgressFormat};
 
     fn progress_labels(lines: &[MetricLine]) -> Vec<String> {
         lines

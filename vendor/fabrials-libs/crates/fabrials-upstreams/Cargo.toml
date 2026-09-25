@@ -1,0 +1,22 @@
+[package]
+name = "fabrials-upstreams"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/grok-insider/fabrials-libs"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+publish = false
+description = "Provider adapters that plug into the fabrials-runtime proxy engine"
+
+[dependencies]
+fabrials-types = { path = "../fabrials-types" }
+fabrials-runtime = { path = "../fabrials-runtime" }
+fabrials-providers = { path = "../fabrials-providers" }
+fabrials-metrics = { path = "../fabrials-metrics" }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+url = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "rustls-tls-native-roots"] }

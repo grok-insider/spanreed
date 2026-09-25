@@ -9,7 +9,7 @@ pub use economics::{
     HopSnapshotInput, HopsWindow, MIN_PCT_SCALE, MONTH_WEEK_FACTOR,
 };
 
-use fabrials_model::{
+use fabrials_types::{
     MetricKind, MetricLine, ProgressFormat, ProviderEconomics, ProviderOutput, ResetEvent,
     ShareLine, ShareProvider, ShareSnapshot, ShareSource,
 };

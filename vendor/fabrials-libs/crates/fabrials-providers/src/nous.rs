@@ -1,4 +1,4 @@
-use fabrials_core::CreditBalance;
+use fabrials_types::CreditBalance;
 use serde_json::Value;
 pub mod device_flow;
 

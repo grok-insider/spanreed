@@ -1,7 +1,6 @@
 //! Fabric path routing (desktop capture compatibility).
 
-pub const UPSTREAM_GROK_CLI: &str = fabrials_oauth_grok::UPSTREAM_GROK_CLI;
-pub const UPSTREAM_XAI_API: &str = fabrials_oauth_grok::UPSTREAM_XAI_API;
+pub use fabrials_types::endpoints::{UPSTREAM_GROK_CLI, UPSTREAM_XAI_API};
 pub const UPSTREAM_OPENCODE_GO: &str = "https://opencode.ai/zen/go";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,7 +214,7 @@ fn catalog_route(
 }
 
 fn grok_fabric(path: String, account_alias: Option<String>) -> FabricRoute {
-    let media = fabrials_core::hop::openai_compat_kind(&path).is_some();
+    let media = fabrials_types::hop::openai_compat_kind(&path).is_some();
     FabricRoute {
         path,
         account_alias,
@@ -230,7 +229,7 @@ fn grok_fabric(path: String, account_alias: Option<String>) -> FabricRoute {
 
 /// Imagine / voice HTTP on `api.x.ai` (Grok Build uses `xai_api_base_url`, not CCP).
 pub fn is_xai_media_path(raw: &str) -> bool {
-    fabrials_core::hop::openai_compat_kind(raw).is_some()
+    fabrials_types::hop::openai_compat_kind(raw).is_some()
 }
 
 pub fn is_health_path(path: &str) -> bool {

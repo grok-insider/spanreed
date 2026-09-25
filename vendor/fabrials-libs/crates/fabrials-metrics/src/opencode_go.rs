@@ -1,6 +1,6 @@
-use fabrials_model::UsageRecord;
+use fabrials_types::HopRecord;
 
-pub(crate) fn list_cost_usd(record: &UsageRecord) -> Option<f64> {
+pub(crate) fn list_cost_usd(record: &HopRecord) -> Option<f64> {
     if record.provider.as_deref() != Some("opencode-go")
         || record.model.as_deref() != Some("deepseek-v4.1-flash")
     {
@@ -25,8 +25,8 @@ pub(crate) fn list_cost_usd(record: &UsageRecord) -> Option<f64> {
 mod tests {
     use super::*;
 
-    fn record(ts_ms: i64) -> UsageRecord {
-        UsageRecord {
+    fn record(ts_ms: i64) -> HopRecord {
+        HopRecord {
             provider: Some("opencode-go".into()),
             model: Some("deepseek-v4.1-flash".into()),
             ts_ms,

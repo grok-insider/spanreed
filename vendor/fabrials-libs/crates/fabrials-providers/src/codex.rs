@@ -1,9 +1,9 @@
-use fabrials_core::{ResetCredit, ResetInventory};
+use fabrials_types::{ResetCredit, ResetInventory};
 use serde_json::Value;
 pub mod auth;
 
-pub fn quota_output(usage: &Value, source: &str, now_ms: i64) -> fabrials_model::ProviderOutput {
-    use fabrials_model::MetricLine;
+pub fn quota_output(usage: &Value, source: &str, now_ms: i64) -> fabrials_types::ProviderOutput {
+    use fabrials_types::MetricLine;
     let mut lines = Vec::new();
     for (group, prefix) in [("rate_limit", ""), ("code_review_rate_limit", "Review ")] {
         let mut windows = vec![
@@ -63,14 +63,14 @@ pub fn quota_output(usage: &Value, source: &str, now_ms: i64) -> fabrials_model:
     };
     if let Some(value) = balance {
         lines.push(MetricLine::Text {
-            kind: fabrials_model::MetricKind::Plan,
+            kind: fabrials_types::MetricKind::Plan,
             label: "Credits".into(),
             value,
             color: None,
             subtitle: None,
         });
     }
-    let mut output = fabrials_model::ProviderOutput::new(source, "Codex", lines);
+    let mut output = fabrials_types::ProviderOutput::new(source, "Codex", lines);
     output.plan = usage["plan_type"].as_str().map(str::to_owned);
     output
 }
