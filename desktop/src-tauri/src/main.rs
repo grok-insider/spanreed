@@ -368,7 +368,9 @@ fn main() {
         .setup(|app| {
             spanreed::desktop_open::mark_running();
             let handle = app.handle().clone();
-            std::thread::spawn(move || loop {
+            std::thread::spawn(move || {
+                let mut applied = String::new();
+                loop {
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Some(href) = spanreed::desktop_open::peek() {
                     use tauri::Manager;
@@ -376,14 +378,16 @@ fn main() {
                         let _ = window.unminimize();
                         let _ = window.show();
                         let _ = window.set_focus();
-                        if let Some(script) = spanreed::desktop_open::route_location_script(&href) {
-                            if window.eval(&script).is_ok()
-                                && spanreed::desktop_open::peek().as_deref() == Some(href.as_str())
-                            {
-                                let _ = spanreed::desktop_open::take();
+                        if applied != href {
+                            if let Some(script) = spanreed::desktop_open::route_location_script(&href) {
+                                if window.eval(&script).is_ok() {
+                                    applied.clone_from(&href);
+                                }
                             }
                         }
                     }
+                } else {
+                    applied.clear();
                 }
                 if let Some(alert) = spanreed::desktop_open::take_alert() {
                     use tauri::plugin::PermissionState;
@@ -407,6 +411,7 @@ fn main() {
                 }
                 }));
                 std::thread::sleep(std::time::Duration::from_millis(200));
+                }
             });
             let show = tauri::menu::MenuItem::with_id(app, "show", "Open dashboard", true, None::<&str>)?;
             let settings = tauri::menu::MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
