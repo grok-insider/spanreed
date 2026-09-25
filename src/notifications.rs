@@ -135,14 +135,9 @@ pub fn deliver_user_visible(title: &str, body: &str) -> Result<(), String> {
 fn show_unconfirmed_dialog(title: &str, body: &str) {
     #[cfg(windows)]
     {
-        let title = title.replace('\'', "''");
-        let body = body.replace('\'', "''");
-        let script = format!(
-            "Add-Type -AssemblyName PresentationFramework; \
-             [System.Windows.MessageBox]::Show('{body}','{title}') | Out-Null"
-        );
+        let script = windows_dialog_script(title, body);
         let _ = std::process::Command::new(powershell_program())
-            .args(["-NoProfile", "-Command", &script])
+            .args(windows_dialog_args(&script))
             .spawn();
     }
     #[cfg(target_os = "macos")]
@@ -253,6 +248,32 @@ pub(crate) fn zenity_dialog_args(title: &str, body: &str) -> Vec<String> {
         title.into(),
         "--text".into(),
         body.into(),
+    ]
+}
+
+/// WPF `MessageBox` throws unless the PowerShell host is STA, and that throw
+/// is easy to miss because the dialog is spawned. WinForms shows on the STA
+/// host Windows PowerShell already uses when `-STA` is set.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn windows_dialog_script(title: &str, body: &str) -> String {
+    fn escape(value: &str) -> String {
+        value.replace('\'', "''").replace(['\n', '\r'], " ")
+    }
+    format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         [System.Windows.Forms.MessageBox]::Show('{}','{}') | Out-Null",
+        escape(body),
+        escape(title)
+    )
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn windows_dialog_args(script: &str) -> Vec<String> {
+    vec![
+        "-NoProfile".into(),
+        "-STA".into(),
+        "-Command".into(),
+        script.into(),
     ]
 }
 
@@ -591,6 +612,26 @@ loop.run()
         assert_eq!(osascript_program(), "/usr/bin/osascript");
         let powershell = powershell_program();
         assert!(powershell.ends_with(r"System32\WindowsPowerShell\v1.0\powershell.exe"));
+    }
+
+    #[test]
+    fn windows_dialog_stays_visible_without_wpf() {
+        let script = windows_dialog_script("Capture 'down'", "Line one\nLine two");
+        assert!(script.contains("System.Windows.Forms.MessageBox"));
+        assert!(!script.contains("PresentationFramework"));
+        assert!(script.contains("Capture ''down''"));
+        assert!(script.contains("Line one Line two"));
+        assert!(!script.contains('\n'));
+        let args = windows_dialog_args(&script);
+        assert_eq!(
+            args,
+            vec![
+                "-NoProfile".to_string(),
+                "-STA".to_string(),
+                "-Command".to_string(),
+                script,
+            ]
+        );
     }
 
     #[test]
