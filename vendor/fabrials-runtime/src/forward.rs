@@ -26,6 +26,9 @@ pub trait HopObserver {
     fn models_response(&self, body: Vec<u8>) -> Vec<u8> {
         body
     }
+    /// Upstream answered with a non-2xx status. The buffered body is the raw
+    /// rejection, before it is rewritten for the client.
+    fn upstream_error(&self, _status: u16, _body: &[u8]) {}
 }
 
 pub struct WebSocketHop<'a> {
@@ -204,141 +207,195 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut req = client_http.request(
-        method.parse().map_err(|_| format!("bad method {method}"))?,
-        upstream_url,
-    );
-    let provider_headers = inject
-        .as_deref()
-        .map(|token| prov.credential_headers(token, &routed, secret.as_ref()))
-        .transpose()?
-        .unwrap_or_default();
-    for (k, v) in &headers {
-        if is_hop_by_hop_header(k, &headers) {
-            continue;
-        }
-        if is_relay_only_header(k) {
-            continue;
-        }
-        if k.eq_ignore_ascii_case("accept-encoding") {
-            continue;
-        }
-        if strip_http_client_credentials && is_client_credential_header(k) {
-            continue;
-        }
-        if provider_headers
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case(k))
-        {
-            continue;
-        }
-        req = req.header(k.as_str(), v.as_str());
-    }
-    for (k, v) in provider_headers {
-        if k.eq_ignore_ascii_case("accept-encoding") {
-            continue;
-        }
-        req = req.header(k, v);
-    }
-    // Captured chat/SSE bodies must stay parseable for accounting and model
-    // response rewriting, independent of the caller's compression support.
-    req = req.header(reqwest::header::ACCEPT_ENCODING, "identity");
-    if let Some(host) = upstream_base
-        .strip_prefix("https://")
-        .or_else(|| upstream_base.strip_prefix("http://"))
-    {
-        req = req.header("Host", host.split('/').next().unwrap_or(host));
-    }
     let media_request = if inspect_json_body {
         crate::accounting::summarize_media_request(class.kind, &body)
     } else {
         crate::accounting::MediaRequestSummary::default()
     };
-    if !body.is_empty() {
-        req = req.body(body);
-    }
-
-    let mut upstream = match req.send() {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = e.to_string();
-            let safe = if msg.to_ascii_lowercase().contains("bearer") {
-                "upstream error".into()
-            } else {
-                msg
-            };
-            let mut rec = fabrials_model::UsageRecord {
-                ts_ms: now_ms(),
-                request_id: Some(request_id.clone()),
-                account_id: alias.as_ref().map(|a| format!("{}/{a}", prov.id())),
-                route: Some(routed.route.to_string()),
-                provider: Some(prov.id().into()),
-                key_hash: key_hash.clone(),
-                kind: Some(class.kind.as_str().into()),
-                duration_ms: Some(hop_started.elapsed().as_millis() as u64),
-                status: Some(502),
-                model: model.clone().or_else(|| Some(class.kind.as_str().into())),
-                ..Default::default()
-            };
-            crate::accounting::apply_media_units_from_summary(
-                &mut rec,
-                class.kind,
-                class.transport,
-                &media_request,
-                &[],
-            );
-            observer.record(rec);
-            return write_status(
-                &mut client,
-                502,
-                &serde_json::json!({"error": "upstream", "detail": safe}).to_string(),
-            );
-        }
-    };
-    if is_grok_models_list(&method, routed.route, &routed.path) {
-        return forward_models_list(&mut client, upstream, observer);
-    }
-    observer.response_headers(upstream.status().as_u16(), upstream.headers());
-    let status = upstream.status();
-    let capture = !matches!(class.kind, HopKind::Image | HopKind::Video | HopKind::Tts);
-    let (captured, pipe_error) = match pipe_upstream(&mut client, &mut upstream, capture) {
-        Ok(captured) => (captured, None),
-        Err(error) => {
-            let message = error.to_string();
-            (error.captured, Some(message))
-        }
-    };
-
-    let parsed = prov.parse_usage(&captured);
-    if class.kind.always_record() || parsed.is_some() || pipe_error.is_some() {
-        let mut rec = parsed.unwrap_or_default();
-        rec.ts_ms = now_ms();
-        if rec.request_id.as_deref().unwrap_or("").is_empty() {
-            rec.request_id = Some(request_id.clone());
-        }
-        rec.account_id = alias.as_ref().map(|a| format!("{}/{a}", prov.id()));
-        rec.route = Some(routed.route.to_string());
-        rec.provider = Some(prov.id().into());
-        rec.key_hash = key_hash.clone();
-        rec.kind = Some(class.kind.as_str().into());
-        rec.duration_ms = Some(hop_started.elapsed().as_millis() as u64);
-        rec.status = Some(status.as_u16());
-        if rec.model.is_none() && class.kind.always_record() {
-            rec.model = model.clone().or_else(|| Some(class.kind.as_str().into()));
-        }
-        crate::accounting::apply_media_units_from_summary(
-            &mut rec,
-            class.kind,
-            class.transport,
-            &media_request,
-            &captured,
+    let mut outbound = crate::wire_compat::adapt_upstream_body(&routed.path, &body);
+    let mut format_retried = false;
+    loop {
+        let mut req = client_http.request(
+            method.parse().map_err(|_| format!("bad method {method}"))?,
+            upstream_url.clone(),
         );
-        observer.record(rec);
+        let provider_headers = inject
+            .as_deref()
+            .map(|token| prov.credential_headers(token, &routed, secret.as_ref()))
+            .transpose()?
+            .unwrap_or_default();
+        for (k, v) in &headers {
+            if is_hop_by_hop_header(k, &headers) {
+                continue;
+            }
+            if is_relay_only_header(k) {
+                continue;
+            }
+            if k.eq_ignore_ascii_case("accept-encoding") {
+                continue;
+            }
+            if strip_http_client_credentials && is_client_credential_header(k) {
+                continue;
+            }
+            if provider_headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(k))
+            {
+                continue;
+            }
+            req = req.header(k.as_str(), v.as_str());
+        }
+        for (k, v) in provider_headers {
+            if k.eq_ignore_ascii_case("accept-encoding") {
+                continue;
+            }
+            req = req.header(k, v);
+        }
+        req = req.header(reqwest::header::ACCEPT_ENCODING, "identity");
+        if let Some(host) = upstream_base
+            .strip_prefix("https://")
+            .or_else(|| upstream_base.strip_prefix("http://"))
+        {
+            req = req.header("Host", host.split('/').next().unwrap_or(host));
+        }
+        let keep_for_retry = !format_retried
+            && outbound
+                .windows(b"json_schema".len())
+                .any(|window| window == b"json_schema");
+        let payload = if keep_for_retry {
+            outbound.clone()
+        } else {
+            std::mem::take(&mut outbound)
+        };
+        if !payload.is_empty() {
+            req = req.body(payload);
+        }
+
+        let mut upstream = match req.send() {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = e.to_string();
+                let safe = if msg.to_ascii_lowercase().contains("bearer") {
+                    "upstream error".into()
+                } else {
+                    msg
+                };
+                let mut rec = fabrials_model::UsageRecord {
+                    ts_ms: now_ms(),
+                    request_id: Some(request_id.clone()),
+                    account_id: alias.as_ref().map(|a| format!("{}/{a}", prov.id())),
+                    route: Some(routed.route.to_string()),
+                    provider: Some(prov.id().into()),
+                    key_hash: key_hash.clone(),
+                    kind: Some(class.kind.as_str().into()),
+                    duration_ms: Some(hop_started.elapsed().as_millis() as u64),
+                    status: Some(502),
+                    model: model.clone().or_else(|| Some(class.kind.as_str().into())),
+                    ..Default::default()
+                };
+                crate::accounting::apply_media_units_from_summary(
+                    &mut rec,
+                    class.kind,
+                    class.transport,
+                    &media_request,
+                    &[],
+                );
+                observer.record(rec);
+                return write_status(
+                    &mut client,
+                    502,
+                    &serde_json::json!({"error": "upstream", "detail": safe}).to_string(),
+                );
+            }
+        };
+        if is_grok_models_list(&method, routed.route, &routed.path) {
+            return forward_models_list(&mut client, upstream, observer);
+        }
+        let status = upstream.status();
+        if status.is_success() {
+            observer.response_headers(status.as_u16(), upstream.headers());
+            let capture = !matches!(class.kind, HopKind::Image | HopKind::Video | HopKind::Tts);
+            let (captured, pipe_error) = match pipe_upstream(&mut client, &mut upstream, capture) {
+                Ok(captured) => (captured, None),
+                Err(error) => {
+                    let message = error.to_string();
+                    (error.captured, Some(message))
+                }
+            };
+            let parsed = prov.parse_usage(&captured);
+            if class.kind.always_record() || parsed.is_some() || pipe_error.is_some() {
+                let mut rec = parsed.unwrap_or_default();
+                rec.ts_ms = now_ms();
+                if rec.request_id.as_deref().unwrap_or("").is_empty() {
+                    rec.request_id = Some(request_id.clone());
+                }
+                rec.account_id = alias.as_ref().map(|a| format!("{}/{a}", prov.id()));
+                rec.route = Some(routed.route.to_string());
+                rec.provider = Some(prov.id().into());
+                rec.key_hash = key_hash.clone();
+                rec.kind = Some(class.kind.as_str().into());
+                rec.duration_ms = Some(hop_started.elapsed().as_millis() as u64);
+                rec.status = Some(status.as_u16());
+                if rec.model.is_none() && class.kind.always_record() {
+                    rec.model = model.clone().or_else(|| Some(class.kind.as_str().into()));
+                }
+                crate::accounting::apply_media_units_from_summary(
+                    &mut rec,
+                    class.kind,
+                    class.transport,
+                    &media_request,
+                    &captured,
+                );
+                observer.record(rec);
+            }
+            return match pipe_error {
+                Some(error) => Err(error),
+                None => Ok(()),
+            };
+        }
+        let rejected = read_rejection_body(&mut upstream);
+        observer.upstream_error(status.as_u16(), &rejected);
+        observer.record(fabrials_model::UsageRecord {
+            ts_ms: now_ms(),
+            request_id: Some(format!(
+                "{}-rejected-{}",
+                request_id,
+                hop_started.elapsed().as_micros()
+            )),
+            account_id: alias.as_ref().map(|a| format!("{}/{a}", prov.id())),
+            route: Some(routed.route.to_string()),
+            provider: Some(prov.id().into()),
+            key_hash: key_hash.clone(),
+            kind: Some(class.kind.as_str().into()),
+            duration_ms: Some(hop_started.elapsed().as_millis() as u64),
+            status: Some(status.as_u16()),
+            model: model.clone(),
+            ..Default::default()
+        });
+        if !format_retried {
+            if let Some(next) =
+                crate::wire_compat::downgrade_after_rejection(status.as_u16(), &rejected, &outbound)
+            {
+                format_retried = true;
+                outbound = next;
+                continue;
+            }
+        }
+        let normalized = crate::wire_compat::normalize_rejection(&rejected);
+        let headers = crate::wire_compat::json_error_headers(
+            upstream.headers().clone(),
+            &rejected,
+            &normalized,
+        );
+        return write_upstream_bytes(&mut client, status, &headers, &normalized);
     }
-    match pipe_error {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+}
+
+fn read_rejection_body(upstream: &mut reqwest::blocking::Response) -> Vec<u8> {
+    let mut body = Vec::new();
+    let mut limited = std::io::Read::take(&mut *upstream, 64 * 1024);
+    let _ = std::io::Read::read_to_end(&mut limited, &mut body);
+    body
 }
 
 fn now_ms() -> i64 {
