@@ -3,9 +3,11 @@
 //! Header values mirror the `fabrials-providers` Kimi credential headers, and
 //! ai-relay asserts both agree.
 
-use fabrials_runtime::catalog::by_id;
-use fabrials_runtime::provider::{Provider, Upstream};
-use fabrials_runtime::routes::parse_fabric_path;
+use crate::catalog::by_id;
+use crate::routes::parse_fabric_path;
+use fabrials_fabric::provider::{
+    BodyShaper, CredentialInjector, Router, Translator, Upstream, UsageExtractor,
+};
 use fabrials_types::hop::HopClass;
 use fabrials_types::HopRecord;
 
@@ -15,7 +17,7 @@ pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 #[derive(Default)]
 pub struct KimiAdapter;
 
-impl Provider for KimiAdapter {
+impl Router for KimiAdapter {
     fn id(&self) -> &'static str {
         ID
     }
@@ -34,17 +36,6 @@ impl Provider for KimiAdapter {
         })
     }
 
-    fn inject(&self, token: &str) -> Vec<(String, String)> {
-        inject_headers(token)
-    }
-
-    fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
-        let text = String::from_utf8_lossy(response_body);
-        fabrials_metrics::usage_from_messages_body(&text)
-            .or_else(|| fabrials_metrics::usage_from_response_body(&text))
-            .map(|parsed| parsed.into_record(now_ms(), None, None, Some(ID.into())))
-    }
-
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
         HopClass::openai_compat(&hop.path, upgrade)
     }
@@ -54,6 +45,25 @@ impl Provider for KimiAdapter {
         by_id(ID).is_some_and(|spec| spec.allows(method, &hop.path))
     }
 }
+
+impl CredentialInjector for KimiAdapter {
+    fn inject(&self, token: &str) -> Vec<(String, String)> {
+        inject_headers(token)
+    }
+}
+
+impl UsageExtractor for KimiAdapter {
+    fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
+        let text = String::from_utf8_lossy(response_body);
+        fabrials_providers::sse::usage_from_messages_body(&text)
+            .or_else(|| fabrials_providers::sse::usage_from_response_body(&text))
+            .map(|parsed| parsed.into_record(now_ms(), None, None, Some(ID.into())))
+    }
+}
+
+impl Translator for KimiAdapter {}
+
+impl BodyShaper for KimiAdapter {}
 
 pub fn inject_headers(token: &str) -> Vec<(String, String)> {
     vec![
@@ -72,7 +82,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_runtime::provider::Provider;
+    use fabrials_fabric::provider::{CredentialInjector, Router};
 
     #[test]
     fn catalogue_entry_pins_the_anthropic_surface() {

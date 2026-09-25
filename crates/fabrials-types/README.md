@@ -9,7 +9,7 @@ ai-relay. Part of the `fabrials-libs` workspace; consumers vendor the workspace 
 - **usage** — `UsageRecord` (one completed API call)
 - **share** — community snapshot (`ShareSnapshot` schema v1/v2), economics, reset events
 
-No I/O, no HTTP, no Tokio. Pricing and ledger files live in `fabrials-metrics`.
+No I/O, no HTTP, no Tokio. Pricing lives in `fabrials-pricing`; the JSONL ledger in the host store.
 
 ## License
 

@@ -42,26 +42,36 @@ pub fn parse_balance(value: &Value) -> Option<CreditBalance> {
 pub use crate::device_flow::{DeviceAuthorization, DeviceView, PollResult};
 
 pub struct Client {
-    http: reqwest::blocking::Client,
+    http: std::sync::Arc<dyn crate::http::HttpPort>,
     client_id: String,
 }
 impl Client {
+    #[cfg(feature = "reqwest")]
     pub fn new(client_id: Option<&str>) -> Result<Self, String> {
-        Ok(Self {
-            http: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(20))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|_| "Could not initialize Nous client")?,
+        crate::http::default_port(20)
+            .map(|http| Self::with_http(http, client_id))
+            .map_err(|_| "Could not initialize Nous client".into())
+    }
+    pub fn with_http(
+        http: std::sync::Arc<dyn crate::http::HttpPort>,
+        client_id: Option<&str>,
+    ) -> Self {
+        Self {
+            http,
             client_id: client_id.unwrap_or(CLIENT_ID).to_string(),
-        })
+        }
     }
     pub fn begin(&self) -> Result<DeviceAuthorization, String> {
         let response = self
             .http
-            .post(DEVICE_URL)
-            .form(&[("client_id", self.client_id.as_str()), ("scope", SCOPE)])
-            .send()
+            .post_form(
+                DEVICE_URL,
+                &[],
+                &crate::http::form_body(&[
+                    ("client_id", self.client_id.as_str()),
+                    ("scope", SCOPE),
+                ]),
+            )
             .map_err(|_| "Nous authorization unavailable")?;
         let value = read_response(response)?;
         let uri = value
@@ -69,7 +79,7 @@ impl Client {
             .or_else(|| value.get("verification_uri"))
             .and_then(Value::as_str)
             .ok_or("Nous verification URL missing")?;
-        let url = reqwest::Url::parse(uri).map_err(|_| "Invalid Nous verification URL")?;
+        let url = url::Url::parse(uri).map_err(|_| "Invalid Nous verification URL")?;
         if url.scheme() != "https"
             || url.host_str() != Some("portal.nousresearch.com")
             || !url.username().is_empty()
@@ -105,17 +115,17 @@ impl Client {
         })
     }
     pub fn poll(&self, code: &str, now_ms: i64) -> Result<PollResult, String> {
+        let form = crate::http::form_body(&[
+            ("client_id", self.client_id.as_str()),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", code),
+        ]);
         let response = self
             .http
-            .post(TOKEN_URL)
-            .form(&[
-                ("client_id", self.client_id.as_str()),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                ("device_code", code),
-            ])
-            .send()
+            .post_form(TOKEN_URL, &[], &form)
             .map_err(|_| "Nous authorization check unavailable")?;
-        let status = response.status();
+        let success = response.is_success();
+        let status = response.status;
         let value = read_json(response)?;
         match value.get("error").and_then(Value::as_str) {
             Some("authorization_pending") => return Ok(PollResult::Pending),
@@ -125,8 +135,8 @@ impl Client {
             Some(_) => return Err("Nous authorization rejected".into()),
             _ => {}
         }
-        if !status.is_success() {
-            return Err(format!("Nous authorization HTTP {}", status.as_u16()));
+        if !success {
+            return Err(format!("Nous authorization HTTP {status}"));
         }
         Ok(PollResult::Authorized(self.token_document(value, now_ms)?))
     }
@@ -139,15 +149,14 @@ impl Client {
             .get("client_id")
             .and_then(Value::as_str)
             .unwrap_or(&self.client_id);
+        let form = crate::http::form_body(&[
+            ("client_id", client),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh),
+        ]);
         let response = self
             .http
-            .post(TOKEN_URL)
-            .form(&[
-                ("client_id", client),
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refresh),
-            ])
-            .send()
+            .post_form(TOKEN_URL, &[], &form)
             .map_err(|_| "Nous token refresh unavailable")?;
         let value = read_response(response)?;
         let mut replacement = self.token_document(value, now_ms)?;
@@ -162,12 +171,13 @@ impl Client {
         Ok(replacement)
     }
     pub fn account(&self, token: &str) -> Result<Value, String> {
+        let bearer = format!("Bearer {token}");
         read_response(
             self.http
-                .get(ACCOUNT_URL)
-                .bearer_auth(token)
-                .header("Accept", "application/json")
-                .send()
+                .get(
+                    ACCOUNT_URL,
+                    &[("Authorization", &bearer), ("Accept", "application/json")],
+                )
                 .map_err(|_| "Nous account unavailable")?,
         )
     }
@@ -201,9 +211,9 @@ impl Client {
     }
 }
 
-fn read_response(response: reqwest::blocking::Response) -> Result<Value, String> {
-    if !response.status().is_success() {
-        return Err(match response.status().as_u16() {
+fn read_response(response: crate::http::HttpResponse) -> Result<Value, String> {
+    if !response.is_success() {
+        return Err(match response.status {
             401 => "Nous rejected this credential (HTTP 401). Reconnect with a new API key or authorize the account again.".into(),
             403 => "Nous denied access (HTTP 403). Check this account's permissions and authorization.".into(),
             status => format!("Nous HTTP {status}"),
@@ -211,17 +221,11 @@ fn read_response(response: reqwest::blocking::Response) -> Result<Value, String>
     }
     read_json(response)
 }
-fn read_json(response: reqwest::blocking::Response) -> Result<Value, String> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    response
-        .take(1_048_577)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Could not read Nous response")?;
-    if bytes.len() > 1_048_576 {
+fn read_json(response: crate::http::HttpResponse) -> Result<Value, String> {
+    if response.body.len() > 1_048_576 {
         return Err("Nous response too large".into());
     }
-    serde_json::from_slice(&bytes).map_err(|_| "Invalid Nous response".into())
+    serde_json::from_slice(&response.body).map_err(|_| "Invalid Nous response".into())
 }
 
 #[cfg(test)]

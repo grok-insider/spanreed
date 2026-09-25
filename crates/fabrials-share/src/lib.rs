@@ -3,11 +3,13 @@
 //! Callers POST the JSON. This crate does not do HTTP.
 
 mod economics;
+pub mod probed;
 
 pub use economics::{
     economics_from_hops, scale_to_full_pool, scale_tokens_to_full, snapshot_from_hops,
     HopSnapshotInput, HopsWindow, MIN_PCT_SCALE, MONTH_WEEK_FACTOR,
 };
+pub use probed::{estimate_full_week, from_output, parse_usd_and_tokens, FullWeekEst};
 
 use fabrials_types::{
     MetricKind, MetricLine, ProgressFormat, ProviderEconomics, ProviderOutput, ResetEvent,

@@ -6,7 +6,7 @@ const TICKS_PER_USD: f64 = 1_000_000_000.0;
 
 /// One completed API call's official usage (from Responses `usage`).
 ///
-/// List-price USD is computed by `fabrials-metrics` (needs the price table).
+/// List-price USD is computed by `fabrials-pricing` (needs the price table).
 /// Subscription-internal `cost_usd_ticks` are captured for reference only.
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "contracts", ts(rename = "UsageRecord"))]

@@ -1,0 +1,59 @@
+{
+  "override": {
+    "tts": { "cost_per_character": 1.5e-5 },
+    "grok-tts": { "cost_per_character": 1.5e-5 },
+    "stt": { "cost_per_second": 5.555555555555556e-5 },
+    "grok-stt": { "cost_per_second": 5.555555555555556e-5 },
+    "stt-batch": { "cost_per_second": 2.777777777777778e-5 },
+    "realtime": { "cost_per_second": 8.333333333333334e-4 },
+    "grok-realtime": { "cost_per_second": 8.333333333333334e-4 },
+    "grok-imagine-image-quality": { "cost_per_image": 0.05 },
+    "grok-imagine-image": { "cost_per_image": 0.02 },
+    "grok-imagine-video": { "cost_per_second": 0.07 },
+    "grok-imagine-video-1.5": { "cost_per_second": 0.14 },
+    "gpt-6-astra": {
+      "input_cost_per_token": 1e-5,
+      "output_cost_per_token": 5e-5,
+      "cache_creation_input_token_cost": 1.25e-5,
+      "cache_read_input_token_cost": 1e-6,
+      "input_cost_per_token_above_200k_tokens": 2e-5,
+      "output_cost_per_token_above_200k_tokens": 7.5e-5,
+      "cache_creation_input_token_cost_above_200k_tokens": 2.5e-5,
+      "cache_read_input_token_cost_above_200k_tokens": 2e-6
+    }
+  },
+  "fill_missing": {
+    "claude-opus-5-5": {
+      "input_cost_per_token": 4e-6,
+      "output_cost_per_token": 2e-5,
+      "cache_creation_input_token_cost": 5e-6,
+      "cache_read_input_token_cost": 2e-7
+    },
+    "claude-opus-5": {
+      "input_cost_per_token": 5e-6,
+      "output_cost_per_token": 2.5e-5,
+      "cache_creation_input_token_cost": 6.25e-6,
+      "cache_read_input_token_cost": 5e-7
+    },
+    "claude-sonnet-5": {
+      "input_cost_per_token": 2e-6,
+      "output_cost_per_token": 1e-5,
+      "cache_creation_input_token_cost": 2.5e-6,
+      "cache_read_input_token_cost": 2e-7
+    }
+  },
+  "provider_rates": [
+    {
+      "provider": "opencode-go",
+      "model": "deepseek-v4.1-flash",
+      "input_cost_per_token": 1.5e-7,
+      "cache_read_input_token_cost": 3e-9,
+      "output_cost_per_token": 6e-7,
+      "peak": {
+        "multiplier": 2.0,
+        "weekdays_only": true,
+        "hours_utc": [[1, 4], [6, 10]]
+      }
+    }
+  ]
+}

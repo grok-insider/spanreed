@@ -1,17 +1,16 @@
-//! Host-owned identities. Plugins never own the registry.
+//! Host-owned identities. Plugins never own the registry, and hosts own its
+//! persistence (`fabrials-store-sqlite` has a JSON file store).
 
 mod steer;
 pub mod transfer;
 
 pub use steer::{
-    cursor_plan_rank, deadline_first_score, format_reset_in, grok_burn_rank, grok_plan_rank,
-    hours_to_reset, parse_rfc3339_ms, pick_autosteer, pick_deadline_autosteer, plan_first_score,
-    Steerable, DEFAULT_EXHAUSTED_PCT, GROK_PLAN_RANK_MAX, URGENT_RESET_HOURS,
+    deadline_first_score, format_reset_in, hours_to_reset, parse_rfc3339_ms, pick_autosteer,
+    pick_deadline_autosteer, plan_first_score, PlanRanking, PlanRanks, RankTable, Steerable,
+    DEFAULT_EXHAUSTED_PCT, URGENT_RESET_HOURS,
 };
 
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct Registry {
@@ -153,25 +152,6 @@ impl Registry {
             self.accounts.push(acc);
         }
     }
-}
-
-pub fn load(path: &Path) -> Registry {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return Registry::default();
-    };
-    serde_json::from_str(&raw).unwrap_or_default()
-}
-
-pub fn save(path: &Path, reg: &Registry) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let body = serde_json::to_string_pretty(reg).map_err(|e| e.to_string())?;
-    fs::write(path, body).map_err(|e| e.to_string())
-}
-
-pub fn index_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("accounts").join("index.json")
 }
 
 #[cfg(test)]

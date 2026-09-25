@@ -1,13 +1,99 @@
 //! Shared autosteer pick: skip exhausted, urgent reset, plan rank, finish the week.
 //!
-//! Grok callers pass [`grok_burn_rank`] (smaller pool first). Cursor callers
-//! pass [`cursor_plan_rank`] (higher tier first). [`pick_autosteer`] always
-//! prefers the higher numeric rank.
+//! The steer logic knows no provider. Callers supply a [`PlanRanking`] (or a
+//! rank closure), usually looked up by provider id in a [`PlanRanks`]
+//! registry; [`pick_autosteer`] always prefers the higher numeric rank.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub const URGENT_RESET_HOURS: f64 = 12.0;
 pub const DEFAULT_EXHAUSTED_PCT: f64 = 100.0;
-/// Max value of [`grok_plan_rank`] (SuperGrok Heavy). Used to invert burn order.
-pub const GROK_PLAN_RANK_MAX: u8 = 5;
+
+/// How one provider orders its plans for autosteer. Higher ranks are picked first.
+pub trait PlanRanking: Send + Sync {
+    fn rank(&self, plan_slug: &str) -> u8;
+}
+
+impl<F: Fn(&str) -> u8 + Send + Sync> PlanRanking for F {
+    fn rank(&self, plan_slug: &str) -> u8 {
+        self(plan_slug)
+    }
+}
+
+/// A ranking given as data: listed slugs take their rank, others rank 0.
+#[derive(Debug, Clone, Copy)]
+pub struct RankTable {
+    pub ranks: &'static [(&'static str, u8)],
+    /// Rank `max - rank` instead, for "burn the smaller pool first" orders.
+    pub inverted: bool,
+}
+
+impl RankTable {
+    pub const fn new(ranks: &'static [(&'static str, u8)]) -> Self {
+        Self {
+            ranks,
+            inverted: false,
+        }
+    }
+
+    /// The same table, smallest plan first.
+    pub const fn inverted(self) -> Self {
+        Self {
+            ranks: self.ranks,
+            inverted: true,
+        }
+    }
+
+    pub fn max(&self) -> u8 {
+        self.ranks.iter().map(|(_, rank)| *rank).max().unwrap_or(0)
+    }
+}
+
+impl PlanRanking for RankTable {
+    fn rank(&self, plan_slug: &str) -> u8 {
+        let rank = self
+            .ranks
+            .iter()
+            .find(|(slug, _)| *slug == plan_slug)
+            .map(|(_, rank)| *rank)
+            .unwrap_or(0);
+        if self.inverted {
+            self.max().saturating_sub(rank)
+        } else {
+            rank
+        }
+    }
+}
+
+/// Plan rankings keyed by provider id. Unknown providers rank every plan 0.
+#[derive(Clone, Default)]
+pub struct PlanRanks {
+    by_provider: BTreeMap<String, Arc<dyn PlanRanking>>,
+}
+
+impl PlanRanks {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with(mut self, provider: &str, ranking: impl PlanRanking + 'static) -> Self {
+        self.by_provider.insert(provider.into(), Arc::new(ranking));
+        self
+    }
+
+    pub fn get(&self, provider: &str) -> Option<&dyn PlanRanking> {
+        self.by_provider
+            .get(provider)
+            .map(|ranking| ranking.as_ref())
+    }
+
+    pub fn rank(&self, provider: &str, plan_slug: &str) -> u8 {
+        self.get(provider)
+            .map(|ranking| ranking.rank(plan_slug))
+            .unwrap_or(0)
+    }
+}
 
 pub trait Steerable {
     fn used_pct(&self) -> Option<f64>;
@@ -24,33 +110,6 @@ impl Steerable for crate::Account {
     }
     fn resets_at(&self) -> Option<&str> {
         self.resets_at.as_deref()
-    }
-}
-
-pub fn grok_plan_rank(slug: &str) -> u8 {
-    match slug {
-        "heavy" => 5,
-        "plus" => 4,
-        "normal" => 3,
-        "lite" => 2,
-        "premium-plus" => 1,
-        "premium" => 0,
-        _ => 0,
-    }
-}
-
-/// Invert [`grok_plan_rank`]: burn smaller SuperGrok / X pools first; Heavy is reserve.
-pub fn grok_burn_rank(slug: &str) -> u8 {
-    GROK_PLAN_RANK_MAX.saturating_sub(grok_plan_rank(slug))
-}
-
-pub fn cursor_plan_rank(slug: &str) -> u8 {
-    match slug {
-        "business" | "enterprise" | "ultra" => 4,
-        "pro" | "pro-plus" => 3,
-        "plus" => 2,
-        "hobby" | "free" => 1,
-        _ => 0,
     }
 }
 
@@ -236,6 +295,19 @@ mod tests {
     use super::*;
     use crate::Account;
 
+    const PLANS: RankTable = RankTable::new(&[
+        ("heavy", 5),
+        ("plus", 4),
+        ("normal", 3),
+        ("lite", 2),
+        ("premium-plus", 1),
+        ("premium", 0),
+    ]);
+
+    fn burn(slug: &str) -> u8 {
+        PLANS.inverted().rank(slug)
+    }
+
     fn acc(alias: &str, slug: &str, used: f64, resets_at: Option<&str>) -> Account {
         let mut a = Account::new("grok", alias).unwrap();
         a.plan_slug = Some(slug.into());
@@ -254,11 +326,32 @@ mod tests {
     }
 
     #[test]
-    fn grok_burn_rank_inverts_quality() {
-        assert_eq!(grok_burn_rank("heavy"), 0);
-        assert_eq!(grok_burn_rank("plus"), 1);
-        assert_eq!(grok_burn_rank("premium-plus"), 4);
-        assert_eq!(grok_burn_rank("premium"), 5);
+    fn inverted_tables_burn_the_smaller_plan_first() {
+        assert_eq!(burn("heavy"), 0);
+        assert_eq!(burn("plus"), 1);
+        assert_eq!(burn("premium-plus"), 4);
+        assert_eq!(burn("premium"), 5);
+        assert_eq!(PLANS.rank("unknown"), 0);
+    }
+
+    #[test]
+    fn rankings_are_looked_up_by_provider() {
+        let ranks = PlanRanks::new()
+            .with("grok", PLANS.inverted())
+            .with("other", |slug: &str| u8::from(slug == "pro") * 3);
+        assert_eq!(ranks.rank("grok", "premium"), 5);
+        assert_eq!(ranks.rank("other", "pro"), 3);
+        assert_eq!(ranks.rank("missing", "pro"), 0);
+        let now = parse_rfc3339_ms("2026-01-01T00:00:00Z").unwrap();
+        let list = vec![
+            acc("heavy", "heavy", 10.0, Some("2026-01-04T08:00:00Z")),
+            acc("plus", "plus", 10.0, Some("2026-01-04T08:00:00Z")),
+        ];
+        let ranking = ranks.get("grok").unwrap();
+        let pick = pick_deadline_autosteer(&list, 100.0, now, |a| {
+            ranking.rank(a.plan_slug().unwrap_or(""))
+        });
+        assert_eq!(pick.unwrap().alias, "plus");
     }
 
     #[test]
@@ -278,9 +371,8 @@ mod tests {
             acc("heavy", "heavy", 100.0, Some("2026-01-04T08:00:00Z")),
             acc("plus", "plus", 40.0, Some("2026-01-04T08:00:00Z")),
         ];
-        let pick = pick_deadline_autosteer(&list, 100.0, now, |a| {
-            grok_burn_rank(a.plan_slug.as_deref().unwrap())
-        });
+        let pick =
+            pick_deadline_autosteer(&list, 100.0, now, |a| burn(a.plan_slug.as_deref().unwrap()));
         assert_eq!(pick.unwrap().alias, "plus");
     }
 
@@ -297,9 +389,8 @@ mod tests {
             ),
             acc("heavy-1", "heavy", 100.0, Some("2026-01-08T00:00:00Z")),
         ];
-        let pick = pick_deadline_autosteer(&list, 100.0, now, |a| {
-            grok_burn_rank(a.plan_slug.as_deref().unwrap())
-        });
+        let pick =
+            pick_deadline_autosteer(&list, 100.0, now, |a| burn(a.plan_slug.as_deref().unwrap()));
         assert_eq!(pick.unwrap().alias, "premium-plus-1");
     }
 
@@ -315,9 +406,8 @@ mod tests {
             ),
             acc("heavy-2", "heavy", 3.0, Some("2026-01-03T00:00:00Z")),
         ];
-        let pick = pick_deadline_autosteer(&list, 100.0, now, |a| {
-            grok_burn_rank(a.plan_slug.as_deref().unwrap())
-        });
+        let pick =
+            pick_deadline_autosteer(&list, 100.0, now, |a| burn(a.plan_slug.as_deref().unwrap()));
         assert_eq!(pick.unwrap().alias, "heavy-2");
     }
 
@@ -328,9 +418,8 @@ mod tests {
             acc("heavy", "heavy", 20.0, Some("2026-01-06T00:00:00Z")),
             acc("lite", "lite", 90.0, Some("2026-01-01T02:00:00Z")),
         ];
-        let pick = pick_deadline_autosteer(&list, 100.0, now, |a| {
-            grok_burn_rank(a.plan_slug.as_deref().unwrap())
-        });
+        let pick =
+            pick_deadline_autosteer(&list, 100.0, now, |a| burn(a.plan_slug.as_deref().unwrap()));
         assert_eq!(pick.unwrap().alias, "lite");
     }
 

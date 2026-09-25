@@ -6,63 +6,61 @@ pub const CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const ISSUER: &str = "https://auth.x.ai";
 const SCOPES: &str = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write workspaces:read workspaces:write";
 
-pub struct Client(reqwest::blocking::Client);
+pub struct Client {
+    http: std::sync::Arc<dyn crate::http::HttpPort>,
+}
 impl Client {
+    #[cfg(feature = "reqwest")]
     pub fn new() -> Result<Self, String> {
-        reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map(Self)
+        crate::http::default_port(20)
+            .map(Self::with_http)
             .map_err(|_| "Could not initialize Grok authorization".into())
     }
+    pub fn with_http(http: std::sync::Arc<dyn crate::http::HttpPort>) -> Self {
+        Self { http }
+    }
     pub fn begin(&self) -> Result<DeviceAuthorization, String> {
+        let form = crate::http::form_body(&[
+            ("client_id", CLIENT_ID),
+            ("scope", SCOPES),
+            ("referrer", "grok-build"),
+        ]);
         let response = self
-            .0
-            .post(format!("{ISSUER}/oauth2/device/code"))
-            .header("x-grok-client-surface", "cli")
-            .form(&[
-                ("client_id", CLIENT_ID),
-                ("scope", SCOPES),
-                ("referrer", "grok-build"),
-            ])
-            .send()
+            .http
+            .post_form(
+                &format!("{ISSUER}/oauth2/device/code"),
+                &[("x-grok-client-surface", "cli")],
+                &form,
+            )
             .map_err(|_| "Grok authorization request failed")?;
-        if !response.status().is_success() {
-            return Err(format!(
-                "Grok authorization HTTP {}",
-                response.status().as_u16()
-            ));
+        if !response.is_success() {
+            return Err(format!("Grok authorization HTTP {}", response.status));
         }
         parse_authorization(&read_json(response)?)
     }
     pub fn poll(&self, device_code: &str) -> Result<PollResult, String> {
+        let form = crate::http::form_body(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", device_code),
+            ("client_id", CLIENT_ID),
+        ]);
         let response = self
-            .0
-            .post(format!("{ISSUER}/oauth2/token"))
-            .header("x-grok-client-surface", "cli")
-            .form(&[
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                ("device_code", device_code),
-                ("client_id", CLIENT_ID),
-            ])
-            .send()
+            .http
+            .post_form(
+                &format!("{ISSUER}/oauth2/token"),
+                &[("x-grok-client-surface", "cli")],
+                &form,
+            )
             .map_err(|_| "Grok authorization check failed")?;
-        let status = response.status().as_u16();
+        let status = response.status;
         parse_poll(status, read_json(response)?)
     }
 }
-fn read_json(response: reqwest::blocking::Response) -> Result<Value, String> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    response
-        .take(1_048_577)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Grok authorization response unavailable")?;
-    if bytes.len() > 1_048_576 {
+fn read_json(response: crate::http::HttpResponse) -> Result<Value, String> {
+    if response.body.len() > 1_048_576 {
         return Err("Grok authorization response too large".into());
     }
-    serde_json::from_slice(&bytes).map_err(|_| "Invalid Grok authorization response".into())
+    serde_json::from_slice(&response.body).map_err(|_| "Invalid Grok authorization response".into())
 }
 fn text<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
     value[field]
@@ -76,7 +74,7 @@ fn parse_authorization(value: &Value) -> Result<DeviceAuthorization, String> {
         .or_else(|| value.get("verification_uri"))
         .and_then(Value::as_str)
         .ok_or("Grok verification URL missing")?;
-    let url = reqwest::Url::parse(uri).map_err(|_| "Invalid Grok verification URL")?;
+    let url = url::Url::parse(uri).map_err(|_| "Invalid Grok verification URL")?;
     if url.scheme() != "https"
         || !matches!(url.host_str(), Some("auth.x.ai" | "accounts.x.ai"))
         || url.port_or_known_default() != Some(443)

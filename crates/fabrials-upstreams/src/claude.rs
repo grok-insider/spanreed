@@ -5,9 +5,11 @@
 //! mirror the `fabrials-providers` Claude credential headers, and ai-relay asserts
 //! both agree.
 
-use fabrials_runtime::catalog::by_id;
-use fabrials_runtime::provider::{Provider, Upstream};
-use fabrials_runtime::routes::parse_fabric_path;
+use crate::catalog::by_id;
+use crate::routes::parse_fabric_path;
+use fabrials_fabric::provider::{
+    BodyShaper, CredentialInjector, Router, Translator, Upstream, UsageExtractor,
+};
 use fabrials_types::hop::HopClass;
 use fabrials_types::HopRecord;
 use serde_json::Value;
@@ -27,7 +29,7 @@ pub struct ClaudeAdapter {
     pub base: Option<String>,
 }
 
-impl Provider for ClaudeAdapter {
+impl Router for ClaudeAdapter {
     fn id(&self) -> &'static str {
         ID
     }
@@ -50,17 +52,6 @@ impl Provider for ClaudeAdapter {
         })
     }
 
-    fn inject(&self, token: &str) -> Vec<(String, String)> {
-        inject_headers(token)
-    }
-
-    fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
-        let text = String::from_utf8_lossy(response_body);
-        fabrials_metrics::usage_from_messages_body(&text)
-            .or_else(|| fabrials_metrics::usage_from_response_body(&text))
-            .map(|parsed| parsed.into_record(now_ms(), None, None, Some(ID.into())))
-    }
-
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
         HopClass::openai_compat(&hop.path, upgrade)
     }
@@ -68,6 +59,32 @@ impl Provider for ClaudeAdapter {
     fn allows_request(&self, method: &str, hop: &Upstream, upgrade: bool) -> bool {
         let _ = upgrade;
         by_id(ID).is_some_and(|spec| spec.allows(method, &hop.path))
+    }
+}
+
+impl CredentialInjector for ClaudeAdapter {
+    fn inject(&self, token: &str) -> Vec<(String, String)> {
+        inject_headers(token)
+    }
+}
+
+impl UsageExtractor for ClaudeAdapter {
+    fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
+        let text = String::from_utf8_lossy(response_body);
+        fabrials_providers::sse::usage_from_messages_body(&text)
+            .or_else(|| fabrials_providers::sse::usage_from_response_body(&text))
+            .map(|parsed| parsed.into_record(now_ms(), None, None, Some(ID.into())))
+    }
+}
+
+impl Translator for ClaudeAdapter {}
+
+impl BodyShaper for ClaudeAdapter {
+    /// A subscription session is served only when `system` opens with the
+    /// identity block; API keys are forwarded unchanged.
+    fn shape_request(&self, _hop: &Upstream, token: Option<&str>, body: &[u8]) -> Option<Vec<u8>> {
+        token.filter(|token| is_oauth(token))?;
+        shape_identity_system(body)
     }
 }
 
@@ -166,7 +183,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_runtime::provider::Provider;
+    use fabrials_fabric::provider::{CredentialInjector, Router};
 
     fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         headers

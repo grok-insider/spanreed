@@ -1,6 +1,9 @@
 //! Frame-aware Responses transport. Authorization and accounting run per creation.
 use super::CodexAdapter;
-use fabrials_runtime::{forward::WebSocketHop, provider::Provider};
+use fabrials_fabric::{
+    forward::WebSocketHop,
+    provider::{CredentialInjector, UsageExtractor},
+};
 use fabrials_types::HopRecord;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -23,7 +26,7 @@ pub fn forward(adapter: &CodexAdapter, mut hop: WebSocketHop<'_>) -> Result<(), 
                 .all(|b| b.is_ascii_alphanumeric() || b"+/".contains(&b))
     });
     if key.is_none() || hop.headers.get("sec-websocket-version").map(String::as_str) != Some("13") {
-        return fabrials_runtime::http::write_status(
+        return fabrials_fabric::http::write_status(
             hop.client,
             400,
             "{\"error\":\"invalid_websocket_handshake\"}",
@@ -31,7 +34,7 @@ pub fn forward(adapter: &CodexAdapter, mut hop: WebSocketHop<'_>) -> Result<(), 
     }
     let token = hop.token.ok_or("Codex authorization unavailable")?;
     let mut url =
-        fabrials_runtime::forward::validated_upstream_url(&hop.upstream.base, &hop.upstream.path)
+        fabrials_fabric::forward::validated_upstream_url(&hop.upstream.base, &hop.upstream.path)
             .map_err(|_| "Invalid Codex WebSocket origin")?;
     let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
     url.set_scheme(scheme)
@@ -76,7 +79,7 @@ struct Active<'a> {
     bytes: usize,
     record: Option<HopRecord>,
     started: std::time::Instant,
-    observer: &'a dyn fabrials_runtime::forward::HopObserver,
+    observer: &'a dyn fabrials_fabric::forward::HopObserver,
 }
 impl Active<'_> {
     fn finish(&mut self, adapter: &CodexAdapter, event: &Value, status: u16) {
@@ -120,7 +123,7 @@ async fn run(
     let (mut upstream, _) = match connected {
         Ok(Ok(value)) => value,
         _ => {
-            return fabrials_runtime::http::write_status(
+            return fabrials_fabric::http::write_status(
                 hop.client,
                 502,
                 "{\"error\":\"codex_websocket_upstream_unavailable\"}",
@@ -170,7 +173,7 @@ async fn run(
                         let model=model.to_owned();
                         event["store"]=json!(false);
                         active.bytes=0;active.started=std::time::Instant::now();
-                        active.record=Some(HopRecord {ts_ms:super::translation::now_ms(),request_id:Some(fabrials_runtime::accounting::new_request_id()),provider:Some("codex".into()),route:Some("codex".into()),kind:Some("chat".into()),model:Some(model),account_id:hop.alias.map(|alias|format!("codex/{alias}")),key_hash:hop.key_hash.map(str::to_owned),..Default::default()});
+                        active.record=Some(HopRecord {ts_ms:super::translation::now_ms(),request_id:Some(fabrials_fabric::accounting::new_request_id()),provider:Some("codex".into()),route:Some("codex".into()),kind:Some("chat".into()),model:Some(model),account_id:hop.alias.map(|alias|format!("codex/{alias}")),key_hash:hop.key_hash.map(str::to_owned),..Default::default()});
                         upstream.send(Message::Text(event.to_string().into())).await.map_err(|_|"Codex WebSocket disconnected")?;
                     },
                     Message::Ping(_)|Message::Pong(_)=>{client.flush().await.map_err(|_|"Client disconnected")?;},
@@ -210,7 +213,8 @@ fn error(code: &str) -> Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_runtime::forward::HopObserver;
+    use fabrials_fabric::forward::HopObserver;
+    use fabrials_fabric::provider::Router;
     use std::{
         collections::HashMap,
         io::{BufRead, BufReader},
