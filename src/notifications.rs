@@ -325,7 +325,11 @@ function Show-SpanreedBalloon {
   $notify.Icon = [System.Drawing.SystemIcons]::Information
   $notify.Visible = $true
   $notify.ShowBalloonTip(8000, $env:SPANREED_NOTIFICATION_TITLE, $env:SPANREED_NOTIFICATION_BODY, [System.Windows.Forms.ToolTipIcon]::Info)
-  Start-Sleep -Seconds 2
+  $deadline = (Get-Date).AddSeconds(2)
+  while ((Get-Date) -lt $deadline) {
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 50
+  }
   $notify.Dispose()
 }
 $toastShown = $false
@@ -446,7 +450,7 @@ mod tests {
         assert!(WINDOWS_NOTIFY.contains(
             "if ($script:toastFailed -or -not $toastShown) { throw \"Spanreed notification was not shown\" }"
         ));
-        assert!(WINDOWS_NOTIFY.contains("Start-Sleep -Seconds 2"));
+        assert!(WINDOWS_NOTIFY.contains("[System.Windows.Forms.Application]::DoEvents()"));
         assert!(!WINDOWS_NOTIFY.contains("CreateToastNotifier('com.fabrials.spanreed')"));
     }
 
