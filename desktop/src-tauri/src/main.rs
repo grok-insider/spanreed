@@ -377,7 +377,11 @@ fn main() {
                         let _ = window.show();
                         let _ = window.set_focus();
                         if let Some(script) = spanreed::desktop_open::route_location_script(&href) {
-                            let _ = window.eval(&script);
+                            if window.eval(&script).is_ok()
+                                && spanreed::desktop_open::peek().as_deref() == Some(href.as_str())
+                            {
+                                let _ = spanreed::desktop_open::take();
+                            }
                         }
                     }
                 }
