@@ -1550,7 +1550,8 @@ mod tests {
     fn present_includes_the_provider_without_local_logs() {
         let html = present(&[output()], true, Some("Ready"), 1_700_000_000_000);
         assert!(html.contains("Codex"));
-        assert!(html.contains("Ready"));
+        assert!(!html.contains("Ready"));
+        assert!(!html.contains("class=\"status\""));
         assert!(!html.contains("Capture is down"));
     }
 }
