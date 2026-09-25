@@ -168,11 +168,16 @@ fn command_is_desktop(command: &str) -> bool {
 fn process_command(pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
-        let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-        if bytes.is_empty() {
-            return None;
+        // A process that just exec'd can show an empty cmdline for a moment.
+        // Treating that as "not the desktop" makes the tray launch a second copy.
+        for _ in 0..20 {
+            let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+            if !bytes.is_empty() {
+                return Some(String::from_utf8_lossy(&bytes).into_owned());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        Some(String::from_utf8_lossy(&bytes).into_owned())
+        None
     }
     #[cfg(target_os = "macos")]
     {
