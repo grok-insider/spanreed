@@ -9,7 +9,7 @@
 //!   spanreed capture serve        Fabric :18736 (/v1 grok, /xai api.x.ai).
 //!   spanreed capture serve --watchdog  Restart capture if it exits.
 //!   spanreed capture ensure       Start capture (with watchdog) if ports down.
-//!   spanreed grok-proxy [...]     Single-listener capture (compat alias).
+//!   spanreed grok-proxy [--bind]  Alias for `capture serve --grok-cli-bind`.
 //!   spanreed setup [...]          Install CLI, optional capture service, wire Grok/OpenCode.
 //!   spanreed auth copilot [...]   Opt-in link a GitHub token for Copilot.
 //!   spanreed auth logout copilot  Forget the stored Copilot credential.
@@ -38,7 +38,6 @@ mod epoch;
 pub mod fabrials_login;
 mod forecast;
 mod grok_ledger;
-mod grok_proxy;
 mod history;
 pub mod hosted_client_configuration;
 mod http;
@@ -195,7 +194,7 @@ fn print_help() {
          \tspanreed auth logout copilot  Remove the stored Copilot credential\n\
          \tspanreed update-pricing [out] Fetch LiteLLM prices plus the OpenCode Go\n\
          \t                               channel from models.dev (writes to stdout, or to [out];\n\
-         \t                               used to refresh the embedded src/pricing-data.json)\n\
+         \t                               used to refresh the fabrials-metrics price snapshot)\n\
          \tspanreed share               Upload plan/quota metrics (requires X login)\n\
          \tspanreed share login         Link CLI via device code on fabrials.com\n\
          \tspanreed share logout|status Session management\n\
@@ -497,32 +496,44 @@ fn cmd_capture(args: &[String]) -> ExitCode {
                  \t spanreed capture status\n\
                  \t default fabric: {}\n\
                  \t --xai-api-bind: optional compat (e.g. {})",
-                grok_proxy::DEFAULT_GROK_CLI_BIND,
-                grok_proxy::DEFAULT_XAI_API_BIND
+                capture::DEFAULT_GROK_CLI_BIND,
+                capture::DEFAULT_XAI_API_BIND
             );
             ExitCode::FAILURE
         }
     }
 }
 
+/// Compatibility alias: `grok-proxy --bind A` is `capture serve --grok-cli-bind A`
+/// on the shared runtime. `--upstream` is no longer supported.
 fn cmd_grok_proxy(args: &[String]) -> ExitCode {
-    let bind = args
-        .iter()
-        .position(|a| a == "--bind")
-        .and_then(|i| args.get(i + 1))
-        .map(String::as_str);
-    let upstream = args
-        .iter()
-        .position(|a| a == "--upstream")
-        .and_then(|i| args.get(i + 1))
-        .map(String::as_str);
-    match grok_proxy::run(bind, upstream) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("grok-proxy error: {e}");
+    match grok_proxy_serve_args(args) {
+        Ok(serve) => cmd_capture(&serve),
+        Err(error) => {
+            eprintln!("grok-proxy: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn grok_proxy_serve_args(args: &[String]) -> Result<Vec<String>, String> {
+    let mut serve = vec!["serve".to_string()];
+    let mut args = args.iter();
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--bind" => {
+                let address = args.next().ok_or("--bind needs HOST:PORT")?;
+                serve.push("--grok-cli-bind".into());
+                serve.push(address.clone());
+            }
+            other => {
+                return Err(format!(
+                    "unsupported option {other}; use `spanreed capture serve`"
+                ))
+            }
+        }
+    }
+    Ok(serve)
 }
 
 pub mod notifications;
@@ -531,3 +542,35 @@ pub mod desktop_runtime;
 
 #[cfg(feature = "contracts")]
 pub mod desktop_contracts;
+
+#[cfg(test)]
+mod grok_proxy_alias_tests {
+    use super::grok_proxy_serve_args;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn bind_becomes_the_capture_fabric_bind() {
+        assert_eq!(
+            grok_proxy_serve_args(&args(&["--bind", "127.0.0.1:19000"])).unwrap(),
+            args(&["serve", "--grok-cli-bind", "127.0.0.1:19000"])
+        );
+        assert_eq!(grok_proxy_serve_args(&[]).unwrap(), args(&["serve"]));
+    }
+
+    #[test]
+    fn the_retired_upstream_override_is_refused() {
+        assert!(grok_proxy_serve_args(&args(&["--upstream", "https://example.test"])).is_err());
+        assert!(grok_proxy_serve_args(&args(&["--bind"])).is_err());
+    }
+
+    #[test]
+    fn the_alias_options_parse_as_capture_options() {
+        let serve = grok_proxy_serve_args(&args(&["--bind", "127.0.0.1:19001"])).unwrap();
+        let options = crate::capture::Options::parse(&serve[1..]).unwrap();
+        assert_eq!(options.bind, "127.0.0.1:19001");
+        assert!(options.xai_bind.is_none());
+    }
+}

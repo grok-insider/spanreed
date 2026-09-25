@@ -4,7 +4,7 @@
 //! Pure data and HTML. The `tray` feature hosts this document in a borderless
 //! window on macOS, Windows, and Linux. Colors are the Fabrials dark/light tokens.
 
-use fabrials_core::{Availability, Freshness, ResetInventory};
+use fabrials_types::{Availability, Freshness, ResetInventory};
 
 use crate::cost::CostSummary;
 use crate::model::{MetricLine, ProgressFormat, ProviderOutput};
@@ -1268,7 +1268,7 @@ mod tests {
     use crate::cost::DayCost;
     use crate::model::MetricLine;
     use crate::usage_stats::ModelCost;
-    use fabrials_core::{Availability, Observation, ResetCredit};
+    use fabrials_types::{Availability, Observation, ResetCredit};
 
     fn output() -> ProviderOutput {
         ProviderOutput::new(

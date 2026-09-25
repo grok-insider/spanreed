@@ -1,7 +1,7 @@
 //! Local source inventory for reviewed migration. No credential material crosses IPC.
-use fabrials_core::migration::CredentialKind;
-pub use fabrials_core::migration::{MigrationCandidate, MigrationSelection};
 use fabrials_runtime::migration::credential_kind;
+use fabrials_types::migration::CredentialKind;
+pub use fabrials_types::migration::{MigrationCandidate, MigrationSelection};
 use serde_json::Value;
 pub mod session;
 
@@ -34,7 +34,7 @@ pub fn candidates() -> Result<Vec<MigrationCandidate>, String> {
 /// Intentionally not exposed as a renderer command.
 pub fn prepare_transfer(
     source_environment: &str,
-    review: &fabrials_core::migration::MigrationReview,
+    review: &fabrials_types::migration::MigrationReview,
 ) -> Result<Vec<fabrials_accounts::transfer::ApiKeyTransfer>, String> {
     let vault = crate::accounts::lock_vault()?;
     let registry = vault.registry()?;
@@ -47,12 +47,12 @@ pub fn prepare_transfer(
 }
 fn prepare_from_registry(
     source_environment: &str,
-    review: &fabrials_core::migration::MigrationReview,
+    review: &fabrials_types::migration::MigrationReview,
     registry: &crate::accounts::Registry,
     read: &impl Fn(&str, &str) -> Result<Option<Value>, String>,
 ) -> Result<Vec<fabrials_accounts::transfer::ApiKeyTransfer>, String> {
     use fabrials_accounts::transfer::{ApiKey, ApiKeyTransfer};
-    use fabrials_core::migration::MigrationAction;
+    use fabrials_types::migration::MigrationAction;
     if source_environment.is_empty() || review.source_environment != source_environment {
         return Err("Migration source environment changed".into());
     }
@@ -95,10 +95,10 @@ mod tests {
     use super::*;
     #[test]
     fn source_preparation_skips_oauth_and_refuses_replaced_keys() {
-        use fabrials_core::migration::{MigrationAction, MigrationItem, MigrationReview};
+        use fabrials_types::migration::{MigrationAction, MigrationItem, MigrationReview};
         let mut registry = crate::accounts::Registry::default();
-        let api = crate::accounts::Account::new("nous", "api").unwrap();
-        let oauth = crate::accounts::Account::new("grok", "oauth").unwrap();
+        let api = crate::accounts::new_account("nous", "api").unwrap();
+        let oauth = crate::accounts::new_account("grok", "oauth").unwrap();
         let review = MigrationReview {
             source_environment: "local".into(),
             destination_environment: "hosted".into(),

@@ -22,8 +22,6 @@ mod wire_opencode;
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
 
-use crate::grok_proxy;
-
 pub use paths::install_bin_path;
 
 /// Re-export for `main` capture ensure/status without exposing the whole module tree.
@@ -127,7 +125,7 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
             flags.service,
             Some(format!(
                 "fabric {}  /v1 grok  /xai api.x.ai  /acct/ID",
-                grok_proxy::DEFAULT_GROK_CLI_BIND
+                crate::capture::DEFAULT_GROK_CLI_BIND
             )),
         );
         let do_tray = prompt_yn(
@@ -543,9 +541,9 @@ fn print_status() -> ExitCode {
          \t/v1        → {}  (SuperGrok inject)\n\
          \t/xai/v1    → {}  (client token)\n\
          \t/acct/ID/… → same, pinned account",
-        grok_proxy::DEFAULT_GROK_CLI_BIND,
-        grok_proxy::UPSTREAM_GROK_CLI,
-        grok_proxy::UPSTREAM_XAI_API,
+        crate::capture::DEFAULT_GROK_CLI_BIND,
+        fabrials_types::endpoints::UPSTREAM_GROK_CLI,
+        fabrials_types::endpoints::UPSTREAM_XAI_API,
     );
 
     if (grok_wired || oc_wired) && !ports_up {

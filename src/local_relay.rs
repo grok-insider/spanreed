@@ -1,8 +1,7 @@
 //! Local composition root for the public Fabrials proxy runtime.
-use fabrials_core::hop::{HopKind, Transport};
-use fabrials_runtime::{
-    accounting, forward, http, listener, provider::Provider, routes, upstreams,
-};
+use fabrials_runtime::{accounting, forward, http, listener, provider::Provider, routes};
+use fabrials_types::hop::{HopKind, Transport};
+use fabrials_upstreams as upstreams;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
@@ -465,7 +464,7 @@ impl forward::HopObserver for LocalUsage {
     fn log(&self, message: &str) {
         crate::capture_log::append(message);
     }
-    fn record(&self, record: fabrials_model::UsageRecord) {
+    fn record(&self, record: fabrials_types::HopRecord) {
         static LEDGER: Mutex<()> = Mutex::new(());
         let _guard = LEDGER.lock().unwrap_or_else(|e| e.into_inner());
         if crate::grok_ledger::append(&record).is_err() {
@@ -480,10 +479,10 @@ mod tests {
     use listener::ConnectionHost;
     use std::io::{Read, Write};
 
-    struct TestUsage(Mutex<Vec<fabrials_model::UsageRecord>>);
+    struct TestUsage(Mutex<Vec<fabrials_types::HopRecord>>);
     impl forward::HopObserver for TestUsage {
         fn log(&self, _: &str) {}
-        fn record(&self, record: fabrials_model::UsageRecord) {
+        fn record(&self, record: fabrials_types::HopRecord) {
             self.0.lock().unwrap().push(record);
         }
     }

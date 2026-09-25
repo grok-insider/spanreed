@@ -24,13 +24,13 @@ fn probe(account: &accounts::Account) -> Result<ProviderOutput, String> {
         .and_then(|value| {
             fabrials_providers::codex::parse_resets(&value, now).map_err(str::to_owned)
         });
-    output.reset_inventory = Some(fabrials_core::Observation {
+    output.reset_inventory = Some(fabrials_types::Observation {
         availability: if resets.is_ok() {
-            fabrials_core::Availability::Available
+            fabrials_types::Availability::Available
         } else {
-            fabrials_core::Availability::Unavailable
+            fabrials_types::Availability::Unavailable
         },
-        freshness: fabrials_core::Freshness::Fresh,
+        freshness: fabrials_types::Freshness::Fresh,
         observed_at_ms: Some(now),
         source: "codex-reset-inventory".into(),
         value: resets.as_ref().ok().cloned(),

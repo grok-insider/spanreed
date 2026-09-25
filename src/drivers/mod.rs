@@ -239,16 +239,15 @@ pub fn account_help() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::accounts::Account;
 
     #[test]
     fn ls_table_aligns_premium_plus() {
-        let mut a = Account::new("grok", "premium-plus-1").unwrap();
+        let mut a = crate::accounts::new_account("grok", "premium-plus-1").unwrap();
         a.plan_label = Some("X Premium+".into());
         a.used_pct = Some(0.0);
         a.billing_interval = Some("month".into());
         a.renews_at = Some("2026-09-16T00:00:00Z".into());
-        let mut b = Account::new("grok", "heavy-1").unwrap();
+        let mut b = crate::accounts::new_account("grok", "heavy-1").unwrap();
         b.active = true;
         b.plan_label = Some("SuperGrok Heavy".into());
         b.used_pct = Some(22.0);

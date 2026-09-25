@@ -1,7 +1,7 @@
 use crate::{accounts, util};
 use fabrials_runtime::credential_journal::{Recovery, Rotation, Scope};
 
-type PendingQueue = fabrials_core::recovery::RecoveryQueue<String, serde_json::Value>;
+type PendingQueue = fabrials_types::recovery::RecoveryQueue<String, serde_json::Value>;
 
 pub fn token(provider: &str, alias: &str) -> Result<String, String> {
     let vault = accounts::lock_vault()?;
@@ -118,7 +118,7 @@ fn token_with_recovery(
                 .ok_or("Provider expiry missing")?;
             queue.insert(
                 key.clone(),
-                fabrials_core::recovery::PendingCredential {
+                fabrials_types::recovery::PendingCredential {
                     expected: document,
                     replacement,
                     expires_at_ms: expiry,

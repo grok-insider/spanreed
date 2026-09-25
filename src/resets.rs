@@ -1,6 +1,6 @@
 use crate::http::Request;
 use crate::model::{MetricKind, MetricLine};
-use fabrials_core::{Availability, Freshness, Observation, ResetInventory};
+use fabrials_types::{Availability, Freshness, Observation, ResetInventory};
 
 fn observation(
     source: &str,

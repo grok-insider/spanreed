@@ -3,19 +3,23 @@ pub mod connections;
 pub mod discovery;
 mod importer;
 
-use fabrials_core::usage::{CostOrigin, SourceStatus, UsageCost, UsageFilter, UsageRecord};
 use fabrials_runtime::local_usage::UsageStore;
+use fabrials_types::consumption::{
+    ConsumptionRecord, CostOrigin, SourceStatus, UsageCost, UsageFilter,
+};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-pub use fabrials_core::usage::{ConsumptionReport as UsageReport, ConsumptionTotal as UsageTotal};
+pub use fabrials_types::consumption::{
+    ConsumptionReport as UsageReport, ConsumptionTotal as UsageTotal,
+};
 
 pub fn refresh(client: Option<&str>, force: bool) -> Result<Vec<SourceStatus>, String> {
     importer::refresh(client, force)
 }
 
-pub fn records(filter: &UsageFilter) -> Result<Vec<UsageRecord>, String> {
+pub fn records(filter: &UsageFilter) -> Result<Vec<ConsumptionRecord>, String> {
     let store = UsageStore::open(&crate::history::history_path())?;
     let mut records = store.records(filter)?;
     for record in &mut records {
@@ -54,7 +58,7 @@ pub fn records(filter: &UsageFilter) -> Result<Vec<UsageRecord>, String> {
     Ok(records)
 }
 
-fn accumulate(total: &mut UsageTotal, record: &UsageRecord) {
+fn accumulate(total: &mut UsageTotal, record: &ConsumptionRecord) {
     total.records += 1;
     if record.tokens.is_none() {
         total.unknown_token_records += 1;
@@ -69,7 +73,10 @@ fn accumulate(total: &mut UsageTotal, record: &UsageRecord) {
     }
 }
 
-fn group(records: &[UsageRecord], key: impl Fn(&UsageRecord) -> String) -> Vec<UsageTotal> {
+fn group(
+    records: &[ConsumptionRecord],
+    key: impl Fn(&ConsumptionRecord) -> String,
+) -> Vec<UsageTotal> {
     let mut groups = BTreeMap::<String, UsageTotal>::new();
     for record in records {
         let key = key(record);
@@ -101,20 +108,20 @@ pub fn report(mut filter: UsageFilter, force: bool) -> Result<UsageReport, Strin
     total.partial |= sources.iter().any(|source| {
         matches!(
             source.state,
-            fabrials_core::usage::ImportState::Error
-                | fabrials_core::usage::ImportState::Partial
-                | fabrials_core::usage::ImportState::UnsupportedFormat
+            fabrials_types::consumption::ImportState::Error
+                | fabrials_types::consumption::ImportState::Partial
+                | fabrials_types::consumption::ImportState::UnsupportedFormat
         ) || (explicitly_selected
             && matches!(
                 source.state,
-                fabrials_core::usage::ImportState::NoData
-                    | fabrials_core::usage::ImportState::NeedsConnection
+                fabrials_types::consumption::ImportState::NoData
+                    | fabrials_types::consumption::ImportState::NeedsConnection
             ))
     });
     // Session/account summaries cannot be allocated to individual days faithfully.
     let (daily_records, period_records): (Vec<_>, Vec<_>) =
         records.iter().cloned().partition(|record| {
-            record.granularity == fabrials_core::usage::Granularity::Request
+            record.granularity == fabrials_types::consumption::Granularity::Request
                 && !record.timestamp_inferred
         });
     let unknown = || "Unknown".to_string();

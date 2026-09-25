@@ -1,7 +1,7 @@
 //! Opt-in, selected-source private synchronization across compatible providers.
 use crate::remote_workspace::{request_for_subject, RemoteOperation};
-use fabrials_model::private_sync::{PrivateEvent, PrivateObservation, PrivatePage, PrivatePush};
 use fabrials_runtime::credential_journal::{Rotation, Scope};
+use fabrials_types::private_sync::{PrivateEvent, PrivateObservation, PrivatePage, PrivatePush};
 use serde::{Deserialize, Serialize};
 
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
@@ -48,7 +48,7 @@ fn cached_owner() -> Option<String> {
 }
 pub fn recent(
     before: Option<i64>,
-) -> Result<fabrials_model::private_sync::PrivateRecentPage, String> {
+) -> Result<fabrials_types::private_sync::PrivateRecentPage, String> {
     if before.is_some_and(|value| value <= 0) {
         return Err("Invalid private history cursor".into());
     }
@@ -353,7 +353,7 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
     {
         let remote =
             request_for_subject(RemoteOperation::Consumption, serde_json::json!({}), &owner)?;
-        let snapshots: Vec<fabrials_model::private_sync::LocalUsageSnapshotV2> =
+        let snapshots: Vec<fabrials_types::private_sync::LocalUsageSnapshotV2> =
             serde_json::from_value(remote["snapshots"].clone())
                 .map_err(|_| "Invalid synchronized consumption response")?;
         for client in fabrials_providers::usage::catalog::clients() {
@@ -361,7 +361,7 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
                 continue;
             }
             let report = crate::usage::report(
-                fabrials_core::usage::UsageFilter {
+                fabrials_types::consumption::UsageFilter {
                     client: Some(client.id.clone()),
                     ..Default::default()
                 },
@@ -370,14 +370,14 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
             let days: Vec<_> = report
                 .daily
                 .into_iter()
-                .map(|day| fabrials_model::private_sync::LocalUsageDay {
+                .map(|day| fabrials_types::private_sync::LocalUsageDay {
                     date: day.key,
                     tokens: day.tokens,
                     estimated_usd: day.known_usd,
                 })
                 .collect();
             let period_totals = (!report.period_totals.is_empty()).then(|| {
-                fabrials_model::private_sync::LocalUsageAggregate {
+                fabrials_types::private_sync::LocalUsageAggregate {
                     tokens: report
                         .period_totals
                         .iter()
@@ -418,7 +418,7 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
                         .max()
                         .unwrap_or(0),
                 )?;
-            let snapshot = fabrials_model::private_sync::LocalUsageSnapshotV2 {
+            let snapshot = fabrials_types::private_sync::LocalUsageSnapshotV2 {
                 device: device.clone(),
                 source: client.id.clone(),
                 revision,
@@ -452,7 +452,7 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
                 continue;
             }
             if let Some(summary) = crate::cost::estimate(kind) {
-                let snapshot = fabrials_model::private_sync::LocalUsageSnapshot {
+                let snapshot = fabrials_types::private_sync::LocalUsageSnapshot {
                     device: device.clone(),
                     source: source.into(),
                     observed_at_ms: crate::util::now_ms(),
@@ -460,7 +460,7 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
                     days: summary
                         .daily
                         .into_iter()
-                        .map(|day| fabrials_model::private_sync::LocalUsageDay {
+                        .map(|day| fabrials_types::private_sync::LocalUsageDay {
                             date: day.date,
                             tokens: day.tokens,
                             estimated_usd: day.cost,
@@ -498,13 +498,13 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
 /// At most this many model rows travel with one snapshot. The rest fold into
 /// `other` so a noisy client cannot blow the sync body limit.
 fn model_totals(
-    models: &[fabrials_core::usage::ConsumptionTotal],
-) -> Vec<fabrials_model::private_sync::LocalUsageModel> {
+    models: &[fabrials_types::consumption::ConsumptionTotal],
+) -> Vec<fabrials_types::private_sync::LocalUsageModel> {
     const LIMIT: usize = 32;
     let mut rows: Vec<_> = models
         .iter()
         .filter(|row| model_id(&row.key))
-        .map(|row| fabrials_model::private_sync::LocalUsageModel {
+        .map(|row| fabrials_types::private_sync::LocalUsageModel {
             model: row.key.clone(),
             requests: row.records,
             tokens: row.tokens,
@@ -527,7 +527,7 @@ fn model_totals(
         return rows;
     }
     let rest = rows.split_off(LIMIT - 1);
-    let mut folded = fabrials_model::private_sync::LocalUsageModel {
+    let mut folded = fabrials_types::private_sync::LocalUsageModel {
         model: "other".into(),
         requests: 0,
         tokens: 0,
@@ -576,7 +576,7 @@ pub fn link_codex() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_core::usage::ConsumptionTotal;
+    use fabrials_types::consumption::ConsumptionTotal;
 
     fn total(key: &str, tokens: u64) -> ConsumptionTotal {
         ConsumptionTotal {

@@ -1,6 +1,6 @@
 //! Host-owned credentials and bounded, read-only remote consumption collection.
-use fabrials_core::usage::ImportCheckpoint;
 use fabrials_runtime::local_usage::{ImportBatch, UsageStore};
+use fabrials_types::consumption::ImportCheckpoint;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

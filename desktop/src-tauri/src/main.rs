@@ -182,7 +182,7 @@ async fn connect_usage_source(connection:spanreed::usage::connections::Connectio
 }
 
 #[tauri::command]
-async fn usage_report(filter: fabrials_core::usage::UsageFilter, force: bool) -> Result<serde_json::Value, String> {
+async fn usage_report(filter: fabrials_types::consumption::UsageFilter, force: bool) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         serde_json::to_value(spanreed::usage::report(filter,force)?).map_err(|e|e.to_string())
     }).await.map_err(|_|"Usage worker stopped".to_string())?
@@ -218,9 +218,9 @@ async fn accounts() -> Result<spanreed::desktop::AccountsView, String> {
         .await.map_err(|_| "Account worker stopped".to_string())?
 }
 #[tauri::command]
-fn privacy() -> fabrials_core::SharingConsent { spanreed::privacy::load() }
+fn privacy() -> fabrials_types::SharingConsent { spanreed::privacy::load() }
 #[tauri::command]
-fn set_privacy(consent: fabrials_core::SharingConsent) -> Result<(), String> { spanreed::privacy::save(&consent) }
+fn set_privacy(consent: fabrials_types::SharingConsent) -> Result<(), String> { spanreed::privacy::save(&consent) }
 #[tauri::command]
 async fn activate_account(id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || spanreed::accounts::set_active(&id).map(|_| ()))

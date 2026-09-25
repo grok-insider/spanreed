@@ -4,6 +4,11 @@ use fabrials_runtime::listener::{self, ConnectionHost};
 use std::net::SocketAddr;
 use std::sync::{atomic::AtomicBool, Arc};
 
+/// Default capture fabric listener (Grok Build and xAI clients point here).
+pub const DEFAULT_GROK_CLI_BIND: &str = "127.0.0.1:18736";
+/// Optional compatibility listener that treats bare `/v1` as xAI.
+pub const DEFAULT_XAI_API_BIND: &str = "127.0.0.1:18737";
+
 pub struct Options {
     pub bind: String,
     pub xai_bind: Option<String>,
@@ -13,7 +18,7 @@ pub struct Options {
 impl Options {
     pub fn parse(args: &[String]) -> Result<Self, String> {
         let mut options = Self {
-            bind: crate::grok_proxy::DEFAULT_GROK_CLI_BIND.into(),
+            bind: DEFAULT_GROK_CLI_BIND.into(),
             xai_bind: None,
             watchdog: false,
         };

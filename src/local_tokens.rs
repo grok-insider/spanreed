@@ -1,12 +1,12 @@
 //! Local Grok credential access with complete-document rotation recovery.
-use fabrials_core::recovery::{PendingCredential, RecoveryQueue};
 use fabrials_runtime::credential_journal::{Recovery, Rotation, Scope};
+use fabrials_types::recovery::{PendingCredential, RecoveryQueue};
 use serde_json::Value;
 use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 
 struct FormHttp;
-impl fabrials_oauth_grok::TokenHttp for FormHttp {
+impl fabrials_providers::grok_cli::TokenHttp for FormHttp {
     fn post_form(&self, url: &str, body: &str) -> Result<(u16, String), String> {
         let response = crate::http::Request::post(url)
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -130,7 +130,7 @@ pub fn grok(alias: Option<&str>) -> Result<Option<String>, String> {
             }
         }
         let expected = document.clone();
-        let token = fabrials_oauth_grok::ensure_access_token(
+        let token = fabrials_providers::grok_cli::ensure_access_token(
             &mut document,
             crate::util::now_ms(),
             &JournaledHttp {
@@ -166,7 +166,7 @@ pub fn grok(alias: Option<&str>) -> Result<Option<String>, String> {
 }
 
 fn offline_token(document: &Value) -> Option<String> {
-    fabrials_oauth_grok::ensure_access_token(
+    fabrials_providers::grok_cli::ensure_access_token(
         &mut document.clone(),
         crate::util::now_ms(),
         &OfflineHttp,
@@ -176,15 +176,15 @@ struct JournaledHttp<'a> {
     journal: &'a Rotation,
     expected: &'a Value,
 }
-impl fabrials_oauth_grok::TokenHttp for JournaledHttp<'_> {
+impl fabrials_providers::grok_cli::TokenHttp for JournaledHttp<'_> {
     fn post_form(&self, url: &str, body: &str) -> Result<(u16, String), String> {
         self.journal.begin(self.expected)?;
-        fabrials_oauth_grok::TokenHttp::post_form(&FormHttp, url, body)
+        fabrials_providers::grok_cli::TokenHttp::post_form(&FormHttp, url, body)
     }
 }
 
 struct OfflineHttp;
-impl fabrials_oauth_grok::TokenHttp for OfflineHttp {
+impl fabrials_providers::grok_cli::TokenHttp for OfflineHttp {
     fn post_form(&self, _: &str, _: &str) -> Result<(u16, String), String> {
         Err("Persistence retry only".into())
     }

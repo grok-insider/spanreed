@@ -14,7 +14,7 @@ name = "spanreed"
 path = "src/main.rs"
 
 [features]
-contracts = ["fabrials-model/contracts", "fabrials-providers/contracts", "dep:ts-rs"]
+contracts = ["fabrials-types/contracts", "fabrials-providers/contracts", "dep:ts-rs"]
 default = []
 # System tray companion (Windows/macOS primary; Linux needs a SNI host).
 # Release desktop builds pass `--features tray`. Linux musl stays without tray
@@ -25,11 +25,10 @@ tray = ["dep:tray-icon", "dep:tao", "dep:image", "dep:wry", "dep:gtk"]
 ts-rs = { version = "12.0.1", optional = true }
 fabrials-runtime = { path = "vendor/fabrials-libs/crates/fabrials-runtime" }
 fabrials-providers = { path = "vendor/fabrials-libs/crates/fabrials-providers" }
-fabrials-core = { path = "vendor/fabrials-libs/crates/fabrials-core" }
-fabrials-model = { path = "vendor/fabrials-libs/crates/fabrials-model" }
+fabrials-types = { path = "vendor/fabrials-libs/crates/fabrials-types" }
+fabrials-upstreams = { path = "vendor/fabrials-libs/crates/fabrials-upstreams" }
 fabrials-metrics = { path = "vendor/fabrials-libs/crates/fabrials-metrics" }
 fabrials-accounts = { path = "vendor/fabrials-libs/crates/fabrials-accounts" }
-fabrials-oauth-grok = { path = "vendor/fabrials-libs/crates/fabrials-oauth-grok" }
 fabrials-share = { path = "vendor/fabrials-libs/crates/fabrials-share" }
 reqwest = { version = "0.12", features = ["blocking", "json", "socks", "rustls-tls"], default-features = false }
 rusqlite = { version = "0.32", features = ["bundled"] }

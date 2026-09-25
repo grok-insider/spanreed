@@ -1,4 +1,4 @@
-use fabrials_core::usage::{ImportCheckpoint, UsageParser};
+use fabrials_types::consumption::{ImportCheckpoint, UsageParser};
 fn main() {
     for path in std::env::args().skip(1) {
         let bytes = std::fs::read(&path).unwrap();
@@ -7,7 +7,7 @@ fn main() {
             .unwrap();
         let reference =
             fabrials_providers::usage::files::read("codex", std::path::Path::new(&path)).unwrap();
-        let sum = |records: &[fabrials_core::usage::UsageRecord]| {
+        let sum = |records: &[fabrials_types::consumption::ConsumptionRecord]| {
             records
                 .iter()
                 .map(|r| r.tokens.as_ref().map_or(0, |t| t.total()))

@@ -99,7 +99,7 @@ fn merge(
                             "Last known reading · provider refresh failed",
                         ));
                         if let Some(observation) = &mut retained.reset_inventory {
-                            observation.freshness = fabrials_core::Freshness::Stale;
+                            observation.freshness = fabrials_types::Freshness::Stale;
                             observation.error = Some("Provider refresh failed".into());
                         }
                         retained

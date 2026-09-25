@@ -1158,36 +1158,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "fabrials-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "fabrials-metrics"
 version = "0.2.0"
 dependencies = [
- "fabrials-model",
+ "fabrials-types",
  "serde",
- "serde_json",
-]
-
-[[package]]
-name = "fabrials-model"
-version = "0.2.0"
-dependencies = [
- "fabrials-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "fabrials-oauth-grok"
-version = "0.1.2"
-dependencies = [
- "base64 0.22.1",
  "serde_json",
 ]
 
@@ -1199,8 +1174,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dirs 5.0.1",
- "fabrials-core",
- "fabrials-model",
+ "fabrials-types",
  "iana-time-zone",
  "memchr",
  "once_cell",
@@ -1221,10 +1195,8 @@ name = "fabrials-runtime"
 version = "0.1.0"
 dependencies = [
  "fabrials-accounts",
- "fabrials-core",
  "fabrials-metrics",
- "fabrials-model",
- "fabrials-oauth-grok",
+ "fabrials-types",
  "fs2",
  "futures-util",
  "getrandom 0.2.17",
@@ -1246,8 +1218,32 @@ name = "fabrials-share"
 version = "0.2.0"
 dependencies = [
  "fabrials-metrics",
- "fabrials-model",
+ "fabrials-types",
  "serde_json",
+]
+
+[[package]]
+name = "fabrials-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fabrials-upstreams"
+version = "0.1.0"
+dependencies = [
+ "fabrials-metrics",
+ "fabrials-providers",
+ "fabrials-runtime",
+ "fabrials-types",
+ "futures-util",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]
@@ -4016,13 +4012,12 @@ dependencies = [
  "dirs 5.0.1",
  "env_logger",
  "fabrials-accounts",
- "fabrials-core",
  "fabrials-metrics",
- "fabrials-model",
- "fabrials-oauth-grok",
  "fabrials-providers",
  "fabrials-runtime",
  "fabrials-share",
+ "fabrials-types",
+ "fabrials-upstreams",
  "flate2",
  "getrandom 0.2.17",
  "jsonc-parser",
@@ -4046,7 +4041,7 @@ dependencies = [
 name = "spanreed-desktop"
 version = "0.6.1"
 dependencies = [
- "fabrials-core",
+ "fabrials-types",
  "serde_json",
  "spanreed",
  "tauri",

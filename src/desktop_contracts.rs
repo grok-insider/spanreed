@@ -9,11 +9,11 @@ pub fn typescript() -> String {
         crate::codex_session_move::SessionMoveView::decl(&config),
         crate::hosted_client_configuration::HostedClientReview::decl(&config),
         crate::sync::SyncStatus::decl(&config),
-        fabrials_model::private_sync::PrivateEvent::decl(&config),
-        fabrials_model::private_sync::PrivateObservation::decl(&config),
-        fabrials_model::private_sync::PrivateStoredObservation::decl(&config),
-        fabrials_model::private_sync::PrivatePage::decl(&config),
-        fabrials_model::private_sync::PrivateRecentPage::decl(&config),
+        fabrials_types::private_sync::PrivateEvent::decl(&config),
+        fabrials_types::private_sync::PrivateObservation::decl(&config),
+        fabrials_types::private_sync::PrivateStoredObservation::decl(&config),
+        fabrials_types::private_sync::PrivatePage::decl(&config),
+        fabrials_types::private_sync::PrivateRecentPage::decl(&config),
         crate::remote_workspace::RemoteOperation::decl(&config),
         crate::fabrials_login::FabrialsIdentity::decl(&config),
         crate::fabrials_login::LinkView::decl(&config),
@@ -46,15 +46,11 @@ pub fn typescript() -> String {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn shared_model_contracts_match_both_checked_in_copies() {
-        let generated = fabrials_model::contracts::typescript();
+    fn shared_type_contracts_match_the_checked_in_bindings() {
+        let generated = fabrials_types::contracts::typescript();
         assert_eq!(
             generated,
-            include_str!("../desktop/vendor/fabrials-ui/src/contracts.ts")
-        );
-        assert_eq!(
-            generated,
-            include_str!("../vendor/fabrials-libs/crates/fabrials-model/bindings/contracts.ts")
+            include_str!("../vendor/fabrials-libs/crates/fabrials-types/bindings/contracts.ts")
         );
     }
 

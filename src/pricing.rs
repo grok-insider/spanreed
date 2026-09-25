@@ -1,218 +1,56 @@
-//! Model pricing for local-log cost estimation.
+//! Model pricing for local-log and hop cost estimation.
 //!
-//! The table is built from three layers (later layers win):
-//! 1. An embedded, filtered snapshot of LiteLLM's
-//!    `model_prices_and_context_window.json` (compile-time, offline fallback —
-//!    Nix-sandbox friendly).
-//! 2. A runtime-refreshed copy of the same upstream data plus the channels
-//!    that upstream does not price (models.dev: OpenCode Go), filtered to the
-//!    relevant model families and cached at
-//!    `~/.cache/spanreed/pricing-remote.json` with a 7-day TTL, so newly
-//!    released models get priced without a new binary. The same refresh writes
-//!    context windows to `~/.cache/spanreed/limits-remote.json`. Set
-//!    `SPANREED_OFFLINE` to disable the refresh entirely.
-//! 3. The user's `~/.config/spanreed/pricing.json` override
-//!    (same shape: `{ "<model>": { input_cost_per_token, ... } }`).
+//! The engine, the embedded snapshot and the published list-price overlays
+//! live in `fabrials-metrics`. This host module supplies the other layers
+//! (later wins):
+//! 1. the runtime-refreshed LiteLLM + models.dev tables cached at
+//!    `~/.cache/spanreed/pricing-remote.json` (prices) and
+//!    `~/.cache/spanreed/limits-remote.json` (context windows), refreshed at
+//!    most weekly; `SPANREED_OFFLINE` disables the refresh;
+//! 2. the user's `~/.config/spanreed/pricing.json` override
+//!    (`{ "<model>": { input_cost_per_token, ... } }`).
 //!
-//! Prices are USD per token. Cache-write/read and a >200k-context tier are
-//! supported, mirroring how the upstream pricing data is structured. The two
-//! upstream filters live in `fabrials-metrics`: they are the same table shape
-//! the alojado relay reads, so both products price a model identically.
-//! This module keeps its own strict resolver (see [`PricingMap::exact_cost`])
-//! because local logs must stay unpriced when a cache rate is unknown.
+//! Local logs use the strict resolver (`PricingMap::exact_cost`), which never
+//! invents a cache rate the source omitted.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
-use fabrials_metrics::{
-    build_limits, filter_models_dev, filter_upstream, merge_price_tables, models_dev_prices,
-    normalize, LimitsMap,
-};
+pub use fabrials_metrics::pricing::{PricingMap, Usage};
+use fabrials_metrics::{build_limits, compose_upstream, LimitsMap, UpstreamTables};
 
 use crate::creds;
 use crate::http::Request;
-
-const EMBEDDED: &str = include_str!("pricing-data.json");
 
 /// Upstream source of truth for model prices.
 const REMOTE_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 /// Upstream source for the channels LiteLLM does not price.
 const CHANNELS_URL: &str = "https://models.dev/api.json";
-/// Channels spanreed routes through but LiteLLM does not carry.
-const CHANNELS: &[&str] = &["opencode-go"];
-/// Local ids that alias a channel model. The relay picker uses the first.
-const ALIASES: &[(&str, &str)] = &[("deepseek-flash", "deepseek-v4.1-flash")];
 /// Refresh the cached remote table at most this often.
 const REMOTE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// After a failed refresh, wait this long before trying again.
 const REMOTE_RETRY: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// Raw LiteLLM-shaped entry (only the fields we use).
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct RawPricing {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    input_cost_per_token: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    output_cost_per_token: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cache_creation_input_token_cost: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cache_read_input_token_cost: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    input_cost_per_token_above_200k_tokens: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    output_cost_per_token_above_200k_tokens: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cache_creation_input_token_cost_above_200k_tokens: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cache_read_input_token_cost_above_200k_tokens: Option<f64>,
-}
-
-/// Resolved per-token prices for a model.
-#[derive(Debug, Clone, Copy)]
-pub struct Pricing {
-    pub input: f64,
-    pub output: f64,
-    pub cache_create: f64,
-    pub cache_read: f64,
-    pub cache_create_known: bool,
-    pub cache_read_known: bool,
-    pub input_above_200k: Option<f64>,
-    pub output_above_200k: Option<f64>,
-    pub cache_create_above_200k: Option<f64>,
-    pub cache_read_above_200k: Option<f64>,
-}
-
-impl Pricing {
-    fn from_raw(r: &RawPricing) -> Option<Self> {
-        let input = r.input_cost_per_token?;
-        let output = r.output_cost_per_token?;
-        Some(Pricing {
-            input,
-            output,
-            cache_create: r.cache_creation_input_token_cost.unwrap_or(0.0),
-            cache_read: r.cache_read_input_token_cost.unwrap_or(0.0),
-            cache_create_known: r.cache_creation_input_token_cost.is_some(),
-            cache_read_known: r.cache_read_input_token_cost.is_some(),
-            input_above_200k: r.input_cost_per_token_above_200k_tokens,
-            output_above_200k: r.output_cost_per_token_above_200k_tokens,
-            cache_create_above_200k: r.cache_creation_input_token_cost_above_200k_tokens,
-            cache_read_above_200k: r.cache_read_input_token_cost_above_200k_tokens,
-        })
-    }
-}
-
-/// Token usage for a single message (raw counts).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Usage {
-    pub input: u64,
-    pub output: u64,
-    pub cache_create: u64,
-    pub cache_read: u64,
-}
-
-impl Usage {
-    pub fn total(&self) -> u64 {
-        self.input + self.output + self.cache_create + self.cache_read
-    }
-}
-
-/// The resolved pricing table, built once from embedded + user override.
-pub struct PricingMap {
-    table: HashMap<String, Pricing>,
-}
-
-impl PricingMap {
-    /// Resolve an exact normalized model. Unknown variants stay unpriced.
-    pub fn exact(&self, model: &str) -> Option<&Pricing> {
-        self.table
-            .get(model)
-            .or_else(|| self.table.get(&normalize(model)))
-    }
-
-    pub fn exact_cost(&self, model: &str, usage: Usage) -> Option<(f64, &Pricing)> {
-        let p = self.exact(model)?;
-        if usage.cache_create > 0 && !p.cache_create_known
-            || usage.cache_read > 0 && !p.cache_read_known
-        {
-            return None;
-        }
-        let cost = tiered(usage.input, p.input, p.input_above_200k)
-            + tiered(usage.output, p.output, p.output_above_200k)
-            + tiered(
-                usage.cache_create,
-                p.cache_create,
-                p.cache_create_above_200k,
-            )
-            + tiered(usage.cache_read, p.cache_read, p.cache_read_above_200k);
-        (cost.is_finite() && cost >= 0.0).then_some((cost, p))
-    }
-}
-
-/// Tiered pricing: tokens beyond 200k use the higher rate when present.
-fn tiered(tokens: u64, base: f64, above_200k: Option<f64>) -> f64 {
-    const TIER: u64 = 200_000;
-    match above_200k {
-        Some(high) if tokens > TIER => (TIER as f64) * base + ((tokens - TIER) as f64) * high,
-        _ => (tokens as f64) * base,
-    }
-}
-
-fn parse_table(json: &str) -> HashMap<String, Pricing> {
-    let raw: HashMap<String, RawPricing> = serde_json::from_str(json).unwrap_or_default();
-    raw.iter()
-        .filter_map(|(k, v)| Pricing::from_raw(v).map(|p| (k.clone(), p)))
-        .collect()
-}
-
-/// Build the table from its layers; later layers override earlier ones.
-fn build_table(embedded: &str, remote: Option<&str>, user: Option<&str>) -> PricingMap {
-    let mut table = parse_table(embedded);
-    for layer in [remote, user].into_iter().flatten() {
-        for (k, p) in parse_table(layer) {
-            table.insert(k, p);
-        }
-    }
-    PricingMap { table }
-}
-
-/// The process-wide pricing table: embedded snapshot, overlaid with the cached
-/// remote refresh, overlaid with the user's `~/.config/spanreed/pricing.json`.
+/// The process-wide price table: the shared embedded snapshot and overlays,
+/// the cached remote refresh, then the user's override.
 pub fn table() -> &'static PricingMap {
     static TABLE: OnceLock<PricingMap> = OnceLock::new();
     TABLE.get_or_init(|| {
         let remote = creds::read_file(&remote_cache_path());
-        let override_path = crate::app::config_dir().join("pricing.json");
-        let user = creds::read_file(&override_path);
-        build_table(EMBEDDED, remote.as_deref(), user.as_deref())
-    })
-}
-
-/// Hop pricing (Grok and relay hops) with the same layers as [`table`]: the
-/// shared embedded snapshot, the cached remote refresh and the user override.
-pub fn hop_table() -> &'static fabrials_metrics::pricing::PricingMap {
-    static TABLE: OnceLock<fabrials_metrics::pricing::PricingMap> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let remote = creds::read_file(&remote_cache_path());
         let user = creds::read_file(&crate::app::config_dir().join("pricing.json"));
-        hop_table_from(remote.as_deref(), user.as_deref())
+        table_from(remote.as_deref(), user.as_deref())
     })
 }
 
-pub fn hop_table_from(
-    remote: Option<&str>,
-    user: Option<&str>,
-) -> fabrials_metrics::pricing::PricingMap {
+pub fn table_from(remote: Option<&str>, user: Option<&str>) -> PricingMap {
     fabrials_metrics::pricing::build_table(fabrials_metrics::pricing::embedded_json(), remote, user)
 }
 
-/// List-price USD for a captured hop, priced with [`hop_table`].
-pub fn hop_cost_usd(record: &fabrials_model::UsageRecord) -> Option<f64> {
-    fabrials_metrics::cost::list_cost_usd_with(record, hop_table())
+/// List-price USD for a captured hop, priced with [`table`].
+pub fn hop_cost_usd(record: &fabrials_types::HopRecord) -> Option<f64> {
+    fabrials_metrics::cost::list_cost_usd_with(record, table())
 }
 
 fn remote_cache_path() -> PathBuf {
@@ -221,27 +59,6 @@ fn remote_cache_path() -> PathBuf {
 
 fn limits_cache_path() -> PathBuf {
     crate::app::cache_dir().join("limits-remote.json")
-}
-
-/// Prices and context windows reduced from one pair of upstream documents.
-pub struct UpstreamTables {
-    pub prices: String,
-    pub limits: String,
-}
-
-/// Reduce a LiteLLM price document and a models.dev catalog to the two tables
-/// the cache stores. LiteLLM keeps every id it prices; the channel supplies
-/// the models that document does not carry, plus their context windows.
-pub fn compose_upstream(
-    litellm_json: &str,
-    models_dev_json: &str,
-) -> Result<UpstreamTables, String> {
-    let litellm = filter_upstream(litellm_json)?;
-    let channels = models_dev_prices(models_dev_json, CHANNELS, ALIASES)?;
-    Ok(UpstreamTables {
-        prices: merge_price_tables(&[&channels, &litellm])?,
-        limits: filter_models_dev(models_dev_json, CHANNELS, ALIASES)?,
-    })
 }
 
 /// Fetch one upstream document.
@@ -326,106 +143,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_table_parses_and_has_claude_and_gpt() {
-        let t = table();
-        assert!(
-            t.exact("claude-opus-4-8").is_some(),
-            "claude-opus-4-8 priced"
-        );
-        assert!(t.exact("gpt-5-codex").is_some(), "gpt-5-codex priced");
-        assert!(t.exact("claude-fable-5").is_some(), "claude-fable-5 priced");
+    fn the_host_table_prices_claude_and_gpt_from_the_shared_snapshot() {
+        let t = table_from(None, None);
+        assert!(t.exact("claude-opus-4-8").is_some());
+        assert!(t.exact("gpt-5-codex").is_some());
+        assert!(t.exact("claude-fable-5").is_some());
     }
 
     #[test]
-    fn merged_table_prices_the_channel_litellm_does_not_carry() {
-        let litellm = serde_json::json!({
-            "claude-fable-5": {
-                "input_cost_per_token": 6e-6,
-                "output_cost_per_token": 3e-5
-            },
-            "xai/grok-4.6": {
-                "input_cost_per_token": 3e-6,
-                "output_cost_per_token": 9e-6
-            }
-        })
-        .to_string();
-        let models_dev = serde_json::json!({
-            "opencode-go": {"models": {
-                "deepseek-v4.1-flash": {
-                    "limit": {"context": 1000000, "output": 384000},
-                    "cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003}
-                },
-                "grok-4.6": {
-                    "limit": {"context": 500000},
-                    "cost": {"input": 2, "output": 6, "cache_read": 0.5}
-                },
-                "ox-alpha-free": {"limit": {"context": 1000000}, "cost": {}}
-            }},
-            "openrouter": {"models": {"claude-fable-5": {"cost": {"input": 9, "output": 9}}}}
-        })
-        .to_string();
-        let tables = compose_upstream(&litellm, &models_dev).expect("compose");
-        let t = build_table(EMBEDDED, Some(&tables.prices), None);
-
-        let flash = t.exact("deepseek-v4.1-flash").expect("channel row priced");
-        assert!(
-            (flash.input - 1.5e-7).abs() < 1e-15,
-            "per million to per token"
-        );
-        assert!(flash.cache_read_known);
-        assert!(
-            !flash.cache_create_known,
-            "a rate the source omits stays unknown"
-        );
-        assert_eq!(
-            t.exact("deepseek-flash").map(|p| p.input),
-            Some(flash.input),
-            "the relay picker id copies the canonical rate"
-        );
-        assert!(
-            t.exact("ox-alpha-free").is_none(),
-            "a row without rates is dropped"
-        );
-        assert_eq!(t.exact("xai/grok-4.6").expect("litellm row").input, 3e-6);
-        assert_eq!(
-            t.exact("grok-4.6").expect("channel spelling").input,
-            2e-6,
-            "the id a routed session reports keeps its own rate"
-        );
-        let windows = build_limits("", Some(&tables.limits), None);
-        assert_eq!(
-            windows.get("deepseek-flash").map(|l| l.context_window),
-            Some(1_000_000)
-        );
-        assert_eq!(
-            windows
-                .get("deepseek-v4.1-flash")
-                .and_then(|l| l.max_output),
-            Some(384_000)
-        );
-        assert_eq!(
-            windows.get("grok-4.6").map(|l| l.context_window),
-            Some(500_000)
-        );
-        assert!(windows.get("ox-alpha-free").is_some());
-    }
-
-    #[test]
-    fn filter_upstream_rejects_tables_without_claude() {
-        let upstream = serde_json::json!({
-            "mistral-large": { "input_cost_per_token": 2e-6, "output_cost_per_token": 6e-6 }
-        })
-        .to_string();
-        assert!(filter_upstream(&upstream).is_err());
-        assert!(filter_upstream("not json").is_err());
-    }
-
-    #[test]
-    fn build_table_layers_remote_and_user_over_embedded() {
-        let embedded = r#"{
-            "model-a": { "input_cost_per_token": 1e-6, "output_cost_per_token": 1e-6 },
-            "model-b": { "input_cost_per_token": 1e-6, "output_cost_per_token": 1e-6 }
-        }"#;
+    fn remote_and_user_layers_override_in_order() {
         let remote = r#"{
             "model-b": { "input_cost_per_token": 2e-6, "output_cost_per_token": 2e-6 },
             "model-c": { "input_cost_per_token": 2e-6, "output_cost_per_token": 2e-6 }
@@ -433,12 +159,8 @@ mod tests {
         let user = r#"{
             "model-c": { "input_cost_per_token": 9e-6, "output_cost_per_token": 9e-6 }
         }"#;
-        let t = build_table(embedded, Some(remote), Some(user));
-        assert!((t.exact("model-a").unwrap().input - 1e-6).abs() < 1e-12);
-        assert!(
-            (t.exact("model-b").unwrap().input - 2e-6).abs() < 1e-12,
-            "remote overrides embedded"
-        );
+        let t = table_from(Some(remote), Some(user));
+        assert!((t.exact("model-b").unwrap().input - 2e-6).abs() < 1e-12);
         assert!(
             (t.exact("model-c").unwrap().input - 9e-6).abs() < 1e-12,
             "user overrides remote"
@@ -446,16 +168,9 @@ mod tests {
     }
 
     #[test]
-    fn prefix_match_handles_dated_suffix() {
-        let t = table();
-        // A dated variant should fall back to the base model's pricing.
+    fn local_logs_stay_unpriced_for_dated_or_unknown_models() {
+        let t = table_from(None, None);
         assert!(t.exact("claude-opus-4-8-20260601").is_none());
-    }
-
-    #[test]
-    fn unknown_model_has_no_price() {
-        let t = table();
-        assert!(t.exact("totally-made-up-model-xyz").is_none());
         assert!(t
             .exact_cost(
                 "totally-made-up-model-xyz",
@@ -468,49 +183,28 @@ mod tests {
     }
 
     #[test]
-    fn cost_math_is_linear_in_tokens() {
-        let map = PricingMap {
-            table: HashMap::from([(
-                "m".to_string(),
-                Pricing {
-                    input: 1e-6,
-                    output: 2e-6,
-                    cache_create: 5e-7,
-                    cache_read: 1e-7,
-                    cache_create_known: true,
-                    cache_read_known: true,
-                    input_above_200k: None,
-                    output_above_200k: None,
-                    cache_create_above_200k: None,
-                    cache_read_above_200k: None,
-                },
-            )]),
-        };
-        let usage = Usage {
-            input: 1_000_000,
-            output: 1_000_000,
-            cache_create: 1_000_000,
-            cache_read: 1_000_000,
-        };
-        // 1e6*(1e-6 + 2e-6 + 5e-7 + 1e-7) = 1.0 + 2.0 + 0.5 + 0.1 = 3.6
-        let (cost, _) = map.exact_cost("m", usage).unwrap();
-        assert!((cost - 3.6).abs() < 1e-9, "got {cost}");
-    }
-
-    #[test]
-    fn tiered_pricing_applies_above_200k() {
-        // 300k input tokens: 200k @ 1e-6 + 100k @ 2e-6 = 0.2 + 0.2 = 0.4
-        let v = tiered(300_000, 1e-6, Some(2e-6));
-        assert!((v - 0.4).abs() < 1e-9, "got {v}");
-        // Without a tier, linear: 300k @ 1e-6 = 0.3
-        let v2 = tiered(300_000, 1e-6, None);
-        assert!((v2 - 0.3).abs() < 1e-9, "got {v2}");
-    }
-
-    #[test]
-    fn normalize_strips_provider_prefix() {
-        assert_eq!(normalize("openai/gpt-5-codex"), "gpt-5-codex");
-        assert_eq!(normalize("claude-opus-4-8"), "claude-opus-4-8");
-        assert_eq!(normalize("gpt-5@2025-08-07"), "gpt-5-2025-08-07");
+    fn composed_refresh_feeds_prices_and_limits() {
+        let litellm = serde_json::json!({
+            "claude-fable-5": {"input_cost_per_token": 6e-6, "output_cost_per_token": 3e-5}
+        })
+        .to_string();
+        let models_dev = serde_json::json!({
+            "opencode-go": {"models": {"deepseek-v4.1-flash": {
+                "limit": {"context": 1000000},
+                "cost": {"input": 0.15, "output": 0.6}
+            }}}
+        })
+        .to_string();
+        let tables = compose_upstream(&litellm, &models_dev).expect("compose");
+        let t = table_from(Some(&tables.prices), None);
+        assert!(
+            t.exact("deepseek-flash").is_some(),
+            "relay picker alias priced"
+        );
+        let windows = build_limits("", Some(&tables.limits), None);
+        assert_eq!(
+            windows.get("deepseek-flash").map(|l| l.context_window),
+            Some(1_000_000)
+        );
     }
 }

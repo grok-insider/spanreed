@@ -1,3 +1,3 @@
 fn main() {
-    print!("{}", fabrials_model::contracts::typescript());
+    print!("{}", fabrials_types::contracts::typescript());
 }

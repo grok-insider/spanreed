@@ -1,9 +1,9 @@
 use super::discovery;
-#[cfg(test)]
-use fabrials_core::usage::UsageFilter;
-use fabrials_core::usage::{ImportCheckpoint, ImportState, SourceStatus, UsageParser};
 use fabrials_providers::usage::{catalog, files};
 use fabrials_runtime::local_usage::{ImportBatch, UsageStore};
+#[cfg(test)]
+use fabrials_types::consumption::UsageFilter;
+use fabrials_types::consumption::{ImportCheckpoint, ImportState, SourceStatus, UsageParser};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Seek, SeekFrom};

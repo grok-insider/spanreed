@@ -60,7 +60,7 @@ fn commit_doc(
         .flat_map(|a| std::iter::once(a.alias.clone()).chain(a.aliases.clone()))
         .collect();
     let canon = accounts::unique_alias_among(&taken, snap.slug.as_deref().unwrap_or("acct"));
-    let mut acc = accounts::Account::new("grok", &canon)?;
+    let mut acc = accounts::new_account("grok", &canon)?;
     acc.plan_slug = snap.slug.clone();
     acc.plan_label = snap.label.clone();
     acc.used_pct = snap.used_pct;
@@ -121,17 +121,6 @@ pub fn relabel_generic() -> Result<String, String> {
         out.push_str("nothing to relabel\n");
     }
     Ok(out)
-}
-
-/// Host account id stamped on a fabric hop. Path alias wins; else active.
-pub fn resolve_account_id(alias: Option<&str>) -> Option<String> {
-    if alias.is_none() {
-        maybe_autosteer();
-    }
-    match alias {
-        Some(a) => accounts::resolve(a).map(|acc| acc.id),
-        None => accounts::active("grok").map(|a| a.id),
-    }
 }
 
 pub fn probe_accounts() -> Vec<ProviderOutput> {
@@ -608,39 +597,6 @@ pub fn autosteer_status() -> String {
     )
 }
 
-fn maybe_autosteer() {
-    let (on, exhausted) = autosteer_cfg();
-    if !on {
-        return;
-    }
-    let list = accounts::list_provider("grok");
-    if list.len() < 2 {
-        return;
-    }
-    let Some(active) = list.iter().find(|a| a.active).cloned() else {
-        return;
-    };
-    for a in &list {
-        refresh_snapshot(a);
-    }
-    let fresh = accounts::list_provider("grok");
-    let Some(pick) = pick_autosteer(&fresh, exhausted, util::now_ms()) else {
-        return;
-    };
-    let pick = pick.clone();
-    if pick.id == active.id {
-        return;
-    }
-    if accounts::set_active(&pick.id).is_ok() {
-        log::info!(
-            "autosteer {} → {} ({:.0}% used)",
-            active.id,
-            pick.id,
-            active.used_pct.unwrap_or(0.0)
-        );
-    }
-}
-
 pub fn pick_autosteer(
     accounts: &[accounts::Account],
     exhausted_pct: f64,
@@ -720,7 +676,7 @@ mod tests {
         reset_hours: Option<f64>,
         now: i64,
     ) -> accounts::Account {
-        let mut a = accounts::Account::new("grok", alias).unwrap();
+        let mut a = accounts::new_account("grok", alias).unwrap();
         a.plan_slug = Some(slug.into());
         a.used_pct = Some(used);
         if let Some(h) = reset_hours {

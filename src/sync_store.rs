@@ -1,5 +1,5 @@
 //! Durable outbox and separate downloaded history. Imported records are never re-uploaded.
-use fabrials_model::private_sync::{PrivateObservation, PrivatePage};
+use fabrials_types::private_sync::{PrivateObservation, PrivatePage};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
@@ -71,7 +71,7 @@ impl Store {
         tx.commit().map_err(|e| e.to_string())
     }
     pub fn scan_page(&mut self, owner: &str, sources: &[String]) -> Result<bool, String> {
-        use fabrials_model::private_sync::PrivateEvent;
+        use fabrials_types::private_sync::PrivateEvent;
         let mut sources = sources.to_vec();
         sources.sort();
         sources.dedup();
@@ -106,7 +106,7 @@ impl Store {
         };
         for (_, kind, document) in &entries {
             let observation = if kind == "hop" {
-                let mut record: fabrials_model::UsageRecord = serde_json::from_str(document)
+                let mut record: fabrials_types::HopRecord = serde_json::from_str(document)
                     .map_err(|_| "Invalid captured request in sync scan")?;
                 let Some(source) = record
                     .account_id
@@ -122,7 +122,7 @@ impl Store {
                     event: PrivateEvent::Request { record },
                 }
             } else {
-                let sample: fabrials_model::HistorySample = serde_json::from_str(document)
+                let sample: fabrials_types::HistorySample = serde_json::from_str(document)
                     .map_err(|_| "Invalid quota history in sync scan")?;
                 PrivateObservation {
                     source: sample.provider.clone(),
@@ -191,7 +191,7 @@ impl Store {
         &self,
         owner: &str,
         before: Option<i64>,
-    ) -> Result<fabrials_model::private_sync::PrivateRecentPage, String> {
+    ) -> Result<fabrials_types::private_sync::PrivateRecentPage, String> {
         let mut query = self.connection.prepare("SELECT cursor,device,document FROM private_sync_inbox WHERE owner=?1 AND cursor<?2 ORDER BY cursor DESC LIMIT 51").map_err(|e| e.to_string())?;
         let rows = query
             .query_map(params![owner, before.unwrap_or(i64::MAX)], |row| {
@@ -209,7 +209,7 @@ impl Store {
             .into_iter()
             .take(50)
             .map(|(cursor, device, document)| {
-                Ok(fabrials_model::private_sync::PrivateStoredObservation {
+                Ok(fabrials_types::private_sync::PrivateStoredObservation {
                     cursor,
                     device,
                     observation: serde_json::from_str(&document)
@@ -217,7 +217,7 @@ impl Store {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Ok(fabrials_model::private_sync::PrivateRecentPage {
+        Ok(fabrials_types::private_sync::PrivateRecentPage {
             before: observations.last().map(|item| item.cursor),
             observations,
             has_more,
@@ -255,13 +255,13 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_model::private_sync::{PrivateEvent, PrivateStoredObservation};
+    use fabrials_types::private_sync::{PrivateEvent, PrivateStoredObservation};
     fn observation(source: &str) -> PrivateObservation {
         PrivateObservation {
             source: source.into(),
             event: PrivateEvent::Quota {
                 at_ms: 1000,
-                output: fabrials_model::ProviderOutput::error(source, "Fixture", "No quota"),
+                output: fabrials_types::ProviderOutput::error(source, "Fixture", "No quota"),
             },
         }
     }
@@ -328,7 +328,7 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch("CREATE TABLE usage_hops(namespace TEXT,identity TEXT,ts_ms INTEGER,document TEXT); CREATE TABLE usage_history(seq INTEGER PRIMARY KEY,namespace TEXT,document TEXT);").unwrap();
         for index in 0..1251 {
-            let record = fabrials_model::UsageRecord {
+            let record = fabrials_types::HopRecord {
                 ts_ms: index + 1,
                 provider: Some("codex".into()),
                 request_id: Some(format!("request-{index}")),
@@ -362,7 +362,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1251);
-        let late = fabrials_model::UsageRecord {
+        let late = fabrials_types::HopRecord {
             ts_ms: 1,
             provider: Some("nous".into()),
             request_id: Some("late".into()),

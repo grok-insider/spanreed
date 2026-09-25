@@ -1,5 +1,5 @@
 //! Opt-in local reset-expiry delivery, independent of sharing preferences.
-use fabrials_core::{Availability, Freshness, Observation, ResetInventory};
+use fabrials_types::{Availability, Freshness, Observation, ResetInventory};
 use serde::{Deserialize, Serialize};
 
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
@@ -431,7 +431,7 @@ mod tests {
             value: Some(ResetInventory {
                 available: 1,
                 details_complete: true,
-                credits: vec![fabrials_core::ResetCredit {
+                credits: vec![fabrials_types::ResetCredit {
                     valid_from_ms: None,
                     expires_at_ms: Some(expiry),
                 }],
@@ -459,7 +459,7 @@ mod tests {
             value: Some(ResetInventory {
                 available: 1,
                 details_complete: true,
-                credits: vec![fabrials_core::ResetCredit {
+                credits: vec![fabrials_types::ResetCredit {
                     valid_from_ms: None,
                     expires_at_ms: Some(2_000_000),
                 }],

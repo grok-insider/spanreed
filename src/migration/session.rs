@@ -1,9 +1,9 @@
 //! Private native pairing state. Persist proof before consuming an invitation.
-use fabrials_core::migration::MigrationSessionView;
 use fabrials_runtime::{
     file_set::{Change, FileSet},
     migration::client::Client,
 };
+use fabrials_types::migration::MigrationSessionView;
 use serde::{Deserialize, Serialize};
 use std::{
     io::Read,
@@ -224,8 +224,8 @@ pub fn inventory(id: &str) -> Result<Vec<super::MigrationCandidate>, String> {
         .ok_or("Migration session unavailable")?
         .direction
     {
-        fabrials_core::migration::MigrationDirection::LocalToHosted => super::candidates(),
-        fabrials_core::migration::MigrationDirection::HostedToLocal => {
+        fabrials_types::migration::MigrationDirection::LocalToHosted => super::candidates(),
+        fabrials_types::migration::MigrationDirection::HostedToLocal => {
             client.candidates(id, &record.proof)
         }
     }
@@ -235,7 +235,7 @@ pub fn propose(
     id: &str,
     selection: &[super::MigrationSelection],
 ) -> Result<MigrationSessionView, String> {
-    use fabrials_core::migration::{destination_providers, review, MigrationDirection};
+    use fabrials_types::migration::{destination_providers, review, MigrationDirection};
     let directory = root();
     let files = FileSet::acquire_wait(&directory)?;
     let mut record = load(&directory, id)?.ok_or("Migration session not found")?;
@@ -316,7 +316,7 @@ trait TransferRemote {
         id: &str,
         proof: &str,
         revision: &str,
-        review: &fabrials_core::migration::MigrationReview,
+        review: &fabrials_types::migration::MigrationReview,
     ) -> Result<Vec<fabrials_accounts::transfer::ApiKeyTransfer>, String>;
     fn import(
         &self,
@@ -336,7 +336,7 @@ impl TransferRemote for Client {
         id: &str,
         proof: &str,
         revision: &str,
-        review: &fabrials_core::migration::MigrationReview,
+        review: &fabrials_types::migration::MigrationReview,
     ) -> Result<Vec<fabrials_accounts::transfer::ApiKeyTransfer>, String> {
         Client::export(self, id, proof, revision, review)
     }
@@ -362,7 +362,7 @@ struct Execution<'a> {
 }
 impl Execution<'_> {
     fn run(&self, mut record: Record, confirmed_revision: &str) -> Result<Vec<String>, String> {
-        use fabrials_core::migration::MigrationDirection;
+        use fabrials_types::migration::MigrationDirection;
         let id = record.id.clone();
         let id = id.as_str();
         let client = self.client;
@@ -486,8 +486,8 @@ pub fn cancel(id: &str) -> Result<(), String> {
 fn oauth_item(
     record: &Record,
     source_id: &str,
-) -> Result<fabrials_core::migration::MigrationItem, String> {
-    use fabrials_core::migration::{MigrationAction, MigrationDirection};
+) -> Result<fabrials_types::migration::MigrationItem, String> {
+    use fabrials_types::migration::{MigrationAction, MigrationDirection};
     let view = record.view.as_ref().ok_or("Migration review unavailable")?;
     if record.imported.is_none() || view.direction != MigrationDirection::HostedToLocal {
         return Err("Complete the transfer to this installation first".into());
@@ -626,7 +626,7 @@ mod tests {
             Ok(MigrationSessionView {
                 id: id.into(),
                 owner_id: self.owner.borrow().clone(),
-                direction: fabrials_core::migration::MigrationDirection::LocalToHosted,
+                direction: fabrials_types::migration::MigrationDirection::LocalToHosted,
                 hosted_environment: "hosted-fixture".into(),
                 local_environment: Some("local-fixture".into()),
                 phase: "paired".into(),
@@ -693,7 +693,7 @@ mod tests {
 
     #[test]
     fn oauth_receipt_survives_reload_and_requires_exact_account_generation() {
-        use fabrials_core::migration::{
+        use fabrials_types::migration::{
             MigrationAction, MigrationDirection, MigrationItem, MigrationReview,
         };
         let f = fixture();
@@ -718,7 +718,7 @@ mod tests {
         record.imported = Some(vec![]);
         assert_eq!(oauth_item(&record, &item.source_id).unwrap(), item);
         assert!(oauth_item(&record, "grok/unreviewed").is_err());
-        let mut account = crate::accounts::Account::new("grok", "destination").unwrap();
+        let mut account = crate::accounts::new_account("grok", "destination").unwrap();
         record
             .oauth_generations
             .insert(account.id.clone(), account.generation.clone().unwrap());
@@ -830,7 +830,7 @@ mod tests {
     }
     fn execution_recovery(process_exit: bool, before_receipt: bool) {
         use fabrials_accounts::transfer::{ApiKey, ApiKeyTransfer};
-        use fabrials_core::migration::{
+        use fabrials_types::migration::{
             MigrationAction, MigrationDirection, MigrationItem, MigrationReview,
         };
         use sha2::{Digest, Sha256};

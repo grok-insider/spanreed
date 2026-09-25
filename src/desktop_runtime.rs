@@ -36,7 +36,7 @@ impl Default for Controller {
     fn default() -> Self {
         Self {
             running: None,
-            bind: crate::grok_proxy::DEFAULT_GROK_CLI_BIND.into(),
+            bind: crate::capture::DEFAULT_GROK_CLI_BIND.into(),
             error: None,
         }
     }

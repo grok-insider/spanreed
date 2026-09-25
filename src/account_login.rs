@@ -89,7 +89,7 @@ pub(crate) fn begin_reviewed(
         {
             return Err("That account name is already in use".into());
         }
-        crate::accounts::Account::new(provider, &alias)?
+        crate::accounts::new_account(provider, &alias)?
     };
     before_begin(&account)?;
     let authorization = match provider {

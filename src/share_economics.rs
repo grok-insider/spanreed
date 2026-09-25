@@ -10,68 +10,8 @@ use crate::forecast::{
 };
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
 
-/// Minimum pool % for safe scale-to-100% (matches forecast oneshot spirit).
-pub const MIN_PCT_SCALE: f64 = 1.0;
-/// Month convention: full_week × (30/7).
-pub const MONTH_WEEK_FACTOR: f64 = 30.0 / 7.0;
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-pub struct ModelEconomics {
-    pub model: String,
-    pub tokens: u64,
-    pub api_usd_list: f64,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-pub struct ProviderEconomics {
-    /// e.g. "Weekly"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pool_label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pool_pct: Option<f64>,
-    /// Weekly % when this install first saw the provider this week.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pool_pct_at_start: Option<f64>,
-    /// True when local $ likely miss other hosts (or start was mid-pool).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub partial_observation: bool,
-    /// Observed tokens in the aligned window (e.g. since weekly reset).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tokens_obs: Option<u64>,
-    /// Observed API list $ in that window (multi-model sum when available).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_usd_obs: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub observed_window: Option<String>,
-    /// Last-30d observed API $ (not a limit).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_usd_30d: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tokens_30d: Option<u64>,
-    /// Estimated API $ if the primary pool is used at 100% for one week.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub full_week_api_usd: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub full_week_tokens: Option<u64>,
-    /// full_week × (30/7) convention.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub full_month_api_usd: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub full_pool_method: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub by_model: Vec<ModelEconomics>,
-}
-
-/// Scale observed API $ to 100% of pool. Returns None if pct unsafe.
-pub fn scale_to_full_pool(api_usd_obs: f64, pool_pct: f64) -> Option<f64> {
-    if !api_usd_obs.is_finite() || api_usd_obs < 0.0 {
-        return None;
-    }
-    if !pool_pct.is_finite() || !(MIN_PCT_SCALE..=100.0).contains(&pool_pct) {
-        return None;
-    }
-    Some(api_usd_obs * (100.0 / pool_pct))
-}
+pub use fabrials_share::{scale_to_full_pool, scale_tokens_to_full, MONTH_WEEK_FACTOR};
+pub use fabrials_types::{ModelEconomics, ProviderEconomics};
 
 /// Pure at 100% week estimate. `pct_start` is first-seen pool % this week.
 ///
@@ -132,13 +72,6 @@ pub struct FullWeekEst {
     pub tokens: Option<u64>,
     pub method: &'static str,
     pub partial: bool,
-}
-
-pub fn scale_tokens_to_full(tokens_obs: u64, pool_pct: f64) -> Option<u64> {
-    if !(MIN_PCT_SCALE..=100.0).contains(&pool_pct) {
-        return None;
-    }
-    Some(((tokens_obs as f64) * (100.0 / pool_pct)).round() as u64)
 }
 
 /// Parse "$34.09 · 51M tokens" / "51M tokens · ~$34" / "~794M · ~$569.32".

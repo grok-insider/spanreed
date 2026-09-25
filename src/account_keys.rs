@@ -3,7 +3,7 @@ use crate::accounts::{self, Account};
 
 pub fn add(provider: &str, alias: &str, key: &str) -> Result<Account, String> {
     let key = validate(provider, key)?;
-    let account = Account::new(provider, alias)?;
+    let account = crate::accounts::new_account(provider, alias)?;
     let vault = accounts::lock_vault()?;
     let registry = vault.registry()?;
     let removal = registry.removed.get(&account.id);

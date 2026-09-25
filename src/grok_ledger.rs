@@ -1,6 +1,6 @@
 //! Local SQLite ledger of captured API usage, with Grok-specific metric projections.
 //!
-//! Records are written by capture and [`crate::grok_proxy`] after completed calls.
+//! Records are written by the capture relay after completed calls.
 //! Probe reads the shared database for
 //! accurate Last-30-Days totals — never invents tokens from session context.
 //!
@@ -22,7 +22,7 @@ use fabrials_metrics::pricing::PricingMap;
 const WINDOW_DAYS: i64 = 31;
 const DAY_MS: i64 = 86_400_000;
 
-pub use fabrials_model::UsageRecord;
+pub use fabrials_types::HopRecord;
 
 /// Shared local usage database. The legacy JSONL remains available for recovery.
 pub fn ledger_path() -> PathBuf {
@@ -43,12 +43,12 @@ pub fn ensure_store() -> Result<(), String> {
     store().map(|_| ())
 }
 
-pub fn append(record: &UsageRecord) -> Result<(), String> {
+pub fn append(record: &HopRecord) -> Result<(), String> {
     store()?.append("local", record).map(|_| ())
 }
 
 /// Only Grok records contribute to Grok metrics; other providers share storage.
-pub fn read_window(now_ms: i64) -> Vec<UsageRecord> {
+pub fn read_window(now_ms: i64) -> Vec<HopRecord> {
     match store().and_then(|store| {
         store.read_window(
             "local",
@@ -65,7 +65,7 @@ pub fn read_window(now_ms: i64) -> Vec<UsageRecord> {
     }
 }
 
-pub fn recent_hops() -> Result<Vec<UsageRecord>, String> {
+pub fn recent_hops() -> Result<Vec<HopRecord>, String> {
     store()?.recent("local", 200)
 }
 
@@ -118,7 +118,7 @@ fn cost_lines_filtered(
     }
     lines_from_records(
         &recs,
-        crate::pricing::hop_table(),
+        crate::pricing::table(),
         weekly_start_ms,
         weekly_pct,
         week_end_ms,
@@ -146,7 +146,7 @@ fn capture_ports_up() -> bool {
 }
 
 fn lines_from_records(
-    recs: &[UsageRecord],
+    recs: &[HopRecord],
     table: &PricingMap,
     weekly_start_ms: Option<i64>,
     weekly_pct: Option<f64>,
@@ -318,143 +318,16 @@ fn ms_to_ymd(ms: i64) -> Option<String> {
     ))
 }
 
-/// Parse official usage from a Responses API JSON object or SSE body.
-pub fn usage_from_response_body(body: &str) -> Option<UsagePartial> {
-    // Try whole body as JSON first.
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) {
-        if let Some(u) = usage_from_json(&v) {
-            return Some(u);
-        }
-    }
-    // SSE: find last `response.completed` (or any object with usage).
-    let mut best: Option<UsagePartial> = None;
-    for line in body.lines() {
-        let line = line.trim();
-        let payload = line.strip_prefix("data: ").unwrap_or(line);
-        if payload.is_empty() || payload == "[DONE]" {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
-            continue;
-        };
-        if let Some(u) = usage_from_json(&v) {
-            best = Some(u);
-        }
-    }
-    best
-}
-
-#[derive(Debug, Clone)]
-pub struct UsagePartial {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cached_input_tokens: u64,
-    pub reasoning_tokens: u64,
-    pub total_tokens: u64,
-    pub cost_usd_ticks: u64,
-    pub model: Option<String>,
-    pub request_id: Option<String>,
-}
-
-fn usage_from_json(v: &serde_json::Value) -> Option<UsagePartial> {
-    // response.completed shape: { type, response: { usage, model, id } }
-    let response = v.get("response").filter(|r| r.is_object()).unwrap_or(v);
-    let usage = response.get("usage").or_else(|| v.get("usage"))?;
-    if !usage.is_object() {
-        return None;
-    }
-    let num = |k: &str| -> u64 {
-        usage
-            .get(k)
-            .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-            .unwrap_or(0)
-    };
-    let input = num("input_tokens").max(num("prompt_tokens"));
-    let output = num("output_tokens").max(num("completion_tokens"));
-    let total = num("total_tokens");
-    let cached = usage
-        .get("input_tokens_details")
-        .and_then(|d| d.get("cached_tokens"))
-        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-        .unwrap_or(0);
-    let reasoning = usage
-        .get("output_tokens_details")
-        .and_then(|d| d.get("reasoning_tokens"))
-        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-        .unwrap_or(0);
-    let cost_ticks = usage
-        .get("cost_in_usd_ticks")
-        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-        .unwrap_or(0);
-
-    if input == 0 && output == 0 && total == 0 && cost_ticks == 0 {
-        return None;
-    }
-
-    let model = response
-        .get("model")
-        .or_else(|| v.get("model"))
-        .and_then(|m| m.as_str())
-        .map(|s| s.to_string());
-    let request_id = response
-        .get("id")
-        .or_else(|| v.get("id"))
-        .and_then(|m| m.as_str())
-        .map(|s| s.to_string());
-
-    Some(UsagePartial {
-        input_tokens: input,
-        output_tokens: output,
-        cached_input_tokens: cached,
-        reasoning_tokens: reasoning,
-        total_tokens: if total > 0 {
-            total
-        } else {
-            input.saturating_add(output)
-        },
-        cost_usd_ticks: cost_ticks,
-        model,
-        request_id,
-    })
-}
-
-impl UsagePartial {
-    pub fn into_record(
-        self,
-        ts_ms: i64,
-        session_id: Option<String>,
-        account_id: Option<String>,
-        route: Option<String>,
-    ) -> UsageRecord {
-        UsageRecord {
-            ts_ms,
-            session_id,
-            model: self.model,
-            input_tokens: self.input_tokens,
-            output_tokens: self.output_tokens,
-            cached_input_tokens: self.cached_input_tokens,
-            reasoning_tokens: self.reasoning_tokens,
-            total_tokens: self.total_tokens,
-            cost_usd_ticks: self.cost_usd_ticks,
-            request_id: self.request_id,
-            account_id,
-            route,
-            provider: None,
-            ..Default::default()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn old_jsonl_roundtrip_without_account() {
-        let rec: UsageRecord = serde_json::from_str(r#"{"ts_ms":1,"input_tokens":10}"#).unwrap();
+        let rec: HopRecord = serde_json::from_str(r#"{"ts_ms":1,"input_tokens":10}"#).unwrap();
         assert!(rec.account_id.is_none());
         assert!(rec.route.is_none());
-        let tagged = UsageRecord {
+        let tagged = HopRecord {
             ts_ms: 2,
             input_tokens: 5,
             account_id: Some("grok/heavy".into()),
@@ -463,7 +336,7 @@ mod tests {
         };
         let s = serde_json::to_string(&tagged).unwrap();
         assert!(s.contains("grok/heavy"));
-        let back: UsageRecord = serde_json::from_str(&s).unwrap();
+        let back: HopRecord = serde_json::from_str(&s).unwrap();
         assert_eq!(back.account_id.as_deref(), Some("grok/heavy"));
     }
 
@@ -473,7 +346,7 @@ mod tests {
 data: {"type":"response.completed","response":{"id":"resp_1","model":"grok-4.5","usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120,"input_tokens_details":{"cached_tokens":40},"output_tokens_details":{"reasoning_tokens":5},"cost_in_usd_ticks":500000000}}}
 data: [DONE]
 "#;
-        let u = usage_from_response_body(body).unwrap();
+        let u = fabrials_metrics::usage_from_response_body(body).unwrap();
         assert_eq!(u.input_tokens, 100);
         assert_eq!(u.output_tokens, 20);
         assert_eq!(u.cached_input_tokens, 40);
@@ -495,7 +368,7 @@ data: [DONE]
 
     #[test]
     fn list_cost_uses_long_context_rates_when_prompt_ge_200k() {
-        let rec = UsageRecord {
+        let rec = HopRecord {
             ts_ms: 1,
             session_id: None,
             model: Some("grok-4.5".into()),
@@ -519,8 +392,10 @@ data: [DONE]
 
     #[test]
     fn ignores_body_without_usage() {
-        assert!(usage_from_response_body("data: {\"type\":\"ping\"}\n").is_none());
-        assert!(usage_from_response_body("").is_none());
+        assert!(
+            fabrials_metrics::usage_from_response_body("data: {\"type\":\"ping\"}\n").is_none()
+        );
+        assert!(fabrials_metrics::usage_from_response_body("").is_none());
     }
 
     #[test]
@@ -539,7 +414,7 @@ data: [DONE]
     #[test]
     fn lines_from_records_models_and_cache() {
         let recs = vec![
-            UsageRecord {
+            HopRecord {
                 ts_ms: 1_700_000_000_000,
                 session_id: None,
                 model: Some("grok-4.5-build".into()),
@@ -552,7 +427,7 @@ data: [DONE]
                 request_id: Some("a".into()),
                 ..Default::default()
             },
-            UsageRecord {
+            HopRecord {
                 ts_ms: 1_700_086_400_000, // next day
                 session_id: None,
                 model: Some("grok-4.5".into()),
@@ -619,7 +494,7 @@ data: [DONE]
 
     #[test]
     fn full_list_price_not_partial() {
-        let recs = vec![UsageRecord {
+        let recs = vec![HopRecord {
             ts_ms: 1_700_000_000_000,
             session_id: None,
             model: Some("grok-4.5-build".into()),
@@ -655,7 +530,7 @@ data: [DONE]
     #[test]
     fn weekly_partial_when_window_has_unpriced_model() {
         let recs = vec![
-            UsageRecord {
+            HopRecord {
                 ts_ms: 5_000,
                 session_id: None,
                 model: Some("grok-4.5".into()),
@@ -668,7 +543,7 @@ data: [DONE]
                 request_id: Some("priced".into()),
                 ..Default::default()
             },
-            UsageRecord {
+            HopRecord {
                 ts_ms: 6_000,
                 session_id: None,
                 model: Some("unknown-model-xyz".into()),
@@ -708,7 +583,7 @@ data: [DONE]
     #[test]
     fn since_weekly_excludes_records_before_epoch() {
         let recs = vec![
-            UsageRecord {
+            HopRecord {
                 ts_ms: 1_000,
                 session_id: None,
                 model: Some("a".into()),
@@ -721,7 +596,7 @@ data: [DONE]
                 request_id: Some("old".into()),
                 ..Default::default()
             },
-            UsageRecord {
+            HopRecord {
                 ts_ms: 5_000,
                 session_id: None,
                 model: Some("a".into()),
@@ -755,7 +630,7 @@ data: [DONE]
 
     #[test]
     fn user_pricing_override_changes_the_grok_hop_cost() {
-        let recs = vec![UsageRecord {
+        let recs = vec![HopRecord {
             ts_ms: util::now_ms(),
             model: Some("grok-4.5".into()),
             input_tokens: 100_000,
@@ -773,7 +648,7 @@ data: [DONE]
                 })
                 .expect("last 30 line")
         };
-        let embedded = crate::pricing::hop_table_from(None, None);
+        let embedded = crate::pricing::table_from(None, None);
         assert!(
             last30(&embedded).contains("$0.2000"),
             "{}",
@@ -781,7 +656,7 @@ data: [DONE]
         );
         let user =
             r#"{"grok-4.5": {"input_cost_per_token": 0.00001, "output_cost_per_token": 0.00002}}"#;
-        let overridden = crate::pricing::hop_table_from(None, Some(user));
+        let overridden = crate::pricing::table_from(None, Some(user));
         assert!(
             last30(&overridden).contains("$1.0000"),
             "{}",

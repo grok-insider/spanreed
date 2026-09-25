@@ -1,5 +1,5 @@
 //! Independent consent for aggregate publication and private history synchronization.
-use fabrials_core::SharingConsent;
+use fabrials_types::SharingConsent;
 use std::process::ExitCode;
 
 pub fn load() -> SharingConsent {

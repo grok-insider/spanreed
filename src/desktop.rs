@@ -7,7 +7,7 @@ pub fn history() -> Result<Vec<crate::history::HistorySample>, String> {
     crate::history::local_samples(None, 500)
 }
 
-pub fn hops() -> Result<Vec<fabrials_model::UsageRecord>, String> {
+pub fn hops() -> Result<Vec<fabrials_types::HopRecord>, String> {
     crate::grok_ledger::recent_hops()
 }
 
@@ -81,16 +81,6 @@ pub fn models(account_id: &str) -> Result<ModelCatalog, String> {
         observed_at_ms: crate::util::now_ms(),
         models,
     })
-}
-
-#[cfg(all(test, feature = "contracts"))]
-#[test]
-fn frontend_contracts_match_rust() {
-    assert_eq!(
-        fabrials_model::contracts::typescript(),
-        include_str!("../desktop/vendor/fabrials-ui/src/contracts.ts"),
-        "Regenerate fabrials-model bindings and synchronize shared UI sources"
-    );
 }
 
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]

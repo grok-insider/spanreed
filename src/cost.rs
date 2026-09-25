@@ -132,7 +132,7 @@ pub fn estimate_since(source: Source, cutoff_ms: i64) -> Option<CostSummary> {
 fn compute_from(source: Source, cutoff: i64) -> Option<CostSummary> {
     pricing::ensure_fresh();
     let statuses = crate::usage::refresh(Some(source.id()), false).ok()?;
-    let records = crate::usage::records(&fabrials_core::usage::UsageFilter {
+    let records = crate::usage::records(&fabrials_types::consumption::UsageFilter {
         client: Some(source.id().into()),
         since_ms: Some(cutoff),
         ..Default::default()
@@ -163,7 +163,8 @@ fn compute_from(source: Source, cutoff: i64) -> Option<CostSummary> {
     summary.partial |= statuses.iter().any(|s| {
         matches!(
             s.state,
-            fabrials_core::usage::ImportState::Error | fabrials_core::usage::ImportState::Partial
+            fabrials_types::consumption::ImportState::Error
+                | fabrials_types::consumption::ImportState::Partial
         )
     });
     Some(summary)

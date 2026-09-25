@@ -7,115 +7,24 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 use crate::app;
 use crate::secret;
 
 const KEYRING_PREFIX: &str = "spanreed:account";
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Registry {
-    #[serde(default)]
-    pub accounts: Vec<Account>,
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub removed: std::collections::BTreeMap<String, String>,
-}
+pub use fabrials_accounts::{parse_id, unique_alias_among, valid_alias, Account, Registry};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Account {
-    /// Stable id: `{provider}/{alias}` (e.g. `grok/heavy`).
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub generation: Option<String>,
-    pub provider: String,
-    pub alias: String,
-    #[serde(default)]
-    pub label: String,
-    #[serde(default)]
-    pub active: bool,
-    /// Extra names (`work`) that resolve to this account. Id stays `grok/heavy-1`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aliases: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plan_slug: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plan_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub used_pct: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resets_at: Option<String>,
-    /// Unix ms when used_pct was last fetched.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quota_at: Option<i64>,
-    /// Plan charge interval: `month` / `year` (not the weekly usage pool).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub billing_interval: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub renews_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cancel_at_period_end: Option<bool>,
-    /// Subscriptions endpoint was queried (even if it returned no period).
-    #[serde(default)]
-    pub billing_checked: bool,
-}
-
-impl fabrials_accounts::Steerable for Account {
-    fn used_pct(&self) -> Option<f64> {
-        self.used_pct
-    }
-    fn plan_slug(&self) -> Option<&str> {
-        self.plan_slug.as_deref()
-    }
-    fn resets_at(&self) -> Option<&str> {
-        self.resets_at.as_deref()
-    }
-}
-
-impl Account {
-    pub fn new(provider: &str, alias: &str) -> Result<Self, String> {
-        if !valid_alias(alias) {
-            return Err("alias must be [A-Za-z0-9_-]+".into());
-        }
-        if provider.is_empty() || !valid_alias(provider) {
-            return Err("unknown provider".into());
-        }
-        Ok(Self {
-            id: format!("{provider}/{alias}"),
-            generation: Some(fabrials_runtime::accounting::new_request_id()),
-            provider: provider.into(),
-            alias: alias.into(),
-            label: alias.into(),
-            active: false,
-            aliases: Vec::new(),
-            plan_slug: None,
-            plan_label: None,
-            used_pct: None,
-            resets_at: None,
-            quota_at: None,
-            billing_interval: None,
-            renews_at: None,
-            cancel_at_period_end: None,
-            billing_checked: false,
-        })
-    }
+/// A new account with a fresh generation, so a re-added alias is a new identity.
+pub fn new_account(provider: &str, alias: &str) -> Result<Account, String> {
+    let mut account = Account::new(provider, alias)?;
+    account.generation = Some(fabrials_runtime::accounting::new_request_id());
+    Ok(account)
 }
 
 /// Next free canonical alias: `heavy-1`, `heavy-2`, …
 pub fn unique_alias(provider: &str, base: &str) -> String {
     let taken = taken_names(provider);
     unique_alias_among(&taken, base)
-}
-
-pub fn unique_alias_among(taken: &[String], base: &str) -> String {
-    let base = if valid_alias(base) { base } else { "acct" };
-    for n in 1..100 {
-        let cand = format!("{base}-{n}");
-        if !taken.iter().any(|a| a == &cand) {
-            return cand;
-        }
-    }
-    format!("{base}-x")
 }
 
 fn taken_names(provider: &str) -> Vec<String> {
@@ -131,26 +40,7 @@ fn taken_names(provider: &str) -> Vec<String> {
 
 /// Look up by id (`grok/heavy-1`), canonical alias, or nickname (`work`).
 pub fn resolve(raw: &str) -> Option<Account> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    let reg = load();
-    if let Some(a) = reg.accounts.iter().find(|a| a.id == raw) {
-        return Some(a.clone());
-    }
-    if let Ok((p, al)) = parse_id(raw) {
-        if let Some(a) = reg
-            .accounts
-            .iter()
-            .find(|a| a.provider == p && (a.alias == al || a.aliases.iter().any(|n| n == &al)))
-        {
-            return Some(a.clone());
-        }
-    }
-    reg.accounts
-        .into_iter()
-        .find(|a| a.aliases.iter().any(|n| n == raw))
+    load().resolve(raw).cloned()
 }
 
 pub fn add_nick(id: &str, nick: &str) -> Result<Account, String> {
@@ -212,21 +102,6 @@ const GENERIC_ALIASES: &[&str] = &[
 
 pub fn is_generic_alias(alias: &str) -> bool {
     GENERIC_ALIASES.contains(&alias) || alias.starts_with("imported")
-}
-
-pub fn valid_alias(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 40
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-pub fn parse_id(raw: &str) -> Result<(String, String), String> {
-    match raw.split_once('/') {
-        Some((p, a)) if valid_alias(p) && valid_alias(a) => Ok((p.into(), a.into())),
-        _ if valid_alias(raw) => Ok(("grok".into(), raw.into())),
-        _ => Err(format!("bad account id: {raw} (want provider/alias)")),
-    }
 }
 
 fn dir() -> PathBuf {
@@ -861,7 +736,7 @@ fn migrate_legacy_grok_vault(vault: &Vault) -> Result<(), String> {
             .get("id")
             .and_then(|value| value.as_str())
             .ok_or("Invalid legacy account identity")?;
-        let mut account = Account::new("grok", id)?;
+        let mut account = new_account("grok", id)?;
         account.active = value.get("active").and_then(|value| value.as_str()) == Some(id);
         let blob = fs::read_to_string(legacy.join(id).join("auth.json"))
             .map_err(|_| "Legacy credential unavailable")?;
@@ -895,6 +770,25 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_accounts_get_a_fresh_generation_on_the_shared_type() {
+        let first = new_account("grok", "heavy-1").unwrap();
+        let second = new_account("grok", "heavy-1").unwrap();
+        assert_eq!(first.id, "grok/heavy-1");
+        assert!(first.generation.is_some());
+        assert_ne!(first.generation, second.generation);
+        let plain: fabrials_accounts::Account = first.clone();
+        assert_eq!(plain, first);
+        assert!(new_account("grok", "bad alias").is_err());
+    }
+
+    #[test]
+    fn the_shared_id_rules_apply() {
+        assert_eq!(parse_id("heavy").unwrap(), ("grok".into(), "heavy".into()));
+        assert_eq!(unique_alias_among(&["heavy-1".into()], "heavy"), "heavy-2");
+        assert!(!valid_alias(""));
+    }
 
     #[test]
     fn account_lifecycle_in_isolated_process() {
@@ -936,7 +830,7 @@ mod tests {
         assert_eq!(std::env::var("SPANREED_VAULT_FIXTURE").unwrap(), "1");
         {
             let vault = lock_vault().unwrap();
-            let ghost = Account::new("grok", "disconnected").unwrap();
+            let ghost = new_account("grok", "disconnected").unwrap();
             let mut registry = vault.registry().unwrap();
             registry
                 .removed
@@ -950,7 +844,7 @@ mod tests {
         .is_none());
         assert_eq!(
             crate::migration::candidates().unwrap()[0].credential_kind,
-            fabrials_core::migration::CredentialKind::Unavailable
+            fabrials_types::migration::CredentialKind::Unavailable
         );
         {
             let vault = lock_vault().unwrap();
@@ -973,7 +867,7 @@ mod tests {
         let replacement = serde_json::json!({"access_token":"fixture-new"});
         {
             let vault = lock_vault().unwrap();
-            let inactive = Account::new("nous", "migration-fixture").unwrap();
+            let inactive = new_account("nous", "migration-fixture").unwrap();
             vault
                 .register_with_activation(inactive, &original.to_string(), None, false)
                 .unwrap();
@@ -989,7 +883,7 @@ mod tests {
             );
         }
         remove("nous/migration-fixture").unwrap();
-        let account = Account::new("nous", "work").unwrap();
+        let account = new_account("nous", "work").unwrap();
         {
             let vault = lock_vault().unwrap();
             vault
@@ -1023,7 +917,7 @@ mod tests {
             .register(moved.clone(), &replacement.to_string(), None)
             .is_err());
         let removal = vault.registry().unwrap().removed.get(&moved.id).cloned();
-        let fresh = Account::new("nous", "personal").unwrap();
+        let fresh = new_account("nous", "personal").unwrap();
         vault
             .register(fresh, &original.to_string(), removal.as_ref())
             .unwrap();
@@ -1109,7 +1003,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             candidate.credential_kind,
-            fabrials_core::migration::CredentialKind::ApiKey
+            fabrials_types::migration::CredentialKind::ApiKey
         );
         assert_eq!(Some(candidate.generation), recreated.generation);
         assert_ne!(recreated.generation, current.generation);
@@ -1154,7 +1048,7 @@ mod tests {
         let secret = directory.join("grok/work.json");
         fs::write(&secret, b"{}").unwrap();
         assert!(routing_registry_at(&directory).is_err());
-        let mut account = Account::new("grok", "work").unwrap();
+        let mut account = new_account("grok", "work").unwrap();
         let write = |accounts: Vec<Account>| {
             fs::write(
                 &index,
@@ -1169,7 +1063,7 @@ mod tests {
         assert!(routing_registry_at(&directory).is_err());
         account.aliases.clear();
         account.active = true;
-        let mut second = Account::new("grok", "personal").unwrap();
+        let mut second = new_account("grok", "personal").unwrap();
         second.active = true;
         write(vec![account.clone(), second]);
         assert!(routing_registry_at(&directory).is_err());
