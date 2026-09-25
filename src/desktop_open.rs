@@ -189,12 +189,48 @@ fn spawn_desktop() -> Result<(), String> {
     }
     let mut last = "Install the desktop package.".to_string();
     for path in candidates {
+        let Some(path) = existing_desktop(&path) else {
+            continue;
+        };
         match Command::new(&path).spawn() {
             Ok(_) => return Ok(()),
             Err(error) => last = error.to_string(),
         }
     }
     Err(format!("Could not open Spanreed Desktop: {last}"))
+}
+
+/// A bare name is only usable when it is a real file on `PATH`.
+/// `Spanreed.exe` is also the CLI on Windows, so that file is not a desktop.
+fn existing_desktop(path: &std::path::Path) -> Option<PathBuf> {
+    let resolved = if path.components().count() == 1 {
+        std::env::var_os("PATH").and_then(|entries| {
+            std::env::split_paths(&entries).find_map(|dir| {
+                let candidate = dir.join(path);
+                candidate.is_file().then_some(candidate)
+            })
+        })?
+    } else if path.is_file() {
+        path.to_path_buf()
+    } else {
+        return None;
+    };
+    (!is_cli_binary(&resolved)).then_some(resolved)
+}
+
+fn is_cli_binary(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name() else {
+        return false;
+    };
+    if !name.eq_ignore_ascii_case(crate::app::bin_name()) {
+        return false;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let exe = exe.canonicalize().unwrap_or(exe);
+    path == exe || path.parent() == exe.parent().and_then(|dir| dir.parent())
 }
 
 fn process_alive(pid: u32) -> bool {
@@ -283,6 +319,24 @@ mod tests {
             assert_eq!(take().as_deref(), Some("#/local/settings"));
             assert!(take().is_none());
         });
+    }
+
+    #[test]
+    fn the_cli_binary_is_not_a_desktop() {
+        let exe = std::env::current_exe().expect("current exe");
+        let cli = exe
+            .parent()
+            .and_then(|dir| dir.parent())
+            .expect("target dir")
+            .join(crate::app::bin_name());
+        if cli.is_file() {
+            assert!(existing_desktop(&cli).is_none());
+        }
+        let name = exe.file_name().expect("exe name");
+        assert!(
+            is_cli_binary(&exe) || !name.eq_ignore_ascii_case(crate::app::bin_name()),
+            "the test harness must not be treated as a packaged desktop"
+        );
     }
 
     #[test]
