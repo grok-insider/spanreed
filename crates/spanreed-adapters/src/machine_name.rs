@@ -40,7 +40,7 @@ fn read_os_hostname() -> Option<String> {
 #[cfg(windows)]
 fn read_os_hostname() -> Option<String> {
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn GetComputerNameExW(format: u32, buffer: *mut u16, size: *mut u32) -> i32;
     }
     const COMPUTER_NAME_DNS_HOSTNAME: u32 = 1;

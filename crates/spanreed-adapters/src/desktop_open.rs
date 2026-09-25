@@ -439,7 +439,7 @@ mod tests {
             // FIXME: Audit that the environment access only happens in single-threaded code.
             unsafe { std::env::set_var("PATH", dir) };
             #[cfg(windows)]
-            {
+            unsafe {
                 std::env::set_var("LOCALAPPDATA", dir);
                 std::env::set_var("ProgramFiles", dir);
                 std::env::set_var("ProgramFiles(x86)", dir);

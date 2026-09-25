@@ -34,7 +34,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(windows)]
 fn detach_console() {
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn FreeConsole() -> i32;
     }
     // Ignore failure (already detached / no console).

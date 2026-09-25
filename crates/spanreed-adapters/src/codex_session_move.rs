@@ -250,7 +250,7 @@ fn quarantine_path(journal: &Journal) -> PathBuf {
 fn retire_source(journal: &Journal) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
-    extern "system" {
+    unsafe extern "system" {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
     let source: Vec<u16> = Path::new(&journal.view.source_path)

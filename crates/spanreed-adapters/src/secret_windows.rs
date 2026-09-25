@@ -19,7 +19,7 @@ struct Credential {
 }
 
 #[link(name = "advapi32")]
-extern "system" {
+unsafe extern "system" {
     fn CredReadW(
         target: *const u16,
         kind: u32,
