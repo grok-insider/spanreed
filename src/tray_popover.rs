@@ -27,6 +27,15 @@ impl Popover {
             .with_inner_size(LogicalSize::new(392.0, 720.0))
             .build(target)
             .map_err(|error| format!("usage card window: {error}"))?;
+        // Visibility changes wait for the event loop, so a hidden window still
+        // has no native handle here. Realize it directly or the card view
+        // cannot attach and the tray exits.
+        #[cfg(target_os = "linux")]
+        {
+            use gtk::prelude::WidgetExt;
+            use tao::platform::unix::WindowExtUnix;
+            window.gtk_window().realize();
+        }
         let (tx, rx) = mpsc::channel();
         let webview = build_view(&window, tx)?;
         Ok(Self {
