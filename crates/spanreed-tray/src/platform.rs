@@ -5,7 +5,7 @@ use std::process::Command;
 use std::thread;
 
 use super::LOCK_FILE;
-use crate::app;
+use spanreed_app::app;
 
 /// Single-instance guard: create `…/spanreed/tray.lock` with our PID.
 /// Dropped on process exit (RAII removes the file).

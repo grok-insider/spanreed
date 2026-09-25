@@ -194,12 +194,8 @@ fn severity(pct: f64) -> &'static str {
 ///
 /// `text` is the last-used paid Claude/Codex/Grok provider's primary metric
 /// (e.g. "claude 42%"), falling back to highest utilization when no local
-/// activity signal is available. The tooltip lists every provider/line.
-pub fn waybar(outputs: &[ProviderOutput]) -> serde_json::Value {
-    waybar_with_activity(outputs, crate::activity::last_activity_ms)
-}
-
-/// Like [`waybar`], but activity timestamps come from `activity` (test seam).
+/// activity signal is available; `activity` returns a provider's last local
+/// use. The tooltip lists every provider/line.
 pub fn waybar_with_activity(
     outputs: &[ProviderOutput],
     activity: impl Fn(&str) -> Option<i64>,
@@ -730,7 +726,7 @@ mod tests {
                 ),
             ],
         )];
-        let j = waybar(&outputs);
+        let j = waybar_with_activity(&outputs, |_| None);
         let tip = j["tooltip"].as_str().unwrap();
         assert!(tip.contains("Usage Trend: ▁"), "tooltip: {tip}");
         assert!(

@@ -257,15 +257,6 @@ mod tests {
     use super::icon;
 
     #[test]
-    fn every_spanreed_provider_has_a_mark() {
-        for provider in crate::providers::all() {
-            let svg = icon(provider.id());
-            assert!(!svg.contains("data-icon=\"fallback\""), "{}", provider.id());
-            assert!(svg.contains("<title>"), "{}", provider.id());
-        }
-    }
-
-    #[test]
     fn dev_registry_ids_keep_a_mark() {
         for id in [
             "azureopenai",

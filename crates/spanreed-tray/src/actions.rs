@@ -1,4 +1,4 @@
-//! What each tray action does. Work goes through `crate::app`; results are
+//! What each tray action does. Work goes through `spanreed_app::app`; results are
 //! shown as tray status and, for longer ones, a notification.
 
 use std::process::Command;
@@ -12,8 +12,8 @@ use super::popover::{Popover, allowed_buy_url};
 use super::state::{
     Shared, begin_refresh, refresh_state, run_update_check, set_status, stamp_status,
 };
-use crate::app;
-use crate::tray_format;
+use spanreed_app::app;
+use spanreed_domain::tray_format;
 
 /// A message posted by the usage card.
 pub(super) fn popover_message(message: &str, state: &Shared, popover: &mut Popover) -> Flow {

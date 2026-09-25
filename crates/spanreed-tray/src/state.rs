@@ -1,14 +1,14 @@
-//! Shared tray state and its refresh from `crate::app`.
+//! Shared tray state and its refresh from `spanreed_app::app`.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use super::platform::user_notify;
-use crate::app::{self, AppContext};
-use crate::model::ProviderOutput;
-use crate::tray_format;
-use crate::util;
+use spanreed_app::app::{self, AppContext};
+use spanreed_domain::model::ProviderOutput;
+use spanreed_domain::tray_format;
+use spanreed_domain::util;
 
 pub(super) type Shared = Arc<Mutex<TrayState>>;
 

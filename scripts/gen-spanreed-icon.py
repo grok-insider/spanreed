@@ -19,7 +19,7 @@ def main() -> None:
         sys.exit(f"missing {SRC}")
     if shutil.which("magick") is None:
         sys.exit("need ImageMagick `magick` on PATH")
-    dests = [ROOT / "assets" / "tray", ROOT / "src" / "tray" / "assets" / "tray"]
+    dests = [ROOT / "assets" / "tray", ROOT / "crates" / "spanreed-tray" / "src" / "assets" / "tray"]
     for d in dests:
         d.mkdir(parents=True, exist_ok=True)
     for size in (16, 32, 64):

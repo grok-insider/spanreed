@@ -64,6 +64,12 @@ def expected_assets(version):
     return names + [name + ".sha256" for name in names]
 
 
+# Workspace packages released with the CLI version, and those the desktop
+# host locks (it depends on spanreed-app, which depends on spanreed-domain).
+LOCAL_PACKAGES = ("spanreed", "spanreed-domain", "spanreed-app", "spanreed-tray")
+DESKTOP_PACKAGES = ("spanreed-domain", "spanreed-app", "spanreed-desktop")
+
+
 def package_version():
     return tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
 
@@ -71,13 +77,15 @@ def package_version():
 def check_versions():
     version = package_version()
     version_tuple(version)
+    if tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"] != version:
+        raise ValueError("Workspace package version differs from CLI")
     for name in ("desktop/package.json", "desktop/src-tauri/tauri.conf.json"):
         if json.loads(Path(name).read_text())["version"] != version:
             raise ValueError(f"Version mismatch: {name}")
     if tomllib.loads(Path("desktop/src-tauri/Cargo.toml").read_text())["package"]["version"] != version:
         raise ValueError("Desktop Cargo version differs from CLI")
-    for name, packages in (("Cargo.lock", ("spanreed",)),
-                           ("desktop/src-tauri/Cargo.lock", ("spanreed", "spanreed-desktop"))):
+    for name, packages in (("Cargo.lock", LOCAL_PACKAGES),
+                           ("desktop/src-tauri/Cargo.lock", DESKTOP_PACKAGES)):
         entries = tomllib.loads(Path(name).read_text())["package"]
         for package in packages:
             matches = [p for p in entries if p["name"] == package]
@@ -89,15 +97,18 @@ def check_versions():
 def bump_files(version):
     version_tuple(version)
     path = Path("Cargo.toml")
-    text, count = re.subn(r'(?m)^version = "[^"]+"$', f'version = "{version}"', path.read_text(), count=1)
-    if count != 1:
-        raise ValueError("Missing package version")
+    # [package] and [workspace.package]; member crates inherit the latter.
+    text, count = re.subn(r'(?m)^version = "[^"]+"$', f'version = "{version}"', path.read_text())
+    if count != 2:
+        raise ValueError("Missing package or workspace version")
     path.write_text(text)
     path = Path("Cargo.lock")
-    text, count = re.subn(r'(\[\[package\]\]\nname = "spanreed"\nversion = ")[^"]+("\n)',
-                        lambda m: m[1] + version + m[2], path.read_text())
-    if count != 1:
-        raise ValueError("Missing local lock entry")
+    text = path.read_text()
+    for package in LOCAL_PACKAGES:
+        text, count = re.subn(rf'(\[\[package\]\]\nname = "{package}"\nversion = ")[^"]+("\n)',
+                              lambda m: m[1] + version + m[2], text)
+        if count != 1:
+            raise ValueError(f"Missing local lock entry {package}")
     path.write_text(text)
     run(sys.executable, "scripts/sync-desktop-version.py")
     check_versions()

@@ -6,8 +6,8 @@ use tray_icon::{Icon, TrayIcon};
 use super::menu::TrayMenu;
 use super::state::Shared;
 use super::{MENU_CHECK, MENU_LINK_SHARE, MENU_SHARE_NOW};
-use crate::app;
-use crate::tray_format::{self, TraySeverity};
+use spanreed_app::app;
+use spanreed_domain::tray_format::{self, TraySeverity};
 
 const MASTER_PNG: &[u8] = include_bytes!("assets/tray/spanreed-32.png");
 

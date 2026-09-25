@@ -46,10 +46,9 @@ pub struct ProbePorts<'a> {
     pub after: &'a [&'a dyn AfterProbe],
 }
 
-#[cfg(test)]
-pub(crate) struct NoCost;
+/// No cost lines (tests and probes that only need quotas).
+pub struct NoCost;
 
-#[cfg(test)]
 impl CostSource for NoCost {
     fn local_cost_lines(&self, _: &str, _: Option<i64>) -> Vec<MetricLine> {
         Vec::new()
@@ -62,10 +61,9 @@ impl CostSource for NoCost {
     }
 }
 
-#[cfg(test)]
 impl ProbePorts<'static> {
     /// No cost lines and no hooks.
-    pub(crate) fn bare() -> Self {
+    pub fn bare() -> Self {
         Self {
             cost: &NoCost,
             after: &[],

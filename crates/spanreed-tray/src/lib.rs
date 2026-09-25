@@ -13,9 +13,11 @@
 //! `capture ensure` only.
 //!
 //! Layout: `menu` (items and actions), `state` (shared state and refresh),
-//! `actions` (what each action does, through `crate::app`), `visual` (icon and
+//! `actions` (what each action does, through `spanreed_app::app`), `visual` (icon and
 //! tooltip), `popover` (the usage card window), `platform` (instance lock,
 //! opening URLs/files, notifications).
+
+#![cfg(feature = "tray")]
 
 mod actions;
 mod menu;
@@ -34,9 +36,9 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tray_icon::menu::MenuEvent;
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::app::AppContext;
-use crate::tray_format::TraySeverity;
 use menu::{Action, TrayMenu};
+use spanreed_app::app::AppContext;
+use spanreed_domain::tray_format::TraySeverity;
 use state::{Shared, TrayState};
 
 pub const DEFAULT_INTERVAL_SECS: u64 = 60;
@@ -70,7 +72,7 @@ pub fn run(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
         .with_menu_on_left_click(false)
         .with_tooltip(state::tooltip_from(&state))
         .with_icon(visual::icon_for_severity(TraySeverity::Ok)?)
-        .with_title(crate::app::PRODUCT_NAME)
+        .with_title(spanreed_app::app::PRODUCT_NAME)
         .build()
         .map_err(|e| format!("tray icon: {e}"))?;
     visual::apply_visual(&state, &mut tray, &menu);
@@ -241,7 +243,7 @@ mod tests {
 
     #[test]
     fn capture_log_path_is_under_spanreed_logs() {
-        let p: PathBuf = crate::app::capture::log_path();
+        let p: PathBuf = spanreed_app::app::capture::log_path();
         let s = p.to_string_lossy();
         assert!(
             s.contains("spanreed") && s.contains("capture.log"),

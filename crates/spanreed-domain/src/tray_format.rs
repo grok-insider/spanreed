@@ -5,8 +5,6 @@
 //! helpers are only hit by unit tests (and a few only by the tray UI), so clippy
 //! would otherwise flag dead_code under default features / `-D warnings`.
 
-#![cfg_attr(not(feature = "tray"), allow(dead_code))]
-
 use std::time::{Duration, Instant};
 
 use crate::model::{MetricLine, ProgressFormat, ProviderOutput};

@@ -3959,8 +3959,22 @@ dependencies = [
 name = "spanreed"
 version = "0.6.1"
 dependencies = [
- "dirs 5.0.1",
  "env_logger",
+ "fabrials-agent-host",
+ "fabrials-types",
+ "libc",
+ "serde",
+ "serde_json",
+ "spanreed-app",
+ "spanreed-domain",
+ "spanreed-tray",
+]
+
+[[package]]
+name = "spanreed-app"
+version = "0.6.1"
+dependencies = [
+ "dirs 5.0.1",
  "fabrials-accounts",
  "fabrials-agent-host",
  "fabrials-metrics",
@@ -3971,8 +3985,6 @@ dependencies = [
  "fabrials-upstreams",
  "flate2",
  "getrandom 0.2.17",
- "gtk",
- "image",
  "jsonc-parser",
  "libc",
  "log",
@@ -3983,15 +3995,39 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "tao",
+ "spanreed-domain",
  "tar",
  "time",
  "toml",
  "toml_edit 0.20.2",
- "tray-icon",
  "ts-rs",
- "wry",
  "zip",
+]
+
+[[package]]
+name = "spanreed-domain"
+version = "0.6.1"
+dependencies = [
+ "fabrials-types",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "spanreed-tray"
+version = "0.6.1"
+dependencies = [
+ "getrandom 0.2.17",
+ "gtk",
+ "image",
+ "log",
+ "serde_json",
+ "spanreed-app",
+ "spanreed-domain",
+ "tao",
+ "tray-icon",
+ "wry",
 ]
 
 [[package]]

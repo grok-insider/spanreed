@@ -68,7 +68,7 @@ class VersionTests(unittest.TestCase):
             for name, entries in before.items():
                 after = release.tomllib.loads(Path(name).read_text())["package"]
                 for entry in entries:
-                    if entry["name"] in ("spanreed", "spanreed-desktop"):
+                    if entry["name"] in release.LOCAL_PACKAGES + release.DESKTOP_PACKAGES:
                         entry["version"] = "0.3.1"
                 self.assertEqual(entries, after)
             first = Path("desktop/package.json").read_bytes()

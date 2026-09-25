@@ -52,7 +52,9 @@ mod tests {
         let generated = fabrials_types::contracts::typescript();
         assert_eq!(
             generated,
-            include_str!("../vendor/fabrials-libs/crates/fabrials-types/bindings/contracts.ts")
+            include_str!(
+                "../../../vendor/fabrials-libs/crates/fabrials-types/bindings/contracts.ts"
+            )
         );
     }
 
@@ -60,7 +62,7 @@ mod tests {
     fn renderer_contracts_match_native_dtos() {
         assert_eq!(
             super::typescript(),
-            include_str!("../desktop/src/contracts.ts"),
+            include_str!("../../../desktop/src/contracts.ts"),
             "Regenerate desktop/src/contracts.ts with the desktop-contracts example"
         );
     }

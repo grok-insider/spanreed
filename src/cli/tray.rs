@@ -6,7 +6,7 @@ use crate::app::AppContext;
 
 #[cfg(feature = "tray")]
 pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
-    use crate::tray::DEFAULT_INTERVAL_SECS;
+    use spanreed_tray::DEFAULT_INTERVAL_SECS;
     let mut interval = DEFAULT_INTERVAL_SECS;
     let mut i = 0;
     while i < args.len() {
@@ -46,7 +46,7 @@ pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
         }
         i += 1;
     }
-    if let Err(e) = crate::tray::run(ctx.clone(), interval) {
+    if let Err(e) = spanreed_tray::run(ctx.clone(), interval) {
         eprintln!("tray: {e}");
         ExitCode::FAILURE
     } else {

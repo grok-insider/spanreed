@@ -35,11 +35,11 @@ pub fn files(name: &str) -> Option<Vec<(&'static str, &'static str)>> {
         ]),
         "eww" => Some(vec![("spanreed.yuck", EWW), ("spanreed.scss", EWW_CSS)]),
         "eww-panel" => Some(vec![
-            ("eww.yuck", include_str!("../profiles/eww/eww.yuck")),
-            ("eww.scss", include_str!("../profiles/eww/eww.scss")),
+            ("eww.yuck", include_str!("../../../profiles/eww/eww.yuck")),
+            ("eww.scss", include_str!("../../../profiles/eww/eww.scss")),
             (
                 "spanreed-panel",
-                include_str!("../profiles/eww/spanreed-panel"),
+                include_str!("../../../profiles/eww/spanreed-panel"),
             ),
         ]),
         "sketchybar" => Some(vec![("spanreed.sh", SKETCHYBAR)]),
