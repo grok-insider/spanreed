@@ -16,6 +16,9 @@ pub fn list_cost_usd_with(record: &UsageRecord, table: &pricing::PricingMap) -> 
     if record.is_failed() {
         return None;
     }
+    if let Some(usd) = crate::opencode_go::list_cost_usd(record) {
+        return Some(usd);
+    }
     if let Some(usd) = media_cost(record, table) {
         return Some(usd);
     }
@@ -184,6 +187,66 @@ mod tests {
     }
 
     #[test]
+    fn grok_47_matches_46_list_price() {
+        fn close(got: Option<f64>, expected: f64) {
+            let got = got.expect("priced");
+            assert!(
+                (got - expected).abs() < 1e-12,
+                "got={got} expected={expected}"
+            );
+        }
+        for model in ["grok-4.7", "grok-4.7-build"] {
+            let inn = UsageRecord {
+                model: Some(model.into()),
+                input_tokens: 100_000,
+                ..UsageRecord::default()
+            };
+            close(list_cost_usd(&inn), 100_000.0 * 2e-6);
+            let cached = UsageRecord {
+                model: Some(model.into()),
+                input_tokens: 100_000,
+                cached_input_tokens: 100_000,
+                ..UsageRecord::default()
+            };
+            close(list_cost_usd(&cached), 100_000.0 * 5e-7);
+        }
+        for model in ["grok-4.7-build-fast", "grok-4.7-fast"] {
+            let fast = UsageRecord {
+                model: Some(model.into()),
+                input_tokens: 100_000,
+                ..UsageRecord::default()
+            };
+            close(list_cost_usd(&fast), 100_000.0 * 4e-6);
+        }
+        let fast_cached = UsageRecord {
+            model: Some("grok-4.7-build-fast".into()),
+            input_tokens: 100_000,
+            cached_input_tokens: 100_000,
+            ..UsageRecord::default()
+        };
+        close(list_cost_usd(&fast_cached), 100_000.0 * 1e-6);
+        // ≥200k reprices every token. Fast long context is $6 / $1.50 / $18,
+        // not another 2× on top of the standard long tier ($4 / $1 / $12).
+        let fast_long = UsageRecord {
+            model: Some("grok-4.7-build-fast".into()),
+            input_tokens: 200_000,
+            output_tokens: 1_000,
+            ..UsageRecord::default()
+        };
+        close(
+            list_cost_usd(&fast_long),
+            200_000.0 * 6e-6 + 1_000.0 * 1.8e-5,
+        );
+        let fast_long_cached = UsageRecord {
+            model: Some("grok-4.7-build-fast".into()),
+            input_tokens: 200_000,
+            cached_input_tokens: 200_000,
+            ..UsageRecord::default()
+        };
+        close(list_cost_usd(&fast_long_cached), 200_000.0 * 1.5e-6);
+    }
+
+    #[test]
     fn unknown_model_is_none() {
         let rec = UsageRecord {
             model: Some("not-a-real-model-xyz".into()),
@@ -191,6 +254,22 @@ mod tests {
             ..UsageRecord::default()
         };
         assert!(list_cost_usd(&rec).is_none());
+    }
+
+    #[test]
+    fn open_mail_synthetic_usage_has_a_positive_go_price() {
+        let mut record = UsageRecord {
+            provider: Some("opencode-go".into()),
+            model: Some("deepseek-v4.1-flash".into()),
+            ts_ms: 1_789_409_220_431,
+            input_tokens: 177,
+            output_tokens: 44,
+            status: Some(200),
+            ..Default::default()
+        };
+        assert!((list_cost_usd(&record).unwrap() - 0.00005295).abs() < 1e-12);
+        record.status = Some(500);
+        assert!(list_cost_usd(&record).is_none());
     }
 
     fn close(got: Option<f64>, expected: f64) {

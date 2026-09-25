@@ -18,15 +18,26 @@ impl Provider for CodexAdapter {
         if route.route != "codex" {
             return None;
         }
-        let path = match route.path.split('?').next()? {
-            "/v1/responses" => "/backend-api/codex/responses",
-            "/v1/chat/completions" => "/backend-api/codex/chat/completions",
-            "/v1/models" => "/backend-api/codex/models",
+        let (path_only, query) = match route.path.split_once('?') {
+            Some((path, query)) => (path, Some(query)),
+            None => (route.path.as_str(), None),
+        };
+        let path = match path_only {
+            "/v1/responses" => "/backend-api/codex/responses".to_string(),
+            "/v1/chat/completions" => "/backend-api/codex/chat/completions".to_string(),
+            "/v1/models" => {
+                let mut path = "/backend-api/codex/models".to_string();
+                if let Some(version) = query.and_then(translation::client_version_from_query) {
+                    path.push_str("?client_version=");
+                    path.push_str(version);
+                }
+                path
+            }
             _ => return None,
         };
         Some(Upstream {
             base: self.base.clone().unwrap_or("https://chatgpt.com".into()),
-            path: path.into(),
+            path,
             account_alias: route.account_alias,
             route: "codex",
         })
@@ -57,13 +68,14 @@ impl Provider for CodexAdapter {
             .map(|p| p.into_record(translation::now_ms(), None, None, Some("codex".into())))
     }
     fn classify(&self, hop: &Upstream, upgrade: bool) -> HopClass {
+        let path = codex_api_path(&hop.path);
         HopClass {
-            kind: if hop.path.ends_with("/models") {
+            kind: if path.ends_with("/models") {
                 HopKind::Models
             } else {
                 HopKind::Chat
             },
-            transport: if upgrade && hop.path == "/backend-api/codex/responses" {
+            transport: if upgrade && path == "/backend-api/codex/responses" {
                 Transport::WebSocket
             } else {
                 Transport::Http
@@ -72,7 +84,7 @@ impl Provider for CodexAdapter {
     }
 
     fn allows_request(&self, method: &str, hop: &Upstream, upgrade: bool) -> bool {
-        match hop.path.as_str() {
+        match codex_api_path(&hop.path) {
             "/backend-api/codex/models" => method == "GET" && !upgrade,
             "/backend-api/codex/responses" => {
                 (method == "POST" && !upgrade) || (method == "GET" && upgrade)
@@ -99,6 +111,10 @@ impl Provider for CodexAdapter {
     }
 }
 
+fn codex_api_path(path: &str) -> &str {
+    path.split_once('?').map(|(path, _)| path).unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,8 +128,24 @@ mod tests {
         assert_eq!(adapter.classify(&hop, true).transport, Transport::WebSocket);
         assert_eq!(adapter.classify(&hop, false).transport, Transport::Http);
         let catalog = adapter.resolve("/codex/v1/models").unwrap();
+        assert_eq!(catalog.path, "/backend-api/codex/models");
+        assert!(adapter.allows_request("GET", &catalog, false));
         assert_eq!(adapter.classify(&catalog, false).kind, HopKind::Models);
         assert_eq!(adapter.classify(&catalog, true).transport, Transport::Http);
+        let native = adapter
+            .resolve("/acct/personal/codex/v1/models?client_version=0.155.1")
+            .unwrap();
+        assert_eq!(
+            native.path,
+            "/backend-api/codex/models?client_version=0.155.1"
+        );
+        assert!(adapter.allows_request("GET", &native, false));
+        assert!(!adapter.allows_request("POST", &native, false));
+        assert_eq!(adapter.classify(&native, false).kind, HopKind::Models);
+        let ignored = adapter
+            .resolve("/codex/v1/models?client_version=0.155.1%0aX")
+            .unwrap();
+        assert_eq!(ignored.path, "/backend-api/codex/models");
         for path in [
             "/codex@evil/v1/responses",
             "/codex/v1/files",

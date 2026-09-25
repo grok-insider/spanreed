@@ -16,7 +16,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Resolve a fabric inject token. `None` = default/active account.
 pub type TokenSource = Arc<dyn Fn(Option<&str>) -> Option<String> + Send + Sync>;
@@ -236,6 +236,7 @@ fn handle_client(
         .find(|(k, _)| k.eq_ignore_ascii_case("x-grok-session-id"))
         .map(|(_, v)| v.clone());
 
+    let started = Instant::now();
     let mut upstream = req.send().map_err(|e| format!("upstream: {e}"))?;
     let status = upstream.status();
     let resp_headers: Vec<(String, String)> = upstream
@@ -316,10 +317,34 @@ fn handle_client(
         &captured,
         session_id,
         account_id,
-        routed.route,
+        CaptureMeta {
+            route: routed.route,
+            kind: chat_kind(&routed.path),
+            elapsed: started.elapsed(),
+            status: status.as_u16(),
+        },
         !client_ok,
     );
     Ok(())
+}
+
+fn chat_kind(path: &str) -> Option<&'static str> {
+    let path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    if path.ends_with("/chat/completions")
+        || path.ends_with("/responses")
+        || path.ends_with("/messages")
+    {
+        Some("chat")
+    } else {
+        None
+    }
+}
+
+struct CaptureMeta {
+    route: &'static str,
+    kind: Option<&'static str>,
+    elapsed: Duration,
+    status: u16,
 }
 
 /// Best-effort ledger write from whatever body bytes we already read.
@@ -329,7 +354,7 @@ fn record_usage_from_capture(
     captured: &[u8],
     session_id: Option<String>,
     account_id: Option<String>,
-    route: &str,
+    meta: CaptureMeta,
     client_aborted: bool,
 ) {
     let text = String::from_utf8_lossy(captured);
@@ -347,7 +372,15 @@ fn record_usage_from_capture(
         }
         return;
     };
-    let rec = partial.into_record(util::now_ms(), session_id, account_id, Some(route.into()));
+    let mut rec = partial.into_record(
+        util::now_ms(),
+        session_id,
+        account_id,
+        Some(meta.route.into()),
+    );
+    rec.duration_ms = Some(meta.elapsed.as_millis() as u64);
+    rec.status = Some(meta.status);
+    rec.kind = meta.kind.map(str::to_string);
     if let Err(e) = grok_ledger::append(&rec) {
         log::warn!("[{label}] ledger append: {e}");
         return;
@@ -548,5 +581,13 @@ mod tests {
         assert_eq!(r.path, "/");
         assert_eq!(r.account_alias.as_deref(), Some("work"));
         assert_eq!(r.route, "grok");
+    }
+
+    #[test]
+    fn chat_paths_are_the_only_timed_generation_kind() {
+        assert_eq!(chat_kind("/v1/chat/completions"), Some("chat"));
+        assert_eq!(chat_kind("/v1/responses?stream=true"), Some("chat"));
+        assert_eq!(chat_kind("/v1/messages/"), Some("chat"));
+        assert_eq!(chat_kind("/v1/models"), None);
     }
 }

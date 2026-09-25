@@ -1,6 +1,8 @@
 //! Provider protocol adapters. Hosts own HTTP, credentials and persistence.
+pub mod claude;
 pub mod codex;
 pub mod grok;
+pub mod kimi;
 pub mod nous;
 
 pub mod device_flow;
@@ -8,4 +10,5 @@ pub mod device_flow;
 pub mod catalog;
 
 pub mod oauth;
+
 pub mod usage;

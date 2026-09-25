@@ -71,9 +71,54 @@ pub fn usage_from_response_body(body: &str) -> Option<UsagePartial> {
     best
 }
 
+/// Anthropic Messages streams split usage: `message_start` carries the input
+/// tokens under `message.usage`, `message_delta` the cumulative output count.
+/// Merge every observed partial by field maximum so both survive.
+/// Anthropic reports cache reads and writes beside `input_tokens`; they are
+/// folded into the input total with reads as `cached_input_tokens`.
+pub fn usage_from_messages_body(body: &str) -> Option<UsagePartial> {
+    let mut merged: Option<UsagePartial> = None;
+    for line in body.lines() {
+        let line = line.trim();
+        let payload = line.strip_prefix("data: ").unwrap_or(line);
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<UsageEnvelope>(payload) else {
+            continue;
+        };
+        if let Some(u) = usage_from_json(v) {
+            merged = Some(match merged {
+                Some(prev) => merge_partials(prev, u),
+                None => u,
+            });
+        }
+    }
+    merged
+}
+
+fn merge_partials(prev: UsagePartial, next: UsagePartial) -> UsagePartial {
+    let input_tokens = prev.input_tokens.max(next.input_tokens);
+    let output_tokens = prev.output_tokens.max(next.output_tokens);
+    UsagePartial {
+        input_tokens,
+        output_tokens,
+        cached_input_tokens: prev.cached_input_tokens.max(next.cached_input_tokens),
+        reasoning_tokens: prev.reasoning_tokens.max(next.reasoning_tokens),
+        total_tokens: prev
+            .total_tokens
+            .max(next.total_tokens)
+            .max(input_tokens.saturating_add(output_tokens)),
+        cost_usd_ticks: prev.cost_usd_ticks.max(next.cost_usd_ticks),
+        model: next.model.or(prev.model),
+        request_id: prev.request_id.or(next.request_id),
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct UsageEnvelope {
     response: Option<ResponseFields>,
+    message: Option<ResponseFields>,
     usage: Option<UsageFields>,
     model: Option<String>,
     id: Option<String>,
@@ -94,8 +139,11 @@ struct UsageFields {
     completion_tokens: Option<UsageNumber>,
     total_tokens: Option<UsageNumber>,
     input_tokens_details: Option<InputDetails>,
+    prompt_tokens_details: Option<InputDetails>,
     output_tokens_details: Option<OutputDetails>,
     cost_in_usd_ticks: Option<UsageNumber>,
+    cache_read_input_tokens: Option<UsageNumber>,
+    cache_creation_input_tokens: Option<UsageNumber>,
 }
 
 #[derive(Deserialize)]
@@ -125,17 +173,24 @@ struct OutputDetails {
 }
 
 fn usage_from_json(v: UsageEnvelope) -> Option<UsagePartial> {
-    let response = v.response.unwrap_or_default();
+    let response = v.response.or(v.message).unwrap_or_default();
     let usage = response.usage.or(v.usage)?;
     let num = |value: Option<&UsageNumber>| value.map(UsageNumber::value).unwrap_or(0);
-    let input = num(usage.input_tokens.as_ref()).max(num(usage.prompt_tokens.as_ref()));
+    let cache_read = num(usage.cache_read_input_tokens.as_ref());
+    let cache_creation = num(usage.cache_creation_input_tokens.as_ref());
+    let input = num(usage.input_tokens.as_ref())
+        .saturating_add(cache_read)
+        .saturating_add(cache_creation)
+        .max(num(usage.prompt_tokens.as_ref()));
     let output = num(usage.output_tokens.as_ref()).max(num(usage.completion_tokens.as_ref()));
     let total = num(usage.total_tokens.as_ref());
-    let cached = usage
-        .input_tokens_details
-        .as_ref()
+    let cached = [&usage.input_tokens_details, &usage.prompt_tokens_details]
+        .into_iter()
+        .flatten()
         .map(|details| num(details.cached_tokens.as_ref()))
-        .unwrap_or(0);
+        .max()
+        .unwrap_or(0)
+        .max(cache_read);
     let reasoning = usage
         .output_tokens_details
         .as_ref()
@@ -210,6 +265,41 @@ data: [DONE]
     }
 
     #[test]
+    fn merges_anthropic_message_start_and_delta() {
+        let body = "event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"union-alpha\",\"usage\":{\"input_tokens\":1200,\"output_tokens\":3,\"cache_read_input_tokens\":900}}}\n\
+\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\
+\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":57}}\n\
+\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n";
+        let u = usage_from_messages_body(body).unwrap();
+        assert_eq!(u.input_tokens, 2100);
+        assert_eq!(u.cached_input_tokens, 900);
+        assert_eq!(u.output_tokens, 57);
+        assert_eq!(u.total_tokens, 2157);
+        assert_eq!(u.model.as_deref(), Some("union-alpha"));
+        assert_eq!(u.request_id.as_deref(), Some("msg_1"));
+    }
+
+    #[test]
+    fn messages_body_ignores_usage_less_events_and_keeps_plain_json() {
+        assert!(usage_from_messages_body("event: ping\ndata: {\"type\":\"ping\"}\n").is_none());
+        assert!(usage_from_messages_body("").is_none());
+        let plain =
+            r#"{"id":"msg_2","model":"union-alpha","usage":{"input_tokens":10,"output_tokens":4}}"#;
+        let u = usage_from_messages_body(plain).unwrap();
+        assert_eq!(u.input_tokens, 10);
+        assert_eq!(u.output_tokens, 4);
+        assert_eq!(u.model.as_deref(), Some("union-alpha"));
+        assert_eq!(u.request_id.as_deref(), Some("msg_2"));
+    }
+
+    #[test]
     fn ignores_large_payload_fields_and_bounds_identifiers() {
         let payload = "x".repeat(1024 * 1024);
         let body = format!(
@@ -221,5 +311,27 @@ data: [DONE]
         assert_eq!(usage.output_tokens, 3);
         assert_eq!(usage.total_tokens, 5);
         assert!(usage.model.is_none());
+    }
+
+    #[test]
+    fn folds_anthropic_cache_reads_and_writes_into_input() {
+        let body = "event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_3\",\"model\":\"claude-opus-5-5\",\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":1500,\"cache_read_input_tokens\":48000,\"output_tokens\":1}}}\n\
+\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":1500,\"cache_read_input_tokens\":48000,\"output_tokens\":580}}\n";
+        let u = usage_from_messages_body(body).unwrap();
+        assert_eq!(u.input_tokens, 49_502);
+        assert_eq!(u.cached_input_tokens, 48_000);
+        assert_eq!(u.output_tokens, 580);
+        assert_eq!(u.total_tokens, 50_082);
+    }
+
+    #[test]
+    fn reads_chat_completions_prompt_cache_details() {
+        let body = r#"{"model":"m","usage":{"prompt_tokens":1000,"completion_tokens":10,"total_tokens":1010,"prompt_tokens_details":{"cached_tokens":800}}}"#;
+        let u = usage_from_response_body(body).unwrap();
+        assert_eq!(u.input_tokens, 1000);
+        assert_eq!(u.cached_input_tokens, 800);
     }
 }

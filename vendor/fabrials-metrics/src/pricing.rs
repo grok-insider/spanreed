@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 const EMBEDDED: &str = include_str!("pricing-data.json");
 
@@ -93,35 +93,92 @@ pub struct Usage {
     pub cache_read: u64,
 }
 
+/// Upper bound on remembered `find` results. Live traffic uses a few dozen
+/// distinct model names, so this only guards against an adversarial caller.
+const MEMO_CAP: usize = 4096;
+
 pub struct PricingMap {
     table: HashMap<String, Pricing>,
+    /// Normalized key to list price. The table keys are provider-qualified
+    /// (`xai/grok-4.3`) while usage records carry the bare name (`grok-4.3`),
+    /// so this index answers those without touching `prefix`.
+    normalized: HashMap<String, Pricing>,
+    /// Normalized keys in a stable order, for the dated-variant fallback.
+    prefix: Vec<(String, Pricing)>,
+    /// `find` answers by model name. A fold revisits the same handful of
+    /// models tens of thousands of times.
+    memo: Mutex<HashMap<String, Option<Pricing>>>,
+}
+
+/// Prefer the least-qualified key when several normalize to the same name.
+fn better_key(candidate: &str, current: &str) -> bool {
+    (candidate.len(), candidate) < (current.len(), current)
 }
 
 impl PricingMap {
-    pub fn find(&self, model: &str) -> Option<&Pricing> {
-        if let Some(p) = self.table.get(model) {
-            return Some(p);
+    fn new(table: HashMap<String, Pricing>) -> Self {
+        let mut normalized: HashMap<String, (String, Pricing)> = HashMap::new();
+        let mut keys: Vec<&String> = table.keys().collect();
+        keys.sort();
+        let mut prefix = Vec::with_capacity(keys.len());
+        for key in keys {
+            let pricing = table[key];
+            let nkey = normalize(key);
+            match normalized.get(&nkey) {
+                Some((current, _)) if !better_key(key, current) => {}
+                _ => {
+                    normalized.insert(nkey.clone(), (key.clone(), pricing));
+                }
+            }
+            prefix.push((nkey, pricing));
+        }
+        Self {
+            table,
+            normalized: normalized
+                .into_iter()
+                .map(|(nkey, (_, pricing))| (nkey, pricing))
+                .collect(),
+            prefix,
+            memo: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn find(&self, model: &str) -> Option<Pricing> {
+        if let Some(pricing) = self.table.get(model) {
+            return Some(*pricing);
         }
         let norm = normalize(model);
-        if let Some(p) = self.table.get(&norm) {
-            return Some(p);
+        if let Some(pricing) = self.normalized.get(&norm) {
+            return Some(*pricing);
         }
-        let mut best: Option<(&Pricing, usize)> = None;
-        for (key, pricing) in &self.table {
+        let mut memo = self.memo.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(hit) = memo.get(model) {
+            return *hit;
+        }
+        let found = self.scan_dated_variant(&norm);
+        if memo.len() < MEMO_CAP {
+            memo.insert(model.to_string(), found);
+        }
+        found
+    }
+
+    /// Longest shared prefix against the precomputed normalized keys.
+    fn scan_dated_variant(&self, norm: &str) -> Option<Pricing> {
+        let mut best: Option<(Pricing, usize)> = None;
+        for (nkey, pricing) in &self.prefix {
             if pricing.is_voice_only() {
                 continue;
             }
-            let nkey = normalize(key);
-            let matched = if norm.starts_with(&nkey) || nkey.starts_with(&norm) {
+            let matched = if norm.starts_with(nkey.as_str()) || nkey.starts_with(norm) {
                 nkey.len().min(norm.len())
             } else {
                 0
             };
             if matched > 0 && best.map(|(_, l)| matched > l).unwrap_or(true) {
-                best = Some((pricing, matched));
+                best = Some((*pricing, matched));
             }
         }
-        best.map(|(p, _)| p)
+        best.map(|(pricing, _)| pricing)
     }
 
     pub fn get(&self, model: &str) -> Option<&Pricing> {
@@ -176,7 +233,62 @@ pub fn build_table(embedded: &str, remote: Option<&str>, user: Option<&str>) -> 
         }
     }
     overlay_xai_media_prices(&mut table);
-    PricingMap { table }
+    overlay_codex_list_prices(&mut table);
+    overlay_claude_list_prices(&mut table);
+    PricingMap::new(table)
+}
+
+/// Published OpenAI list price for GPT-6 Astra.
+/// https://developers.openai.com/api/docs/models/gpt-6-astra
+/// Input $10, cached input $1, cache write $12.50, output $50 per million tokens.
+/// Prompts over 272k use 2× input and cache and 1.5× output for the whole
+/// request. This table only has a 200k switch, so the higher rate starts there.
+fn overlay_codex_list_prices(table: &mut HashMap<String, Pricing>) {
+    let input = 10.0 / 1_000_000.0;
+    let output = 50.0 / 1_000_000.0;
+    table.insert(
+        "gpt-6-astra".into(),
+        Pricing {
+            input,
+            output,
+            cache_create: input * 1.25,
+            cache_read: input * 0.1,
+            input_above_200k: Some(input * 2.0),
+            output_above_200k: Some(output * 1.5),
+            cache_create_above_200k: Some(input * 1.25 * 2.0),
+            cache_read_above_200k: Some(input * 0.1 * 2.0),
+            cost_per_character: None,
+            cost_per_second: None,
+            cost_per_image: None,
+        },
+    );
+}
+
+/// Anthropic list prices for Claude 5 models absent from the LiteLLM snapshot.
+/// https://platform.claude.com/docs/en/about-claude/pricing
+/// Per million tokens: input, 5-minute cache write, cache read, output. The full
+/// context window is billed at the standard rate.
+fn overlay_claude_list_prices(table: &mut HashMap<String, Pricing>) {
+    const M: f64 = 1_000_000.0;
+    for (model, input, cache_create, cache_read, output) in [
+        ("claude-opus-5-5", 4.0, 5.0, 0.20, 20.0),
+        ("claude-opus-5", 5.0, 6.25, 0.50, 25.0),
+        ("claude-sonnet-5", 2.0, 2.50, 0.20, 10.0),
+    ] {
+        table.entry(model.into()).or_insert(Pricing {
+            input: input / M,
+            output: output / M,
+            cache_create: cache_create / M,
+            cache_read: cache_read / M,
+            input_above_200k: None,
+            output_above_200k: None,
+            cache_create_above_200k: None,
+            cache_read_above_200k: None,
+            cost_per_character: None,
+            cost_per_second: None,
+            cost_per_image: None,
+        });
+    }
 }
 
 /// Official xAI Voice + Imagine list prices (not LiteLLM).
@@ -291,6 +403,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn claude_5_models_carry_anthropic_list_prices() {
+        let t = table();
+        let opus = t.find("claude-opus-5-5").expect("claude-opus-5-5 priced");
+        assert!((opus.input - 4e-6).abs() < 1e-15);
+        assert!((opus.cache_read - 2e-7).abs() < 1e-15);
+        assert!((opus.output - 2e-5).abs() < 1e-15);
+        assert!(t.find("claude-opus-5").is_some());
+        assert!(t.find("claude-sonnet-5").is_some());
+    }
+
+    #[test]
     fn embedded_table_parses_and_has_claude_and_gpt() {
         let t = table();
         assert!(
@@ -301,6 +424,13 @@ mod tests {
         assert!(t.find("grok-4.5").is_some() || t.find("grok-4").is_some());
         assert!(t.find("grok-4.6").is_some(), "grok-4.6 priced");
         assert!(t.find("grok-4.6-build").is_some(), "grok-4.6-build priced");
+        assert!(t.find("grok-4.7").is_some(), "grok-4.7 priced");
+        assert!(t.find("grok-4.7-build").is_some(), "grok-4.7-build priced");
+        assert!(
+            t.find("grok-4.7-build-fast").is_some(),
+            "grok-4.7-build-fast priced"
+        );
+        assert!(t.find("grok-4.7-fast").is_some(), "grok-4.7-fast priced");
         assert!(
             t.find("claude-fable-5-1").is_some(),
             "claude-fable-5-1 priced"
@@ -345,5 +475,73 @@ mod tests {
         })
         .to_string();
         assert!(filter_upstream(&upstream).is_err());
+    }
+
+    #[test]
+    fn bare_model_names_resolve_to_their_qualified_key() {
+        let map = build_table(
+            r#"{"xai/grok-4.3": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6}}"#,
+            None,
+            None,
+        );
+        let qualified = map.find("xai/grok-4.3").expect("qualified name priced");
+        let bare = map.find("grok-4.3").expect("bare name priced");
+        assert_eq!(bare.input, qualified.input);
+        assert_eq!(bare.output, qualified.output);
+    }
+
+    #[test]
+    fn embedded_table_prices_the_bare_grok_43_name() {
+        let map = table();
+        let qualified = map.find("xai/grok-4.3").expect("qualified grok-4.3");
+        let bare = map.find("grok-4.3").expect("bare grok-4.3");
+        assert_eq!(bare.input, qualified.input);
+    }
+
+    #[test]
+    fn gpt_6_astra_uses_the_published_list_price() {
+        let price = table().find("gpt-6-astra").expect("gpt-6-astra priced");
+        assert!((price.input - 1e-5).abs() < 1e-15);
+        assert!((price.output - 5e-5).abs() < 1e-15);
+        assert!((price.cache_read - 1e-6).abs() < 1e-15);
+        assert!((price.cache_create - 1.25e-5).abs() < 1e-15);
+        assert!((price.input_above_200k.unwrap() - 2e-5).abs() < 1e-15);
+        assert!((price.output_above_200k.unwrap() - 7.5e-5).abs() < 1e-15);
+        assert!((price.cache_read_above_200k.unwrap() - 2e-6).abs() < 1e-15);
+    }
+
+    #[test]
+    fn dated_variants_fall_back_to_the_shared_prefix() {
+        let map = build_table(
+            r#"{"xai/grok-4.6": {"input_cost_per_token": 3e-6, "output_cost_per_token": 9e-6}}"#,
+            None,
+            None,
+        );
+        let dated = map.find("grok-4.6-0309").expect("dated variant priced");
+        assert_eq!(dated.input, 3e-6);
+    }
+
+    #[test]
+    fn colliding_names_prefer_the_least_qualified_key() {
+        let map = build_table(
+            r#"{"azure_ai/grok-4": {"input_cost_per_token": 9e-6, "output_cost_per_token": 9e-6},
+                "xai/grok-4": {"input_cost_per_token": 3e-6, "output_cost_per_token": 15e-6}}"#,
+            None,
+            None,
+        );
+        assert_eq!(map.find("grok-4").expect("priced").input, 3e-6);
+    }
+
+    #[test]
+    fn unknown_models_are_remembered_instead_of_rescanned() {
+        let map = build_table(
+            r#"{"xai/grok-4.6": {"input_cost_per_token": 3e-6, "output_cost_per_token": 9e-6}}"#,
+            None,
+            None,
+        );
+        assert!(map.find("totally-unknown").is_none());
+        assert!(map.find("totally-unknown").is_none());
+        let memo = map.memo.lock().unwrap_or_else(|error| error.into_inner());
+        assert_eq!(memo.len(), 1);
     }
 }

@@ -284,6 +284,54 @@
     background: var(--popover);
     color: var(--popover-foreground);
   }
+  .fui-multi-select {
+    display: grid;
+    gap: var(--fui-space-1);
+    min-width: 9rem;
+  }
+  .fui-multi-select-label {
+    color: var(--muted-foreground);
+    font-size: var(--fui-text-xs);
+    font-weight: 500;
+    line-height: 1.25;
+  }
+  .fui-multi-select-trigger {
+    width: 100%;
+  }
+  .fui-multi-select-popup {
+    width: max(14rem, var(--anchor-width, 14rem));
+    padding: var(--fui-space-2);
+  }
+  .fui-multi-select-menu {
+    display: grid;
+    max-height: 16rem;
+    margin: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  .fui-multi-select-option {
+    display: flex;
+    align-items: center;
+    gap: var(--fui-space-2);
+    min-height: 2.75rem;
+    padding: 0 var(--fui-space-2);
+    border-radius: var(--fui-radius-sm);
+    cursor: pointer;
+  }
+  .fui-multi-select-option:hover {
+    background: var(--accent);
+  }
+  .fui-multi-select-clear {
+    justify-self: start;
+    min-height: 2.75rem;
+    padding: 0 var(--fui-space-2);
+    border: 0;
+    background: transparent;
+    color: var(--brand-ink);
+    font: inherit;
+    font-size: var(--fui-text-xs);
+    cursor: pointer;
+  }
   .fui-field {
     display: grid;
     gap: var(--fui-space-1-5);
@@ -3042,8 +3090,9 @@
 
   /* ---------------------------------------------------------------- toasts */
   .fui-toast-icon {
-    width: 1rem;
-    height: 1rem;
+    width: 1.125rem;
+    height: 1.125rem;
+    flex-shrink: 0;
   }
   .fui-toast-icon[data-tone="success"] {
     color: var(--fui-success-ink);
@@ -3228,18 +3277,165 @@
 
 /*
  * Sonner injects unlayered styles, so these overrides stay outside the
- * components layer. Colors come from the CSS variables set by <Toaster>.
+ * components layer. State tints use success, warning and danger ink — never
+ * the product gem. The close control stays inside the card so it cannot clip
+ * the leading edge, and height stays auto so a short measurement cannot crop
+ * the title or let the next notice show through.
  */
+.fui-toaster[data-sonner-toaster] {
+  z-index: var(--fui-z-toast);
+  max-width: calc(100vw - 2rem);
+}
+.fui-toaster[data-sonner-toaster][dir="ltr"],
+.fui-toaster[data-sonner-toaster][dir="rtl"] {
+  --toast-icon-margin-start: 0px;
+  --toast-icon-margin-end: 0px;
+  --toast-svg-margin-start: 0px;
+  --toast-svg-margin-end: 0px;
+  --toast-close-button-transform: none;
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast] {
+  transition:
+    transform var(--fui-duration) var(--fui-ease),
+    opacity var(--fui-duration) var(--fui-ease),
+    height var(--fui-duration) var(--fui-ease),
+    box-shadow var(--fui-duration) var(--fui-ease);
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-y-position="bottom"]:not([data-mounted="true"]) {
+  --y: translateY(4px);
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-y-position="top"]:not([data-mounted="true"]) {
+  --y: translateY(-4px);
+}
 .fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
-  gap: var(--fui-space-2-5);
-  padding: var(--fui-space-3) var(--fui-space-4);
-  box-shadow: var(--fui-shadow-md);
+  align-items: center;
+  gap: var(--fui-space-3);
+  width: min(var(--width), calc(100vw - 2rem));
+  height: auto;
+  min-height: 3.5rem;
+  padding-block: 0.875rem;
+  padding-inline: var(--fui-space-4) var(--fui-space-3);
+  overflow: visible;
+  border-radius: var(--fui-radius-xl);
+  background: var(--popover);
+  border-color: var(--border);
+  box-shadow: var(--fui-shadow-lg), var(--fui-highlight);
+  color: var(--foreground);
   font-family: var(--fui-font-sans);
   font-size: var(--fui-text-sm);
+  line-height: var(--fui-leading-sm);
 }
-.fui-toaster[data-sonner-toaster] [data-sonner-toast] [data-title] {
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"][data-type="success"],
+.fui-toaster[data-sonner-toaster] [data-rich-colors="true"][data-sonner-toast][data-type="success"] {
+  background: color-mix(in oklab, var(--success) 9%, var(--popover));
+  border-color: color-mix(in oklab, var(--fui-success-ink) 30%, var(--border));
+  color: var(--foreground);
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"][data-type="error"],
+.fui-toaster[data-sonner-toaster] [data-rich-colors="true"][data-sonner-toast][data-type="error"] {
+  background: color-mix(in oklab, var(--destructive) 8%, var(--popover));
+  border-color: color-mix(in oklab, var(--fui-danger-ink) 40%, var(--border));
+  color: var(--foreground);
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"][data-type="warning"],
+.fui-toaster[data-sonner-toaster] [data-rich-colors="true"][data-sonner-toast][data-type="warning"] {
+  background: color-mix(in oklab, var(--warning) 11%, var(--popover));
+  border-color: color-mix(in oklab, var(--fui-warning-ink) 32%, var(--border));
+  color: var(--foreground);
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"][data-type="info"],
+.fui-toaster[data-sonner-toaster] [data-rich-colors="true"][data-sonner-toast][data-type="info"] {
+  background: color-mix(in oklab, var(--brand) 8%, var(--popover));
+  border-color: color-mix(in oklab, var(--brand-ink) 30%, var(--border));
+  color: var(--foreground);
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon] {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon] svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-content] {
+  flex: 1 1 auto;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-title] {
+  font-weight: var(--fui-weight-medium);
+  line-height: var(--fui-leading-sm);
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
+  color: var(--muted-foreground);
+  line-height: var(--fui-leading-sm);
+  overflow-wrap: anywhere;
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button] {
+  position: static;
+  top: auto;
+  right: auto;
+  left: auto;
+  order: 1;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-block: 0;
+  margin-inline: auto 0;
+  transform: none;
+  border: 0;
+  border-radius: var(--fui-radius-sm);
+  background: transparent;
+  color: var(--muted-foreground);
+  box-shadow: none;
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button] svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button]:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button]:focus-visible,
+.fui-toaster[data-sonner-toaster] [data-sonner-toast]:focus-visible {
+  outline: 2px solid var(--fui-focus);
+  outline-offset: 2px;
+  box-shadow: var(--fui-shadow-lg), var(--fui-highlight);
+}
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
+  height: 2rem;
+  margin: 0;
+  padding: 0 var(--fui-space-3);
+  border-radius: var(--fui-radius-md);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-family: inherit;
+  font-size: var(--fui-text-xs);
   font-weight: var(--fui-weight-medium);
 }
-.fui-toaster[data-sonner-toaster] [data-sonner-toast] [data-description] {
-  color: var(--muted-foreground);
+.fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-cancel] {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground);
+}
+@media (max-width: 600px) {
+  .fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+    width: calc(100% - var(--mobile-offset-left) - var(--mobile-offset-right));
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .fui-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button] {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fui-toaster[data-sonner-toaster] [data-sonner-toast] {
+    transition: none;
+  }
 }

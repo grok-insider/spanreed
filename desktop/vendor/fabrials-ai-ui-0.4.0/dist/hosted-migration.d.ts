@@ -31,8 +31,10 @@ export type MigrationAuthorization = {
     sourceId: string;
     onConnected: () => Promise<void>;
 };
-export declare function HostedMigration({ api: migrationApi, origin, authorize, }: {
+export declare function HostedMigration({ api: migrationApi, origin, authorize, heading, }: {
     api: HostedMigrationApi;
     origin: string;
     authorize: (request: MigrationAuthorization) => React.ReactNode;
+    /** The host already shows the page title. */
+    heading?: boolean;
 }): React.JSX.Element;
