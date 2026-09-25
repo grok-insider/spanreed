@@ -287,9 +287,8 @@ try {
 } catch {}
 try {
   Show-SpanreedBalloon
-} catch {
-  if (-not $toastShown) { throw }
-}
+} catch {}
+if ($script:toastFailed -or -not $toastShown) { throw "Spanreed notification was not shown" }
 "#;
 
 #[cfg(test)]
@@ -383,7 +382,9 @@ mod tests {
         assert!(WINDOWS_NOTIFY.contains("Show($toast)"));
         assert!(WINDOWS_NOTIFY.contains("add_Failed"));
         assert!(WINDOWS_NOTIFY.contains("if (-not $script:toastFailed) { $toastShown = $true }"));
-        assert!(WINDOWS_NOTIFY.contains("if (-not $toastShown) { throw }"));
+        assert!(WINDOWS_NOTIFY.contains(
+            "if ($script:toastFailed -or -not $toastShown) { throw \"Spanreed notification was not shown\" }"
+        ));
         assert!(WINDOWS_NOTIFY.contains("Start-Sleep -Seconds 2"));
         assert!(!WINDOWS_NOTIFY.contains("CreateToastNotifier('com.fabrials.spanreed')"));
     }
