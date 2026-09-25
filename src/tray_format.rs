@@ -31,6 +31,15 @@ pub fn reset_hung(status_at: Option<Instant>, reset_in_flight: bool, now: Instan
         && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(60))
 }
 
+/// A refresh must not cover the capture-down line. Other states show progress.
+pub fn begin_refresh_status(current: Option<&str>) -> Option<&'static str> {
+    if current == Some("Capture proxy is DOWN") {
+        None
+    } else {
+        Some("Refreshing usage…")
+    }
+}
+
 /// A reset that never reports back must not leave "Using reset…" on the card.
 pub fn abandon_reset(reset_in_flight: &mut bool, status: &mut Option<String>) {
     if !*reset_in_flight {
@@ -251,6 +260,11 @@ mod tests {
             false,
             now
         ));
+        assert_eq!(begin_refresh_status(Some("Capture proxy is DOWN")), None);
+        assert_eq!(
+            begin_refresh_status(Some("Reset used")),
+            Some("Refreshing usage…")
+        );
         let hung = now.checked_sub(Duration::from_secs(61)).expect("instant");
         assert!(!reset_hung(Some(now), true, now));
         assert!(reset_hung(Some(hung), true, now));

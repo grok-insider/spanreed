@@ -301,12 +301,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
             if message == "close" {
                 popover.hide();
             } else if message == "refresh" {
-                set_status(&state, "Refreshing usage…");
-                let st = state.clone();
-                thread::spawn(move || {
-                    refresh_state(&st);
-                    note_refreshed(&st);
-                });
+                begin_refresh(&state);
             } else if message == "ensure" {
                 set_status(&state, "Ensuring capture…");
                 let st = state.clone();
@@ -354,12 +349,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 stop.store(true, Ordering::Relaxed);
                 *control_flow = ControlFlow::Exit;
             } else if id == id_refresh {
-                set_status(&state, "Refreshing usage…");
-                let st = state.clone();
-                thread::spawn(move || {
-                    refresh_state(&st);
-                    note_refreshed(&st);
-                });
+                begin_refresh(&state);
             } else if id == id_ensure {
                 set_status(&state, "Ensuring capture…");
                 let st = state.clone();
@@ -612,6 +602,20 @@ fn new_redeem_request_id() -> Result<String, &'static str> {
         id.push_str(&format!("{byte:02x}"));
     }
     Ok(id)
+}
+
+fn begin_refresh(state: &Arc<Mutex<TrayState>>) {
+    {
+        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(note) = tray_format::begin_refresh_status(guard.status_note.as_deref()) {
+            stamp_status(&mut guard, note);
+        }
+    }
+    let state = state.clone();
+    thread::spawn(move || {
+        refresh_state(&state);
+        note_refreshed(&state);
+    });
 }
 
 fn set_status(state: &Arc<Mutex<TrayState>>, note: &str) {
