@@ -112,6 +112,15 @@ pub fn unmark_running() {
     }
 }
 
+/// JavaScript that applies a known local route. Unknown text is ignored.
+pub fn route_location_script(href: &str) -> Option<String> {
+    match href {
+        "#/local/overview" | "#/local/usage" | "#/local/accounts" | "#/local/routing"
+        | "#/local/connect" | "#/local/settings" => Some(format!("location.hash = {href:?}")),
+        _ => None,
+    }
+}
+
 fn href(page: &str) -> Result<String, String> {
     match page {
         "overview" | "usage" | "accounts" | "routing" | "connect" | "settings" => {
@@ -405,6 +414,19 @@ mod tests {
             is_cli_binary(&exe) || !name.eq_ignore_ascii_case(crate::app::bin_name()),
             "the test harness must not be treated as a packaged desktop"
         );
+    }
+
+    #[test]
+    fn route_script_only_accepts_local_pages() {
+        assert_eq!(
+            route_location_script("#/local/overview").as_deref(),
+            Some("location.hash = \"#/local/overview\"")
+        );
+        assert_eq!(
+            route_location_script("#/local/settings").as_deref(),
+            Some("location.hash = \"#/local/settings\"")
+        );
+        assert!(route_location_script("#/local/overview'; alert(1)").is_none());
     }
 
     #[test]

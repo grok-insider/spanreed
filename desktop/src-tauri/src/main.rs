@@ -370,12 +370,15 @@ fn main() {
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if spanreed::desktop_open::peek().is_some() {
+                if let Some(href) = spanreed::desktop_open::peek() {
                     use tauri::Manager;
                     if let Some(window) = handle.get_webview_window("main") {
                         let _ = window.unminimize();
                         let _ = window.show();
                         let _ = window.set_focus();
+                        if let Some(script) = spanreed::desktop_open::route_location_script(&href) {
+                            let _ = window.eval(&script);
+                        }
                     }
                 }
                 if let Some(alert) = spanreed::desktop_open::take_alert() {
