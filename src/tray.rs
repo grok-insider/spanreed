@@ -1085,13 +1085,9 @@ fn user_notify(title: &str, body: &str, modal: bool) {
     let title = title.to_string();
     let body = body.to_string();
     thread::spawn(move || {
-        let handed_to_desktop = crate::desktop_open::hand_off_alert(&title, &body);
-        // Linux delivery and the desktop plugin share one notification daemon.
-        // macOS and Windows still get the direct alert: a desktop show can
-        // report success and then drop the toast.
-        if handed_to_desktop && cfg!(target_os = "linux") {
-            return;
-        }
+        let _handed_to_desktop = crate::desktop_open::hand_off_alert(&title, &body);
+        // A desktop show can report success and then drop the alert. Every
+        // platform still delivers through its own notification path.
         let delivered = crate::notifications::deliver_os(&title, &body);
         if !crate::notifications::notification_confirmed(std::env::consts::OS, delivered.is_ok()) {
             if let Err(error) = &delivered {
