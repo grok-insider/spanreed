@@ -340,14 +340,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 *control_flow = ControlFlow::Exit;
             } else if id == id_refresh {
                 set_status(&state, "Refreshing usage…");
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                 let st = state.clone();
                 thread::spawn(move || {
                     refresh_state(&st);
@@ -355,14 +347,6 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 });
             } else if id == id_ensure {
                 set_status(&state, "Ensuring capture…");
-                apply_visual(
-                    &state,
-                    &mut tray,
-                    &item_update,
-                    &item_check,
-                    &item_share_primary,
-                    &item_unlink,
-                );
                 let st = state.clone();
                 thread::spawn(move || {
                     let msg = match setup::service_ensure(false) {
