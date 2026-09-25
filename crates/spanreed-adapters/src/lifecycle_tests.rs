@@ -14,7 +14,7 @@ fn account_lifecycle_in_isolated_process() {
         "spanreed-vault-{}",
         fabrials_fabric::accounting::new_request_id()
     ));
-    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(root.join("no-tools")).unwrap();
     let result = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--ignored",
@@ -23,6 +23,7 @@ fn account_lifecycle_in_isolated_process() {
             "--nocapture",
         ])
         .env_clear()
+        .env("PATH", root.join("no-tools"))
         .env("HOME", &root)
         .env("USERPROFILE", &root)
         .env("XDG_DATA_HOME", root.join("data"))

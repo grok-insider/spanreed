@@ -95,6 +95,7 @@ jobs:
   cross:
     name: cross (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

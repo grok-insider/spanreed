@@ -172,7 +172,7 @@ fn process_command(pid: u32) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .args(["-p", &pid.to_string(), "-o", "command="])
             .output()
             .ok()?;
         if !output.status.success() {
