@@ -2,14 +2,14 @@
 name = "fabrials-model"
 version = "0.2.0"
 description = "Shared DTO types for Fabrials (Spanreed and ai-relay)"
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-authors.workspace = true
-publish.workspace = true
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/grok-insider/fabrials-libs"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+publish = false
 
 [dependencies]
-fabrials-core.workspace = true
+fabrials-core = { path = "../fabrials-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

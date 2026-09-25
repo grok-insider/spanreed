@@ -21,6 +21,11 @@ Spanreed and ai-relay carry this workspace in-tree at `vendor/fabrials-libs`
 then pull it into each consumer with its `scripts/sync-fabrials-libs.sh`; the
 consumer's CI rejects an in-tree copy that differs from the recorded revision.
 
+Crate manifests spell out edition, license and path dependencies instead of
+inheriting `workspace.*` fields: consumers load them as plain path
+dependencies from inside their own workspace, where that inheritance does not
+resolve.
+
 ## Checks
 
 ```sh
