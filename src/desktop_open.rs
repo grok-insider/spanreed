@@ -149,17 +149,15 @@ fn desktop_alive() -> bool {
 }
 
 fn command_is_desktop(command: &str) -> bool {
-    command
-        .split(['\0', ' ', '\\', '/'])
-        .any(|part| {
-            desktop_binary_names().iter().any(|name| {
-                part == *name
-                    || part
-                        .strip_prefix('.')
-                        .and_then(|rest| rest.strip_suffix("-wrapped"))
-                        == Some(*name)
-            })
+    command.split(['\0', ' ', '\\', '/']).any(|part| {
+        desktop_binary_names().iter().any(|name| {
+            part == *name
+                || part
+                    .strip_prefix('.')
+                    .and_then(|rest| rest.strip_suffix("-wrapped"))
+                    == Some(*name)
         })
+    })
 }
 
 fn process_command(pid: u32) -> Option<String> {
