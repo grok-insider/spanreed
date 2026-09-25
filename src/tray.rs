@@ -265,6 +265,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 if guard.status_note != before {
                     guard.status_at = Some(now);
                     guard.dirty = true;
+                    guard.content_epoch = guard.content_epoch.wrapping_add(1);
                 }
             } else if tray_format::status_expired(
                 guard.status_note.as_deref(),
@@ -533,8 +534,9 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         if popover.visible() {
             let status = state
                 .lock()
-                .ok()
-                .and_then(|guard| guard.status_note.clone());
+                .unwrap_or_else(|error| error.into_inner())
+                .status_note
+                .clone();
             popover.sync_status(status.as_deref());
         }
     });
@@ -610,6 +612,7 @@ impl Drop for ResetFlight {
         if guard.status_note != before {
             guard.status_at = Some(Instant::now());
             guard.dirty = true;
+            guard.content_epoch = guard.content_epoch.wrapping_add(1);
         }
     }
 }
