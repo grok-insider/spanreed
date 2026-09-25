@@ -4,8 +4,8 @@
 //! Usage: `GET https://api.elevenlabs.io/v1/user/subscription`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "elevenlabs";
@@ -17,25 +17,24 @@ pub(super) fn parse_subscription(data: &serde_json::Value) -> (Vec<MetricLine>, 
     let used = field(data, "character_count");
     let limit = field(data, "character_limit");
     let mut lines = Vec::new();
-    if let (Some(used), Some(limit)) = (used, limit) {
-        if let Some(pct) = json_api::used_percent(used, limit) {
-            let resets = data
-                .get("next_character_count_reset_unix")
-                .and_then(util::to_iso);
-            lines.push(MetricLine::percent("Credits", pct, resets));
-        }
+    if let (Some(used), Some(limit)) = (used, limit)
+        && let Some(pct) = json_api::used_percent(used, limit)
+    {
+        let resets = data
+            .get("next_character_count_reset_unix")
+            .and_then(util::to_iso);
+        lines.push(MetricLine::percent("Credits", pct, resets));
     }
     if let (Some(used), Some(limit)) = (field(data, "voice_slots_used"), field(data, "voice_limit"))
+        && limit > 0.0
     {
-        if limit > 0.0 {
-            lines.push(json_api::count_line(
-                "Voice slots",
-                used,
-                limit,
-                "voices",
-                None,
-            ));
-        }
+        lines.push(json_api::count_line(
+            "Voice slots",
+            used,
+            limit,
+            "voices",
+            None,
+        ));
     }
     let plan = json_api::text_field(data, "tier").map(|tier| {
         tier.replace('_', " ")

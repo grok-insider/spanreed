@@ -3,8 +3,8 @@
 //! Sums `cost` for the newest pages of `GET https://api.aiand.com/logs`.
 
 use crate::model::ProviderOutput;
-use crate::providers::json_api::{self, env_any, number};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, number};
 
 const ID: &str = "aiand";
 const NAME: &str = "ai&";

@@ -150,14 +150,14 @@ fn weekly_snap(o: &crate::model::ProviderOutput) -> Option<WindowSnap> {
             format: ProgressFormat::Percent,
             ..
         } = line
+            && *kind == MetricKind::Quota
+            && label.eq_ignore_ascii_case("Weekly")
         {
-            if *kind == MetricKind::Quota && label.eq_ignore_ascii_case("Weekly") {
-                let end = resets_at.clone()?;
-                return Some(WindowSnap {
-                    resets_at: end,
-                    used: *used,
-                });
-            }
+            let end = resets_at.clone()?;
+            return Some(WindowSnap {
+                resets_at: end,
+                used: *used,
+            });
         }
     }
     None

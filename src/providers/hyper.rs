@@ -4,8 +4,8 @@
 //! Browser-cookie sessions are not imported.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "hyper";
 const NAME: &str = "Charm Hyper";

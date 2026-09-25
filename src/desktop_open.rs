@@ -241,18 +241,18 @@ fn desktop_binary_names() -> &'static [&'static str] {
 
 fn spawn_desktop() -> Result<(), String> {
     let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os("SPANREED_DESKTOP") {
-        if !path.is_empty() {
-            candidates.push(PathBuf::from(path));
-        }
+    if let Some(path) = std::env::var_os("SPANREED_DESKTOP")
+        && !path.is_empty()
+    {
+        candidates.push(PathBuf::from(path));
     }
     for name in desktop_binary_names() {
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                candidates.push(dir.join(name));
-                #[cfg(target_os = "macos")]
-                candidates.push(dir.join("../Spanreed.app/Contents/MacOS").join(name));
-            }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            candidates.push(dir.join(name));
+            #[cfg(target_os = "macos")]
+            candidates.push(dir.join("../Spanreed.app/Contents/MacOS").join(name));
         }
         #[cfg(target_os = "macos")]
         {
@@ -385,8 +385,10 @@ mod tests {
 
     fn restore_var(name: &str, value: Option<std::ffi::OsString>) {
         match value {
-            Some(value) => std::env::set_var(name, value),
-            None => std::env::remove_var(name),
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            Some(value) => unsafe { std::env::set_var(name, value) },
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var(name) },
         }
     }
 
@@ -403,12 +405,15 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         let previous = std::env::var_os("XDG_DATA_HOME");
-        std::env::set_var("XDG_DATA_HOME", &dir);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("XDG_DATA_HOME", &dir) };
         f(&dir);
         unmark_running();
         match previous {
-            Some(value) => std::env::set_var("XDG_DATA_HOME", value),
-            None => std::env::remove_var("XDG_DATA_HOME"),
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            Some(value) => unsafe { std::env::set_var("XDG_DATA_HOME", value) },
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -434,8 +439,10 @@ mod tests {
                 #[cfg(windows)]
                 program_x86: previous_program_x86.clone(),
             };
-            std::env::remove_var("SPANREED_DESKTOP");
-            std::env::set_var("PATH", dir);
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            unsafe { std::env::remove_var("SPANREED_DESKTOP") };
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            unsafe { std::env::set_var("PATH", dir) };
             #[cfg(windows)]
             {
                 std::env::set_var("LOCALAPPDATA", dir);
@@ -533,9 +540,11 @@ mod tests {
     #[test]
     fn desktop_candidates_include_the_packaged_names() {
         let names = desktop_binary_names();
-        assert!(names
-            .iter()
-            .any(|name| name.starts_with("spanreed-desktop")));
+        assert!(
+            names
+                .iter()
+                .any(|name| name.starts_with("spanreed-desktop"))
+        );
         assert!(names.iter().any(|name| name.starts_with("Spanreed")));
         assert_eq!(
             spanreed_install_dir("/tmp/local").join("Spanreed.exe"),
@@ -679,13 +688,16 @@ mod tests {
             permissions.set_mode(0o755);
             std::fs::set_permissions(&stub, permissions).unwrap();
             let previous = std::env::var_os("SPANREED_DESKTOP");
-            std::env::set_var("SPANREED_DESKTOP", &stub);
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            unsafe { std::env::set_var("SPANREED_DESKTOP", &stub) };
             request("overview").expect("configured desktop starts");
             assert_eq!(take().as_deref(), Some("#/local/overview"));
             std::thread::sleep(std::time::Duration::from_millis(50));
             match previous {
-                Some(value) => std::env::set_var("SPANREED_DESKTOP", value),
-                None => std::env::remove_var("SPANREED_DESKTOP"),
+                // FIXME: Audit that the environment access only happens in single-threaded code.
+                Some(value) => unsafe { std::env::set_var("SPANREED_DESKTOP", value) },
+                // FIXME: Audit that the environment access only happens in single-threaded code.
+                None => unsafe { std::env::remove_var("SPANREED_DESKTOP") },
             }
         });
     }
@@ -712,14 +724,17 @@ mod tests {
                 }
                 None => bin.as_os_str().to_os_string(),
             };
-            std::env::set_var("PATH", joined);
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            unsafe { std::env::set_var("PATH", joined) };
             request("settings").expect("stub desktop starts");
             assert_eq!(take().as_deref(), Some("#/local/settings"));
             std::thread::sleep(std::time::Duration::from_millis(50));
             let _ = std::fs::remove_dir_all(&bin);
             match previous {
-                Some(value) => std::env::set_var("PATH", value),
-                None => std::env::remove_var("PATH"),
+                // FIXME: Audit that the environment access only happens in single-threaded code.
+                Some(value) => unsafe { std::env::set_var("PATH", value) },
+                // FIXME: Audit that the environment access only happens in single-threaded code.
+                None => unsafe { std::env::remove_var("PATH") },
             }
         });
     }

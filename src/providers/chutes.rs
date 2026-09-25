@@ -3,8 +3,8 @@
 //! `GET https://api.chutes.ai/users/me/subscription_usage`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "chutes";
@@ -33,25 +33,25 @@ pub(super) fn parse_subscription(body: &serde_json::Value) -> (Vec<MetricLine>, 
         .and_then(|v| v.as_str())
         .map(str::to_string);
     let mut lines = Vec::new();
-    if let Some(rolling) = root.get("rolling_window").or_else(|| root.get("rolling")) {
-        if let Some(line) = window(
+    if let Some(rolling) = root.get("rolling_window").or_else(|| root.get("rolling"))
+        && let Some(line) = window(
             "Rolling",
             rolling,
             &["requests", "used"],
             &["reset_at", "resets_at"],
-        ) {
-            lines.push(line);
-        }
+        )
+    {
+        lines.push(line);
     }
-    if let Some(monthly) = root.get("monthly") {
-        if let Some(line) = window(
+    if let Some(monthly) = root.get("monthly")
+        && let Some(line) = window(
             "Monthly",
             monthly,
             &["used", "requests"],
             &["resets_at", "reset_at"],
-        ) {
-            lines.push(line);
-        }
+        )
+    {
+        lines.push(line);
     }
     (lines, plan)
 }
@@ -103,12 +103,11 @@ impl Provider for Chutes {
         ) {
             Ok(data) => {
                 let (mut lines, plan) = parse_subscription(&data);
-                if lines.is_empty() {
-                    if let Ok(quotas) =
+                if lines.is_empty()
+                    && let Ok(quotas) =
                         json_api::get_bearer(&json_api::join_url(&base, "users/me/quotas"), &key)
-                    {
-                        lines = parse_quotas(&quotas);
-                    }
+                {
+                    lines = parse_quotas(&quotas);
                 }
                 if lines.is_empty() {
                     ProviderOutput::error(ID, NAME, "Chutes response had no usage windows.")

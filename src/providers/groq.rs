@@ -4,8 +4,8 @@
 //! Prometheus is reported as such.
 
 use crate::model::ProviderOutput;
-use crate::providers::json_api::{self, env_any, number};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, number};
 
 const ID: &str = "groq";
 const NAME: &str = "Groq";

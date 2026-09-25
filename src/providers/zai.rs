@@ -115,7 +115,7 @@ impl Provider for Zai {
                     ID,
                     NAME,
                     "No ZAI_API_KEY found. Set up environment variable first.",
-                )
+                );
             }
         };
 

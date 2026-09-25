@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::protocol::{dispatch_inproc, AddonRequest, AddonResponse};
-use super::{command_owner, compiled_in, Addon};
+use super::protocol::{AddonRequest, AddonResponse, dispatch_inproc};
+use super::{Addon, command_owner, compiled_in};
 use crate::app;
 use crate::model::ProviderOutput;
 

@@ -5,8 +5,8 @@
 
 use crate::creds;
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "codebuff";
@@ -41,11 +41,11 @@ pub(super) fn parse_usage(body: &serde_json::Value) -> Vec<MetricLine> {
     let used = field(body, "usage").or_else(|| field(body, "used"));
     let limit = field(body, "quota").or_else(|| field(body, "limit"));
     let mut lines = Vec::new();
-    if let (Some(used), Some(limit)) = (used, limit) {
-        if let Some(pct) = json_api::used_percent(used, limit) {
-            let resets = body.get("next_quota_reset").and_then(util::to_iso);
-            lines.push(MetricLine::percent("Credits", pct, resets));
-        }
+    if let (Some(used), Some(limit)) = (used, limit)
+        && let Some(pct) = json_api::used_percent(used, limit)
+    {
+        let resets = body.get("next_quota_reset").and_then(util::to_iso);
+        lines.push(MetricLine::percent("Credits", pct, resets));
     }
     if let Some(remaining) = field(body, "remainingBalance").or_else(|| field(body, "remaining")) {
         lines.push(json_api::text_line("Remaining", format!("{remaining:.0}")));
@@ -60,10 +60,10 @@ pub(super) fn parse_subscription(body: &serde_json::Value) -> (Vec<MetricLine>, 
         .map(str::to_string);
     let rate = body.get("rateLimit").unwrap_or(body);
     let mut lines = Vec::new();
-    if let (Some(used), Some(limit)) = (field(rate, "weeklyUsed"), field(rate, "weeklyLimit")) {
-        if let Some(pct) = json_api::used_percent(used, limit) {
-            lines.push(MetricLine::percent("Weekly", pct, None));
-        }
+    if let (Some(used), Some(limit)) = (field(rate, "weeklyUsed"), field(rate, "weeklyLimit"))
+        && let Some(pct) = json_api::used_percent(used, limit)
+    {
+        lines.push(MetricLine::percent("Weekly", pct, None));
     }
     (lines, plan)
 }
@@ -103,15 +103,15 @@ impl Provider for Codebuff {
             Ok(data) => {
                 let mut lines = parse_usage(&data);
                 let mut plan = None;
-                if session {
-                    if let Ok(sub) = json_api::get_bearer(
+                if session
+                    && let Ok(sub) = json_api::get_bearer(
                         &json_api::join_url(&base, "api/user/subscription"),
                         &key,
-                    ) {
-                        let (extra, sub_plan) = parse_subscription(&sub);
-                        lines.extend(extra);
-                        plan = sub_plan;
-                    }
+                    )
+                {
+                    let (extra, sub_plan) = parse_subscription(&sub);
+                    lines.extend(extra);
+                    plan = sub_plan;
                 }
                 if lines.is_empty() {
                     ProviderOutput::error(ID, NAME, "Codebuff usage response was empty.")

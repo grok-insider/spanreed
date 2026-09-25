@@ -1,7 +1,7 @@
 //! Edit one reviewed provider while retaining surrounding JSONC text.
 use jsonc_parser::{
-    cst::{CstInputValue, CstRootNode},
     ParseOptions,
+    cst::{CstInputValue, CstRootNode},
 };
 use serde_json::Value;
 fn options() -> ParseOptions {
@@ -47,14 +47,19 @@ pub(crate) fn edit(
     let providers = object
         .object_value_or_create("provider")
         .ok_or("Provider configuration must be an object")?;
-    if let Some(property) = providers.get(provider) {
-        if addition.is_null() {
-            property.remove();
-        } else {
-            property.set_value(input(addition));
+    match providers.get(provider) {
+        Some(property) => {
+            if addition.is_null() {
+                property.remove();
+            } else {
+                property.set_value(input(addition));
+            }
         }
-    } else if !addition.is_null() {
-        providers.append(provider, input(addition));
+        _ => {
+            if !addition.is_null() {
+                providers.append(provider, input(addition));
+            }
+        }
     }
     let text = root.to_string();
     if parse(&text)? != *expected {

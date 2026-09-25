@@ -3,8 +3,8 @@
 //! Requires a Management API key, not an inference key.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "zenmux";
@@ -25,15 +25,15 @@ pub(super) fn parse_detail(body: &serde_json::Value) -> (Vec<MetricLine>, Option
         .and_then(|v| v.as_str())
         .map(str::to_string);
     let mut lines = Vec::new();
-    if let Some(quota) = data.get("quota_5_hour") {
-        if let Some(line) = window("5-hour", quota) {
-            lines.push(line);
-        }
+    if let Some(quota) = data.get("quota_5_hour")
+        && let Some(line) = window("5-hour", quota)
+    {
+        lines.push(line);
     }
-    if let Some(quota) = data.get("quota_7_day") {
-        if let Some(line) = window("7-day", quota) {
-            lines.push(line);
-        }
+    if let Some(quota) = data.get("quota_7_day")
+        && let Some(line) = window("7-day", quota)
+    {
+        lines.push(line);
     }
     (lines, plan)
 }
@@ -74,10 +74,9 @@ impl Provider for ZenMux {
                 let (mut lines, plan) = parse_detail(&data);
                 if let Ok(payg) =
                     json_api::get_bearer("https://zenmux.ai/api/v1/management/payg/balance", &key)
+                    && let Some(line) = parse_payg(&payg)
                 {
-                    if let Some(line) = parse_payg(&payg) {
-                        lines.push(line);
-                    }
+                    lines.push(line);
                 }
                 if lines.is_empty() {
                     ProviderOutput::error(ID, NAME, "ZenMux subscription response had no quota.")

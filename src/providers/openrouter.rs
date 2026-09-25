@@ -3,8 +3,8 @@
 //! `GET https://openrouter.ai/api/v1/key` and `/api/v1/credits`.
 
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "openrouter";

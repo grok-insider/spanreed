@@ -3,8 +3,8 @@
 //! Auth header is `Token`, not Bearer.
 
 use crate::model::ProviderOutput;
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "deepgram";
 const NAME: &str = "Deepgram";
@@ -150,8 +150,9 @@ mod tests {
                 {"requests": 1, "hours": 0.5}
             ]
         }));
-        assert!(rows
-            .iter()
-            .any(|(label, value)| label == "Requests" && *value == 5.0));
+        assert!(
+            rows.iter()
+                .any(|(label, value)| label == "Requests" && *value == 5.0)
+        );
     }
 }

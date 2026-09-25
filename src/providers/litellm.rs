@@ -3,8 +3,8 @@
 //! Requires `LITELLM_BASE_URL` and `LITELLM_API_KEY`. A master key is not used.
 
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "litellm";
@@ -46,10 +46,10 @@ pub(super) fn parse_info(body: &serde_json::Value) -> Vec<MetricLine> {
             }
         }
     }
-    if let Some(info) = body.get("team_info") {
-        if let Some(line) = budget_line("Team", info) {
-            lines.push(line);
-        }
+    if let Some(info) = body.get("team_info")
+        && let Some(line) = budget_line("Team", info)
+    {
+        lines.push(line);
     }
     lines
 }

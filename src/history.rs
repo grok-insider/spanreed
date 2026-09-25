@@ -19,7 +19,7 @@ const DAY_MS: i64 = 86_400_000;
 /// Soft size cap before rewrite (bytes).
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-pub use fabrials_runtime::history::{prepare_sample, HistorySample};
+pub use fabrials_runtime::history::{HistorySample, prepare_sample};
 
 /// Default history path under XDG data.
 pub fn history_path() -> PathBuf {
@@ -187,10 +187,10 @@ pub fn read_samples(path: &Path, provider: Option<&str>) -> Vec<HistorySample> {
         let Ok(s) = serde_json::from_str::<HistorySample>(line) else {
             continue;
         };
-        if let Some(p) = provider {
-            if s.provider != p {
-                continue;
-            }
+        if let Some(p) = provider
+            && s.provider != p
+        {
+            continue;
         }
         out.push(s);
     }
@@ -330,9 +330,11 @@ mod tests {
         .with_plan(Some("Pro".into()));
         let samples = samples_from_outputs(&[out], 1000);
         assert_eq!(samples.len(), 2);
-        assert!(samples
-            .iter()
-            .any(|s| s.label == "Weekly" && s.used == 80.0));
+        assert!(
+            samples
+                .iter()
+                .any(|s| s.label == "Weekly" && s.used == 80.0)
+        );
         assert!(samples.iter().any(|s| s.label == "Session"));
     }
 

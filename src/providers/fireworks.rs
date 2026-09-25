@@ -3,8 +3,8 @@
 //! Discovers the account slug, then reads the billing summary.
 
 use crate::model::ProviderOutput;
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "fireworks";
 const NAME: &str = "Fireworks";
@@ -24,10 +24,10 @@ pub(super) fn parse_accounts(body: &serde_json::Value) -> Vec<String> {
             continue;
         };
         let slug = name.split('/').rfind(|part| !part.is_empty());
-        if let Some(slug) = slug.and_then(|slug| json_api::safe_segment(slug, 256)) {
-            if !slugs.iter().any(|existing| existing == slug) {
-                slugs.push(slug.to_string());
-            }
+        if let Some(slug) = slug.and_then(|slug| json_api::safe_segment(slug, 256))
+            && !slugs.iter().any(|existing| existing == slug)
+        {
+            slugs.push(slug.to_string());
         }
     }
     slugs.sort();
@@ -85,10 +85,10 @@ impl Provider for Fireworks {
             );
         };
         let configured = env_any(&["FIREWORKS_ACCOUNT_SLUG"]);
-        if let Some(slug) = &configured {
-            if json_api::safe_segment(slug, 256).is_none() {
-                return ProviderOutput::error(ID, NAME, "FIREWORKS_ACCOUNT_SLUG is invalid.");
-            }
+        if let Some(slug) = &configured
+            && json_api::safe_segment(slug, 256).is_none()
+        {
+            return ProviderOutput::error(ID, NAME, "FIREWORKS_ACCOUNT_SLUG is invalid.");
         }
         let mut slugs = Vec::new();
         let mut token = String::new();

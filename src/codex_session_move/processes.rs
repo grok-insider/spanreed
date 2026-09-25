@@ -36,7 +36,7 @@ pub(super) fn ensure_idle() -> Result<(), String> {
             Ok(a) => a,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(_) => {
-                return Err("Cannot inspect running clients; use independent authorization".into())
+                return Err("Cannot inspect running clients; use independent authorization".into());
             }
         };
         if args.split(|b| *b == 0).take(3).any(|arg| {
@@ -86,9 +86,9 @@ pub(super) fn ensure_no_keyring() -> Result<(), String> {
     let result = std::process::Command::new("secret-tool")
         .args(["lookup", "service", "Codex Auth"])
         .output()
-        .map_err(|_| {
-            "Cannot inspect the system credential store; use independent hosted authorization"
-        })?;
+        .map_err(
+            |_| "Cannot inspect the system credential store; use independent hosted authorization",
+        )?;
     if result.status.code() == Some(1) && result.stdout.is_empty() && result.stderr.is_empty() {
         return Ok(());
     }

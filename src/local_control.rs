@@ -1,5 +1,5 @@
 //! Local routing preferences and metadata. Never projects provider secrets.
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Mutex;
 
 pub const PROVIDERS: &[&str] = &["grok", "codex", "nous", "openai"];
@@ -175,11 +175,7 @@ pub fn limits_view() -> Result<RoutingLimits, String> {
                 resets_at: a.resets_at.clone(),
                 exhausted: a.used_pct.is_some_and(|pct| pct >= threshold),
                 role: if selected.as_ref().is_some_and(|picked| picked.id == a.id) {
-                    if on {
-                        "next"
-                    } else {
-                        "active"
-                    }
+                    if on { "next" } else { "active" }
                 } else {
                     "—"
                 }

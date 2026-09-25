@@ -4,8 +4,8 @@
 //! import is not used. Amounts stay in the API's cent counts.
 
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "perplexity";

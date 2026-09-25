@@ -1,6 +1,6 @@
 //! Durable outbox and separate downloaded history. Imported records are never re-uploaded.
 use fabrials_types::private_sync::{PrivateObservation, PrivatePage};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
 pub struct Store {
@@ -316,10 +316,12 @@ mod tests {
         store.acknowledge("alice", &[original]).unwrap();
         drop(store);
         let store = Store::from_connection(Connection::open(&path).unwrap()).unwrap();
-        assert!(store
-            .pending("alice", &["codex".into()])
-            .unwrap()
-            .is_empty());
+        assert!(
+            store
+                .pending("alice", &["codex".into()])
+                .unwrap()
+                .is_empty()
+        );
         drop(store);
         std::fs::remove_file(path).unwrap();
     }
@@ -430,10 +432,12 @@ mod tests {
         store.import("alice", &page).unwrap();
         assert_eq!(store.cursor("alice").unwrap(), 10);
         assert_eq!(store.cursor("mallory").unwrap(), 0);
-        assert!(store
-            .pending("alice", &["codex".into()])
-            .unwrap()
-            .is_empty());
+        assert!(
+            store
+                .pending("alice", &["codex".into()])
+                .unwrap()
+                .is_empty()
+        );
         assert!(store.import("alice", &page).is_err());
         assert_eq!(store.cursor("alice").unwrap(), 10);
     }

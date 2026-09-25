@@ -13,7 +13,7 @@ const BILLING_CREDITS_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?fo
 const BILLING_LEGACY_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
 const SUBS_URL: &str = "https://grok.com/rest/subscriptions";
-use fabrials_providers::grok_cli::{token_from_doc, TOKEN_AUTH};
+use fabrials_providers::grok_cli::{TOKEN_AUTH, token_from_doc};
 const AUTH_JSON_ENTRY: &str = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
 
 pub fn login_add(requested: Option<&str>) -> Result<String, String> {
@@ -154,7 +154,7 @@ fn probe_one(alias: &str, active: bool) -> ProviderOutput {
                 Ok(legacy) => match parse_legacy(&legacy) {
                     Some(l) => (l, ()),
                     None => {
-                        return ProviderOutput::error(&id, &name, "Grok billing response changed.")
+                        return ProviderOutput::error(&id, &name, "Grok billing response changed.");
                     }
                 },
                 Err(msg) => return ProviderOutput::error(&id, &name, msg),
@@ -230,7 +230,7 @@ fn device_login() -> Result<serde_json::Value, String> {
             },
         )? {
             Progress::Connected => {
-                return authorized.ok_or("Grok authorization unavailable".into())
+                return authorized.ok_or("Grok authorization unavailable".into());
             }
             Progress::Pending { retry_after_secs } => interval = retry_after_secs,
         }
@@ -384,7 +384,6 @@ fn persist_snap(id: &str, snap: QuotaSnap) {
         Some(snap.billing),
     );
 }
-
 
 /// Map CCP `subscription_tier_display` to slug + autosteer rank.
 /// Official Grok Build names: SuperGrok Heavy/Plus/Lite, SuperGrok,

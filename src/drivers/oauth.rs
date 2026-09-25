@@ -50,19 +50,20 @@ fn token_with_recovery(
 ) -> Result<String, String> {
     let mut document =
         accounts::read_secret_document(provider, alias)?.ok_or("Provider credential missing")?;
-    if let Some(pending) = queue.take_reserved(key) {
-        if document == pending.expected && journal.rotated(&pending.replacement).is_err() {
-            let token = valid_access(&pending.replacement, util::now_ms());
-            queue.insert(key.clone(), pending, util::now_ms())?;
-            return token;
-        }
+    if let Some(pending) = queue.take_reserved(key)
+        && document == pending.expected
+        && journal.rotated(&pending.replacement).is_err()
+    {
+        let token = valid_access(&pending.replacement, util::now_ms());
+        queue.insert(key.clone(), pending, util::now_ms())?;
+        return token;
     }
     match journal.recover(&document)? {
         Recovery::Clean => {}
         Recovery::Interrupted => {
             return valid_access(&document, util::now_ms()).map_err(|_| {
                 "Previous Provider refresh was interrupted; authorize this account again".into()
-            })
+            });
         }
         Recovery::Replacement(replacement) => {
             if accounts::read_secret_document(provider, alias)?.as_ref() != Some(&document) {

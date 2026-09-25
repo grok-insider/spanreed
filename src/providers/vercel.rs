@@ -3,8 +3,8 @@
 //! `GET https://ai-gateway.vercel.sh/v1/credits` with `AI_GATEWAY_API_KEY`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any};
 
 const ID: &str = "vercel";
 const NAME: &str = "Vercel AI Gateway";

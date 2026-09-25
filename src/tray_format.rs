@@ -165,10 +165,10 @@ pub fn format_tooltip(
         }
     }
 
-    if let Some(note) = update_note {
-        if !note.is_empty() {
-            lines.push(note.to_string());
-        }
+    if let Some(note) = update_note
+        && !note.is_empty()
+    {
+        lines.push(note.to_string());
     }
     lines.join("\n")
 }

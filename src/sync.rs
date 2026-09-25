@@ -1,5 +1,5 @@
 //! Opt-in, selected-source private synchronization across compatible providers.
-use crate::remote_workspace::{request_for_subject, RemoteOperation};
+use crate::remote_workspace::{RemoteOperation, request_for_subject};
 use fabrials_runtime::credential_journal::{Rotation, Scope};
 use fabrials_types::private_sync::{PrivateEvent, PrivateObservation, PrivatePage, PrivatePush};
 use serde::{Deserialize, Serialize};
@@ -187,19 +187,21 @@ pub fn after_probe(outputs: &[crate::model::ProviderOutput]) {
             }
         }
         let _guard = Guard;
-        if let Err(error) = run_outputs(&outputs) {
-            if let Some(owner) = owner {
-                let mut status = status_for(&owner);
-                status.error = Some(error);
-                save_status(&owner, status);
-            }
+        if let Err(error) = run_outputs(&outputs)
+            && let Some(owner) = owner
+        {
+            let mut status = status_for(&owner);
+            status.error = Some(error);
+            save_status(&owner, status);
         }
     });
 }
 
 pub fn cmd(args: &[String]) -> std::process::ExitCode {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("spanreed sync — synchronize selected private usage sources with Fabrials.\nSelect sources in Spanreed Settings and explicitly enable private history synchronization.\nNo provider credentials or request bodies are uploaded.");
+        println!(
+            "spanreed sync — synchronize selected private usage sources with Fabrials.\nSelect sources in Spanreed Settings and explicitly enable private history synchronization.\nNo provider credentials or request bodies are uploaded."
+        );
         return std::process::ExitCode::SUCCESS;
     }
     match if args.first().is_some_and(|arg| arg == "link-codex") {
@@ -279,10 +281,10 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
         serde_json::json!({}),
         &owner,
     );
-    if let Ok(value) = capabilities.as_ref() {
-        if value["installation_hostname_v1"] == true {
-            remember_installation_label(&owner, &device)?;
-        }
+    if let Ok(value) = capabilities.as_ref()
+        && value["installation_hostname_v1"] == true
+    {
+        remember_installation_label(&owner, &device)?;
     }
     let mut uploaded = 0;
     let mut downloaded = 0;
@@ -306,10 +308,9 @@ fn run_outputs(outputs: &[crate::model::ProviderOutput]) -> Result<String, Strin
             .as_ref()
             .is_ok_and(|value| value["source_identity_v1"] == true)
             && allowed("codex")?
+            && let Some(identity) = crate::providers::codex::local_identity()
         {
-            if let Some(identity) = crate::providers::codex::local_identity() {
-                source_identities.insert("codex".into(), identity);
-            }
+            source_identities.insert("codex".into(), identity);
         }
         let push = PrivatePush {
             source_identities,
@@ -570,7 +571,9 @@ pub fn link_codex() -> Result<String, String> {
     let account = result["account_id"]
         .as_str()
         .ok_or("Invalid identity match response")?;
-    Ok(format!("Verified identity match with hosted {account}. Local log totals remain separate from relay traffic."))
+    Ok(format!(
+        "Verified identity match with hosted {account}. Local log totals remain separate from relay traffic."
+    ))
 }
 
 #[cfg(test)]

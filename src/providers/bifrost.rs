@@ -3,8 +3,8 @@
 //! `GET {base}/api/governance/virtual-keys/quota` with `x-bf-vk`.
 
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "bifrost";
 const NAME: &str = "Bifrost";
@@ -41,12 +41,12 @@ pub(super) fn parse_quota(body: &serde_json::Value) -> Vec<MetricLine> {
         for rate in rates.iter().take(4) {
             let used = field(rate, "current_usage").or_else(|| field(rate, "usage"));
             let limit = field(rate, "limit").or_else(|| field(rate, "max_limit"));
-            if let (Some(used), Some(limit)) = (used, limit) {
-                if let Some(pct) = json_api::used_percent(used, limit) {
-                    let label =
-                        json_api::text_field(rate, "name").unwrap_or_else(|| "Rate limit".into());
-                    lines.push(MetricLine::percent(label, pct, None));
-                }
+            if let (Some(used), Some(limit)) = (used, limit)
+                && let Some(pct) = json_api::used_percent(used, limit)
+            {
+                let label =
+                    json_api::text_field(rate, "name").unwrap_or_else(|| "Rate limit".into());
+                lines.push(MetricLine::percent(label, pct, None));
             }
         }
     }

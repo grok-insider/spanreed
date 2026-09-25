@@ -646,12 +646,14 @@ mod tests {
 
     #[test]
     fn spanreed_nix_env_blocks_apply() {
-        std::env::set_var("SPANREED_NIX", "1");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("SPANREED_NIX", "1") };
         assert!(install_is_nix_managed());
         assert!(!can_apply_self_update());
         let why = apply_blocked_reason().unwrap();
         assert!(why.contains("Nix-managed"));
         assert!(why.contains("github:grok-insider/spanreed"));
-        std::env::remove_var("SPANREED_NIX");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("SPANREED_NIX") };
     }
 }

@@ -159,10 +159,9 @@ pub fn cmd(args: &[String]) -> ExitCode {
             if bytes.len() > 65536 {
                 return Err("Usage connection exceeds size limit".into());
             }
-            let connection =
-                serde_json::from_slice::<connections::Connection>(&bytes).map_err(|_| {
-                    "Expected JSON containing client, account and credential on standard input"
-                })?;
+            let connection = serde_json::from_slice::<connections::Connection>(&bytes).map_err(
+                |_| "Expected JSON containing client, account and credential on standard input",
+            )?;
             connections::save(connection)?;
             return Ok(serde_json::json!({"saved":true}));
         }

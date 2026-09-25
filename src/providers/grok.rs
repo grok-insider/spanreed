@@ -148,10 +148,10 @@ fn refresh(doc: &mut serde_json::Value, entry_key: &str) -> Result<Option<String
     // Mutate the entry in the doc.
     if let Some(obj) = doc.get_mut(entry_key).and_then(|v| v.as_object_mut()) {
         obj.insert("key".into(), serde_json::json!(access));
-        if let Some(rt) = json.get("refresh_token").and_then(|v| v.as_str()) {
-            if !rt.trim().is_empty() {
-                obj.insert("refresh_token".into(), serde_json::json!(rt.trim()));
-            }
+        if let Some(rt) = json.get("refresh_token").and_then(|v| v.as_str())
+            && !rt.trim().is_empty()
+        {
+            obj.insert("refresh_token".into(), serde_json::json!(rt.trim()));
         }
         let now = util::now_ms();
         let expires_at = json
@@ -210,7 +210,7 @@ fn load_auth() -> Result<AuthState, String> {
                         doc,
                         entry_key,
                         token: new_token,
-                    })
+                    });
                 }
                 None => {
                     if !is_expired(&entry, &token, now) {
@@ -420,14 +420,12 @@ fn plan_period_lines(period: &PlanPeriod) -> Vec<MetricLine> {
             .map(util::sub_calendar_month)
             .and_then(util::offset_dt_to_iso)
             .map(|derived| {
-                if let Some(create) = &period.create_time_iso {
-                    if let (Some(c), Some(d)) =
+                if let Some(create) = &period.create_time_iso
+                    && let (Some(c), Some(d)) =
                         (util::parse_iso_dt(create), util::parse_iso_dt(&derived))
-                    {
-                        if c > d {
-                            return create.clone();
-                        }
-                    }
+                    && c > d
+                {
+                    return create.clone();
                 }
                 derived
             })
@@ -479,7 +477,7 @@ impl Provider for Grok {
                                     ID,
                                     NAME,
                                     "Grok billing response changed.",
-                                )
+                                );
                             }
                         },
                         Err(msg) => return ProviderOutput::error(ID, NAME, msg),
@@ -752,9 +750,11 @@ mod tests {
         });
         let lines = parse_legacy_monthly_billing(&config).unwrap();
         assert!(lines.iter().any(|l| matches!(l, MetricLine::Progress { label, used, .. } if label == "Credits used" && *used == 25.0)));
-        assert!(!lines
-            .iter()
-            .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Pay as you go")));
+        assert!(
+            !lines
+                .iter()
+                .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Pay as you go"))
+        );
         assert_eq!(payg_badge(0.0).kind(), crate::model::MetricKind::Plan);
     }
 

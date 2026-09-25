@@ -96,10 +96,9 @@ mod platform {
                     let t = target.to_string_lossy();
                     if let Some(inode) =
                         t.strip_prefix("socket:[").and_then(|s| s.strip_suffix(']'))
+                        && let Ok(n) = inode.parse::<u64>()
                     {
-                        if let Ok(n) = inode.parse::<u64>() {
-                            inodes.insert(n);
-                        }
+                        inodes.insert(n);
                     }
                 }
             }
@@ -132,12 +131,11 @@ mod platform {
                     continue;
                 }
                 // local_address is HEXIP:HEXPORT.
-                if let Some(port_hex) = cols[1].split(':').nth(1) {
-                    if let Ok(port) = u16::from_str_radix(port_hex, 16) {
-                        if port > 0 {
-                            ports.insert(port);
-                        }
-                    }
+                if let Some(port_hex) = cols[1].split(':').nth(1)
+                    && let Ok(port) = u16::from_str_radix(port_hex, 16)
+                    && port > 0
+                {
+                    ports.insert(port);
                 }
             }
         }

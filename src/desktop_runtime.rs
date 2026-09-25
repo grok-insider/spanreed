@@ -1,7 +1,7 @@
 //! Lifecycle of the proxy instance owned by this GUI process.
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -181,11 +181,27 @@ mod tests {
         }
         stopped(&mut controller);
         drop(occupied);
+        // Parallel tests also bind ephemeral ports, so a freed port can be taken
+        // before the restart; retry on a fresh port only for that reason.
+        fn start_on_free_port(controller: &mut Controller, preferred: &str) -> String {
+            let mut address = preferred.to_string();
+            for _ in 0..20 {
+                match controller.start(&address) {
+                    Ok(status) => {
+                        assert_eq!(status.state, ProxyState::Running);
+                        return address;
+                    }
+                    Err(error) if error.contains("in use") => {
+                        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                        address = probe.local_addr().unwrap().to_string();
+                    }
+                    Err(error) => panic!("start failed: {error}"),
+                }
+            }
+            panic!("no free loopback port");
+        }
         for _ in 0..2 {
-            assert_eq!(
-                controller.start(&address).unwrap().state,
-                ProxyState::Running
-            );
+            let address = start_on_free_port(&mut controller, &address);
             assert!(controller.start(&address).is_err());
             let mut stream = std::net::TcpStream::connect(&address).unwrap();
             stream

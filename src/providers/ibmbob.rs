@@ -4,8 +4,8 @@
 //! Regional hosts must stay under `bob.ibm.com`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "ibmbob";
@@ -122,11 +122,11 @@ impl Provider for IbmBob {
                 let limit = field(&budget, "budget_limit").filter(|value| *value >= 0.0);
                 let label = json_api::text_field(&team, "name").unwrap_or_else(|| team_id.clone());
                 let resets = instance.get("refresh_at").and_then(util::to_iso);
-                if let Some(limit) = limit {
-                    if let Some(pct) = json_api::used_percent(used, limit) {
-                        lines.push(MetricLine::percent(label, pct, resets));
-                        continue;
-                    }
+                if let Some(limit) = limit
+                    && let Some(pct) = json_api::used_percent(used, limit)
+                {
+                    lines.push(MetricLine::percent(label, pct, resets));
+                    continue;
                 }
                 lines.push(json_api::text_line(&label, format!("{used:.0} Bobcoins")));
             }

@@ -38,7 +38,9 @@ pub fn cmd(args: &[String]) -> ExitCode {
             }
         }
         _ => {
-            eprintln!("Usage: spanreed privacy [metrics|sync on|off]\nMetrics publishes aggregates; sync transfers private request history. Both are off by default.");
+            eprintln!(
+                "Usage: spanreed privacy [metrics|sync on|off]\nMetrics publishes aggregates; sync transfers private request history. Both are off by default."
+            );
             return ExitCode::FAILURE;
         }
     }

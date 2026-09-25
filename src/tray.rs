@@ -898,14 +898,13 @@ fn acquire_single_instance() -> Result<InstanceLock, String> {
     let path = dir.join(LOCK_FILE);
     if path.exists() {
         // Stale lock from a crashed tray: if the PID is gone, take over.
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            if let Ok(pid) = text.trim().parse::<u32>() {
-                if process_alive(pid) {
-                    return Err(format!(
-                        "tray already running (pid {pid}); quit the existing icon first"
-                    ));
-                }
-            }
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(pid) = text.trim().parse::<u32>()
+            && process_alive(pid)
+        {
+            return Err(format!(
+                "tray already running (pid {pid}); quit the existing icon first"
+            ));
         }
         let _ = std::fs::remove_file(&path);
     }

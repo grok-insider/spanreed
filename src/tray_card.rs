@@ -1067,7 +1067,9 @@ fn card_html(card: &TrayCard, index: usize, selected: bool) -> String {
             })
             .collect::<Vec<_>>()
             .join("");
-        format!("<div class=\"bars\" role=\"img\" aria-label=\"Daily cost\">{marks}</div><p class=\"note hover\"></p>")
+        format!(
+            "<div class=\"bars\" role=\"img\" aria-label=\"Daily cost\">{marks}</div><p class=\"note hover\"></p>"
+        )
     };
     let notes = card
         .notes

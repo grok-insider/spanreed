@@ -5,8 +5,8 @@
 
 use crate::creds;
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, field};
 use crate::util;
 
 const ID: &str = "muse";
@@ -39,17 +39,17 @@ pub(super) fn parse_key(body: &serde_json::Value) -> (Vec<MetricLine>, Option<St
         return (vec![json_api::text_line("Subscription", "Inactive")], plan);
     }
     let mut lines = Vec::new();
-    if let Some(window) = body.pointer("/subs_usage/window") {
-        if let Some(pct) = field(window, "used_percent") {
-            let resets = window.get("resets_at").and_then(util::to_iso);
-            lines.push(MetricLine::percent("5-hour", pct, resets));
-        }
+    if let Some(window) = body.pointer("/subs_usage/window")
+        && let Some(pct) = field(window, "used_percent")
+    {
+        let resets = window.get("resets_at").and_then(util::to_iso);
+        lines.push(MetricLine::percent("5-hour", pct, resets));
     }
-    if let Some(weekly) = body.pointer("/subs_usage/weekly") {
-        if let Some(pct) = field(weekly, "used_percent") {
-            let resets = weekly.get("resets_at").and_then(util::to_iso);
-            lines.push(MetricLine::percent("Weekly", pct, resets));
-        }
+    if let Some(weekly) = body.pointer("/subs_usage/weekly")
+        && let Some(pct) = field(weekly, "used_percent")
+    {
+        let resets = weekly.get("resets_at").and_then(util::to_iso);
+        lines.push(MetricLine::percent("Weekly", pct, resets));
     }
     (lines, plan)
 }

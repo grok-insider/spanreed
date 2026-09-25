@@ -118,11 +118,13 @@ pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
     log::info!("local API listening on http://{BIND_ADDR}");
 
     // Consumption collection remains independent of provider network retries.
-    std::thread::spawn(move || loop {
-        if let Err(error) = crate::usage::refresh(None, false) {
-            log::warn!("Local consumption refresh failed: {error}");
+    std::thread::spawn(move || {
+        loop {
+            if let Err(error) = crate::usage::refresh(None, false) {
+                log::warn!("Local consumption refresh failed: {error}");
+            }
+            std::thread::sleep(Duration::from_secs(refresh_secs.max(60)));
         }
-        std::thread::sleep(Duration::from_secs(refresh_secs.max(60)));
     });
     let initial = probe_with_retry();
     crate::history::record(&initial);

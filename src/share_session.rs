@@ -104,7 +104,9 @@ fn renew(base: &str, force: bool) -> Result<ShareSession, String> {
     match journal.recover(&current)? {
         Recovery::Clean => {}
         Recovery::Interrupted => {
-            return Err("Fabrials renewal was interrupted. Connect this installation again.".into())
+            return Err(
+                "Fabrials renewal was interrupted. Connect this installation again.".into(),
+            );
         }
         Recovery::Replacement(value) => {
             sess =

@@ -122,12 +122,11 @@ impl Provider for JetBrains {
         // practice the latest IDE's file is the meaningful one.
         let mut best: Option<Quota> = None;
         for file in &files {
-            if let Some(text) = creds::read_file(file) {
-                if let Some(q) = parse_quota(&text) {
-                    if best.as_ref().map(|b| q.maximum > b.maximum).unwrap_or(true) {
-                        best = Some(q);
-                    }
-                }
+            if let Some(text) = creds::read_file(file)
+                && let Some(q) = parse_quota(&text)
+                && best.as_ref().map(|b| q.maximum > b.maximum).unwrap_or(true)
+            {
+                best = Some(q);
             }
         }
 
@@ -138,7 +137,7 @@ impl Provider for JetBrains {
                     ID,
                     NAME,
                     "JetBrains AI Assistant quota data unavailable. Open AI Assistant once and try again.",
-                )
+                );
             }
         };
 

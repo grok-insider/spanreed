@@ -98,19 +98,18 @@ fn try_region(region: Region) -> Option<Result<ProviderOutput, String>> {
         .get("base_resp")
         .and_then(|b| b.get("status_code"))
         .and_then(|v| v.as_i64())
+        && code != 0
     {
-        if code != 0 {
-            let msg = data
-                .get("base_resp")
-                .and_then(|b| b.get("status_msg"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            // Treat auth-like errors so the next region is tried.
-            if msg.to_lowercase().contains("auth") || msg.to_lowercase().contains("key") {
-                return None;
-            }
-            return Some(Err(format!("MiniMax API error: {msg}")));
+        let msg = data
+            .get("base_resp")
+            .and_then(|b| b.get("status_msg"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        // Treat auth-like errors so the next region is tried.
+        if msg.to_lowercase().contains("auth") || msg.to_lowercase().contains("key") {
+            return None;
         }
+        return Some(Err(format!("MiniMax API error: {msg}")));
     }
 
     let model = data

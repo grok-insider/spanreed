@@ -3,8 +3,8 @@
 //! `GET https://api.atlascloud.ai/public/v1/balance`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any};
 
 const ID: &str = "atlascloud";
 const NAME: &str = "Atlas Cloud";

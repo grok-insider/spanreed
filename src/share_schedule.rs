@@ -466,9 +466,8 @@ mod platform {
             )),
             Err(xml_err) => {
                 // Fallback: classic daily (no catch-up) so setup still succeeds.
-                try_schtasks_daily_tr(bin).map_err(|e| {
-                    format!("schtasks XML failed ({xml_err}); TR fallback: {e}")
-                })?;
+                try_schtasks_daily_tr(bin)
+                    .map_err(|e| format!("schtasks XML failed ({xml_err}); TR fallback: {e}"))?;
                 Ok(format!(
                     "enabled {TASK_NAME} (daily {st} local TR fallback; re-run setup if catch-up needed)"
                 ))

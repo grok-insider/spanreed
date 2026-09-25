@@ -529,7 +529,7 @@ fn grok_proxy_serve_args(args: &[String]) -> Result<Vec<String>, String> {
             other => {
                 return Err(format!(
                     "unsupported option {other}; use `spanreed capture serve`"
-                ))
+                ));
             }
         }
     }

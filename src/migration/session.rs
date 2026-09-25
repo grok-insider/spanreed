@@ -235,7 +235,7 @@ pub fn propose(
     id: &str,
     selection: &[super::MigrationSelection],
 ) -> Result<MigrationSessionView, String> {
-    use fabrials_types::migration::{destination_providers, review, MigrationDirection};
+    use fabrials_types::migration::{MigrationDirection, destination_providers, review};
     let directory = root();
     let files = FileSet::acquire_wait(&directory)?;
     let mut record = load(&directory, id)?.ok_or("Migration session not found")?;
@@ -573,11 +573,13 @@ mod tests {
         let directory =
             PathBuf::from(std::env::var_os("FABRIALS_HTTPS_FIXTURE_ROOT").expect("fixture root"));
         assert!(directory.starts_with(std::env::temp_dir()));
-        assert!(directory
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("fabrials-https-"));
+        assert!(
+            directory
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("fabrials-https-")
+        );
         let origin = std::env::var("FABRIALS_HTTPS_FIXTURE_ORIGIN").unwrap();
         assert_eq!(origin, "https://localhost:19488");
         let invitation: serde_json::Value =
@@ -589,10 +591,12 @@ mod tests {
         assert_eq!(view.phase, "paired");
         eprintln!("Native pairing persisted");
         assert_eq!(status(id).unwrap().phase, "paired");
-        assert!(saved()
-            .unwrap()
-            .iter()
-            .any(|entry| entry.id == id && entry.view.is_some()));
+        assert!(
+            saved()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.id == id && entry.view.is_some())
+        );
         cancel(id).unwrap();
         assert!(status(id).is_err());
         assert!(!saved().unwrap().iter().any(|entry| entry.id == id));
@@ -891,11 +895,12 @@ mod tests {
         let f = if let Some(root) = child_root {
             let root = PathBuf::from(root);
             assert!(root.starts_with(std::env::temp_dir()));
-            assert!(root
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("spanreed-pair-"));
+            assert!(
+                root.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("spanreed-pair-")
+            );
             Fixture {
                 root,
                 paired: Cell::new(true),
@@ -1005,24 +1010,28 @@ mod tests {
     fn pinned_identity_cannot_be_rebound() {
         let f = fixture();
         connect(&f).unwrap();
-        assert!(pair_at(
-            &f.root,
-            "https://other.example",
-            ID,
-            "invitation",
-            "local-fixture",
-            &f
-        )
-        .is_err());
-        assert!(pair_at(
-            &f.root,
-            "https://relay.example",
-            ID,
-            "invitation",
-            "other-local",
-            &f
-        )
-        .is_err());
+        assert!(
+            pair_at(
+                &f.root,
+                "https://other.example",
+                ID,
+                "invitation",
+                "local-fixture",
+                &f
+            )
+            .is_err()
+        );
+        assert!(
+            pair_at(
+                &f.root,
+                "https://relay.example",
+                ID,
+                "invitation",
+                "other-local",
+                &f
+            )
+            .is_err()
+        );
         *f.owner.borrow_mut() = "another-owner".into();
         assert!(connect(&f).unwrap_err().contains("owner"));
         assert_eq!(

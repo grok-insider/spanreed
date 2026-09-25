@@ -3,7 +3,7 @@ use fabrials_runtime::{accounting, forward, http, listener, provider::Provider, 
 use fabrials_types::hop::{HopKind, Transport};
 use fabrials_upstreams as upstreams;
 use std::net::{SocketAddr, TcpStream};
-use std::sync::{atomic::AtomicBool, Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 pub struct LocalRelay {
     bind: String,
@@ -113,7 +113,7 @@ impl listener::ConnectionHost for LocalRelay {
                     &mut client,
                     error.status_code(),
                     "{\"error\":\"invalid_request\"}",
-                )
+                );
             }
         };
         if !routes::is_safe_request_target(&head.path) {
@@ -155,13 +155,17 @@ impl listener::ConnectionHost for LocalRelay {
                                 &mut client,
                                 error.status_code(),
                                 "{\"error\":\"invalid_body\"}",
-                            )
+                            );
                         }
                     };
                     let body: serde_json::Value = match serde_json::from_slice(&body) {
                         Ok(value) => value,
                         Err(_) => {
-                            return http::write_status(&mut client, 400, "{\"error\":\"bad_json\"}")
+                            return http::write_status(
+                                &mut client,
+                                400,
+                                "{\"error\":\"bad_json\"}",
+                            );
                         }
                     };
                     let provider = body
@@ -190,7 +194,7 @@ impl listener::ConnectionHost for LocalRelay {
                                     &mut client,
                                     400,
                                     "{\"error\":\"invalid_exhaustion_threshold\"}",
-                                )
+                                );
                             }
                         },
                     };
@@ -202,14 +206,14 @@ impl listener::ConnectionHost for LocalRelay {
                         &mut client,
                         405,
                         "{\"error\":\"method_not_allowed\"}",
-                    )
+                    );
                 }
                 _ => {
                     return http::write_status(
                         &mut client,
                         404,
                         "{\"error\":\"unknown_local_endpoint\"}",
-                    )
+                    );
                 }
             };
             return match result {
@@ -265,18 +269,18 @@ impl listener::ConnectionHost for LocalRelay {
                     &mut client,
                     error.status_code(),
                     "{\"error\":\"invalid_body\"}",
-                )
+                );
             }
         };
-        if provider.id() == "grok" {
-            if let Some(rewritten) = fabrials_runtime::models::rewrite_grok_request_model(&body) {
-                body = rewritten;
-            }
+        if provider.id() == "grok"
+            && let Some(rewritten) = fabrials_runtime::models::rewrite_grok_request_model(&body)
+        {
+            body = rewritten;
         }
         let model = match accounting::request_model(&body) {
             Ok(model) => model,
             Err(()) => {
-                return http::write_status(&mut client, 400, "{\"error\":\"invalid_model\"}")
+                return http::write_status(&mut client, 400, "{\"error\":\"invalid_model\"}");
             }
         };
         let credential = match (self.credentials)(provider.id(), routed.account_alias.as_deref()) {
@@ -286,7 +290,7 @@ impl listener::ConnectionHost for LocalRelay {
                     &mut client,
                     503,
                     "{\"error\":\"provider_credentials_unavailable\"}",
-                )
+                );
             }
         };
         let request_id = accounting::new_request_id();

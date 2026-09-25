@@ -3,8 +3,8 @@
 //! `GET https://api.gitkraken.dev/v1/ai-tasks/usage`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "gitkraken";
@@ -39,10 +39,10 @@ pub(super) fn parse_usage(body: &serde_json::Value) -> Result<Vec<MetricLine>, S
     if let Some(line) = quota_line("Personal", data, resets.clone()) {
         lines.push(line);
     }
-    if let Some(org) = data.get("organization") {
-        if let Some(line) = quota_line("Shared pool", org, resets) {
-            lines.push(line);
-        }
+    if let Some(org) = data.get("organization")
+        && let Some(line) = quota_line("Shared pool", org, resets)
+    {
+        lines.push(line);
     }
     if lines.is_empty() {
         return Err("GitKraken usage response had no quota.".into());

@@ -1,5 +1,5 @@
 //! Cached local-only presentation for Eww. Opening a panel never probes providers.
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn snapshot() -> Value {
     let outputs = crate::http::Request::get("http://127.0.0.1:6736/usage")

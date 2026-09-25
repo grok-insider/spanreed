@@ -32,10 +32,9 @@ fn key_from_provider_map(value: &serde_json::Value, field: &str) -> Option<Strin
             .get(name)
             .and_then(|e| e.get(field))
             .and_then(|v| v.as_str())
+            && !k.is_empty()
         {
-            if !k.is_empty() {
-                return Some(k.to_string());
-            }
+            return Some(k.to_string());
         }
     }
     None
@@ -43,31 +42,29 @@ fn key_from_provider_map(value: &serde_json::Value, field: &str) -> Option<Strin
 
 fn discover_key() -> Option<String> {
     // 1) Pi auth.json: { synthetic: { type, key } }
-    if let Some(v) = creds::read_json(&pi_dir().join("auth.json")) {
-        if let Some(k) = key_from_provider_map(&v, "key") {
-            return Some(k);
-        }
+    if let Some(v) = creds::read_json(&pi_dir().join("auth.json"))
+        && let Some(k) = key_from_provider_map(&v, "key")
+    {
+        return Some(k);
     }
     // 2) Pi models.json: { providers: { synthetic: { apiKey } } }
-    if let Some(v) = creds::read_json(&pi_dir().join("models.json")) {
-        if let Some(providers) = v.get("providers") {
-            if let Some(k) = key_from_provider_map(providers, "apiKey") {
-                return Some(k);
-            }
-        }
+    if let Some(v) = creds::read_json(&pi_dir().join("models.json"))
+        && let Some(providers) = v.get("providers")
+        && let Some(k) = key_from_provider_map(providers, "apiKey")
+    {
+        return Some(k);
     }
     // 3) Factory/Droid settings.json: customModels[].baseUrl contains synthetic.new
-    if let Some(v) = creds::read_json(&creds::expand("~/.factory/settings.json")) {
-        if let Some(models) = v.get("customModels").and_then(|m| m.as_array()) {
-            for m in models {
-                let base = m.get("baseUrl").and_then(|b| b.as_str()).unwrap_or("");
-                if base.contains("synthetic.new") {
-                    if let Some(k) = m.get("apiKey").and_then(|v| v.as_str()) {
-                        if !k.is_empty() {
-                            return Some(k.to_string());
-                        }
-                    }
-                }
+    if let Some(v) = creds::read_json(&creds::expand("~/.factory/settings.json"))
+        && let Some(models) = v.get("customModels").and_then(|m| m.as_array())
+    {
+        for m in models {
+            let base = m.get("baseUrl").and_then(|b| b.as_str()).unwrap_or("");
+            if base.contains("synthetic.new")
+                && let Some(k) = m.get("apiKey").and_then(|v| v.as_str())
+                && !k.is_empty()
+            {
+                return Some(k.to_string());
             }
         }
     }
@@ -76,10 +73,9 @@ fn discover_key() -> Option<String> {
         &creds::opencode::data_home()
             .join("opencode")
             .join("auth.json"),
-    ) {
-        if let Some(k) = key_from_provider_map(&v, "key") {
-            return Some(k);
-        }
+    ) && let Some(k) = key_from_provider_map(&v, "key")
+    {
+        return Some(k);
     }
     // 5) env
     creds::env("SYNTHETIC_API_KEY")
@@ -105,7 +101,7 @@ impl Provider for Synthetic {
                     ID,
                     NAME,
                     "Synthetic API key not found. Set SYNTHETIC_API_KEY or add key to ~/.pi/agent/auth.json",
-                )
+                );
             }
         };
 
@@ -116,7 +112,7 @@ impl Provider for Synthetic {
         {
             Ok(r) => r,
             Err(_) => {
-                return ProviderOutput::error(ID, NAME, "Request failed. Check your connection.")
+                return ProviderOutput::error(ID, NAME, "Request failed. Check your connection.");
             }
         };
         if resp.is_auth_error() {
@@ -154,20 +150,20 @@ fn parse_quotas(data: &serde_json::Value) -> Vec<MetricLine> {
     if let Some(roll) = data.get("rollingFiveHourLimit") {
         let max = roll.get("max").and_then(|v| v.as_f64());
         let remaining = roll.get("remaining").and_then(|v| v.as_f64());
-        if let (Some(max), Some(remaining)) = (max, remaining) {
-            if max > 0.0 {
-                lines.push(MetricLine::Progress {
-                    kind: MetricKind::Quota,
-                    label: "5h Rate Limit".into(),
-                    used: (max - remaining).max(0.0),
-                    limit: max,
-                    format: ProgressFormat::Count {
-                        suffix: "reqs".into(),
-                    },
-                    resets_at: None,
-                    color: None,
-                });
-            }
+        if let (Some(max), Some(remaining)) = (max, remaining)
+            && max > 0.0
+        {
+            lines.push(MetricLine::Progress {
+                kind: MetricKind::Quota,
+                label: "5h Rate Limit".into(),
+                used: (max - remaining).max(0.0),
+                limit: max,
+                format: ProgressFormat::Count {
+                    suffix: "reqs".into(),
+                },
+                resets_at: None,
+                color: None,
+            });
         }
         if roll
             .get("limited")
@@ -197,21 +193,21 @@ fn parse_quotas(data: &serde_json::Value) -> Vec<MetricLine> {
     if let Some(hourly) = data.get("search").and_then(|s| s.get("hourly")) {
         let limit = hourly.get("limit").and_then(|v| v.as_f64());
         let requests = hourly.get("requests").and_then(|v| v.as_f64());
-        if let (Some(limit), Some(requests)) = (limit, requests) {
-            if limit > 0.0 {
-                let resets = hourly.get("renewsAt").and_then(util::to_iso);
-                lines.push(MetricLine::Progress {
-                    kind: MetricKind::Quota,
-                    label: "Search".into(),
-                    used: requests,
-                    limit,
-                    format: ProgressFormat::Count {
-                        suffix: "reqs".into(),
-                    },
-                    resets_at: resets,
-                    color: None,
-                });
-            }
+        if let (Some(limit), Some(requests)) = (limit, requests)
+            && limit > 0.0
+        {
+            let resets = hourly.get("renewsAt").and_then(util::to_iso);
+            lines.push(MetricLine::Progress {
+                kind: MetricKind::Quota,
+                label: "Search".into(),
+                used: requests,
+                limit,
+                format: ProgressFormat::Count {
+                    suffix: "reqs".into(),
+                },
+                resets_at: resets,
+                color: None,
+            });
         }
     }
 
@@ -241,17 +237,21 @@ mod tests {
         assert_eq!(used("5h Rate Limit"), Some(150.0)); // 600 - 450
         assert_eq!(used("Mana Bar"), Some(20.0)); // 100 - 80
         assert_eq!(used("Search"), Some(10.0));
-        assert!(!lines
-            .iter()
-            .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Rate Limited")));
+        assert!(
+            !lines
+                .iter()
+                .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Rate Limited"))
+        );
     }
 
     #[test]
     fn rate_limited_badge_when_limited() {
         let data = serde_json::json!({ "rollingFiveHourLimit": { "remaining": 0, "max": 600, "limited": true } });
         let lines = parse_quotas(&data);
-        assert!(lines
-            .iter()
-            .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Rate Limited")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| matches!(l, MetricLine::Badge { label, .. } if label == "Rate Limited"))
+        );
     }
 }

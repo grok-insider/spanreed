@@ -80,11 +80,7 @@ mod platform {
         let s = String::from_utf8_lossy(&out.stdout)
             .trim_end_matches('\n')
             .to_string();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        if s.is_empty() { None } else { Some(s) }
     }
 
     pub fn lookup_user(service: &str, username: &str) -> Option<String> {
@@ -98,11 +94,7 @@ mod platform {
         let s = String::from_utf8_lossy(&out.stdout)
             .trim_end_matches('\n')
             .to_string();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        if s.is_empty() { None } else { Some(s) }
     }
 
     pub fn store(service: &str, label: &str, secret: &str) -> bool {
@@ -114,10 +106,10 @@ mod platform {
             Ok(c) => c,
             Err(_) => return false,
         };
-        if let Some(stdin) = child.stdin.as_mut() {
-            if stdin.write_all(secret.as_bytes()).is_err() {
-                return false;
-            }
+        if let Some(stdin) = child.stdin.as_mut()
+            && stdin.write_all(secret.as_bytes()).is_err()
+        {
+            return false;
         }
         child.wait().map(|s| s.success()).unwrap_or(false)
     }
@@ -133,10 +125,10 @@ mod platform {
             Ok(c) => c,
             Err(_) => return false,
         };
-        if let Some(stdin) = child.stdin.as_mut() {
-            if stdin.write_all(secret.as_bytes()).is_err() {
-                return false;
-            }
+        if let Some(stdin) = child.stdin.as_mut()
+            && stdin.write_all(secret.as_bytes()).is_err()
+        {
+            return false;
         }
         child.wait().map(|s| s.success()).unwrap_or(false)
     }
@@ -179,11 +171,7 @@ mod platform {
         let s = String::from_utf8_lossy(&out.stdout)
             .trim_end_matches('\n')
             .to_string();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        if s.is_empty() { None } else { Some(s) }
     }
 
     pub fn lookup_user(service: &str, username: &str) -> Option<String> {
@@ -197,11 +185,7 @@ mod platform {
         let s = String::from_utf8_lossy(&out.stdout)
             .trim_end_matches('\n')
             .to_string();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        if s.is_empty() { None } else { Some(s) }
     }
 
     pub fn store(service: &str, label: &str, secret: &str) -> bool {

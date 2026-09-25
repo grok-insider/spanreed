@@ -3,8 +3,8 @@
 //! `GET https://api.llmgateway.io/v1/key`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any};
 
 const ID: &str = "devpass";
 const NAME: &str = "DevPass";

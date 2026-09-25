@@ -1,6 +1,6 @@
 //! Reviewed client configuration writes; full source documents stay in the host.
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     io::Read,
     path::{Path, PathBuf},
@@ -175,10 +175,10 @@ fn prepare_change(
         .ok_or("Client provider configuration must be an object")?;
     match (operation, providers.get(&provider_id)) {
         (Operation::Create, Some(_)) => {
-            return Err("This connection exists; choose Update existing connection".into())
+            return Err("This connection exists; choose Update existing connection".into());
         }
         (Operation::Update | Operation::Remove, None) => {
-            return Err("Connection not found; choose Create connection".into())
+            return Err("Connection not found; choose Create connection".into());
         }
         (Operation::Update | Operation::Remove, Some(existing)) => {
             validate_managed_connection(existing, provider, alias)?
@@ -289,14 +289,13 @@ fn prepare_grok_change(
     if !address.ip().is_loopback() || address.port() == 0 || !crate::accounts::valid_alias(alias) {
         return Err("Select a managed account and a nonzero loopback proxy port".into());
     }
-    if let Some(model) = model {
-        if model.trim() != model
+    if let Some(model) = model
+        && (model.trim() != model
             || model.is_empty()
             || model.len() > 256
-            || model.chars().any(char::is_control)
-        {
-            return Err("Enter a valid model ID".into());
-        }
+            || model.chars().any(char::is_control))
+    {
+        return Err("Enter a valid model ID".into());
     }
     let before = read(&path)?;
     let text = before.as_deref().unwrap_or_default();
@@ -317,10 +316,10 @@ fn prepare_grok_change(
         let endpoints = document["endpoints"]
             .as_table_like_mut()
             .ok_or("Grok endpoints must be a TOML table")?;
-        if let Some(value) = endpoints.get("cli_chat_proxy_base_url") {
-            if value.as_str().is_none() {
-                return Err("Grok chat endpoint must be a string".into());
-            }
+        if let Some(value) = endpoints.get("cli_chat_proxy_base_url")
+            && value.as_str().is_none()
+        {
+            return Err("Grok chat endpoint must be a string".into());
         }
         let matches = endpoints
             .get("cli_chat_proxy_base_url")
@@ -598,9 +597,11 @@ mod tests {
                     "http://127.0.0.1:18736/acct/work/nous/v1"
                 );
             }
-            assert!(std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("// keep user preferences"));
+            assert!(
+                std::fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("// keep user preferences")
+            );
         }
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -612,7 +613,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("opencode.jsonc");
-        let original="{\n  // preferred model\n  \"model\": \"other/model\", // keep inline\n  \"provider\": {\n    /* unrelated */ \"other\": {\"name\": \"Keep\"},\n  },\n}\n";
+        let original = "{\n  // preferred model\n  \"model\": \"other/model\", // keep inline\n  \"provider\": {\n    /* unrelated */ \"other\": {\"name\": \"Keep\"},\n  },\n}\n";
         std::fs::write(&path, original).unwrap();
         let create = prepare(path.clone(), "127.0.0.1:18736", "nous", "work", "first").unwrap();
         let backup = apply(create, &root.join("backups")).unwrap().unwrap();
@@ -653,33 +654,39 @@ mod tests {
         let mut document: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         document["agent"] = json!({"build":{"model":"spanreed-grok-work/old-model"}});
         std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
-        assert!(prepare_change(
-            path.clone(),
-            "127.0.0.1:18736",
-            "grok",
-            "work",
-            "",
-            Operation::Remove
-        )
-        .is_err());
-        assert!(prepare_change(
-            path.clone(),
-            "127.0.0.1:18736",
-            "grok",
-            "work",
-            "new-model",
-            Operation::Update
-        )
-        .is_err());
-        assert!(prepare_change(
-            path.clone(),
-            "127.0.0.1:18737",
-            "grok",
-            "work",
-            "old-model",
-            Operation::Update
-        )
-        .is_ok());
+        assert!(
+            prepare_change(
+                path.clone(),
+                "127.0.0.1:18736",
+                "grok",
+                "work",
+                "",
+                Operation::Remove
+            )
+            .is_err()
+        );
+        assert!(
+            prepare_change(
+                path.clone(),
+                "127.0.0.1:18736",
+                "grok",
+                "work",
+                "new-model",
+                Operation::Update
+            )
+            .is_err()
+        );
+        assert!(
+            prepare_change(
+                path.clone(),
+                "127.0.0.1:18737",
+                "grok",
+                "work",
+                "old-model",
+                Operation::Update
+            )
+            .is_ok()
+        );
         document["agent"]["build"]["model"] = json!("other/model");
         document["provider"]["other"] = json!({"name":"Keep"});
         std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
@@ -729,9 +736,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(update.view.operation, Operation::Update);
-        assert!(!serde_json::to_string(&update.view)
-            .unwrap()
-            .contains("private-unrelated"));
+        assert!(
+            !serde_json::to_string(&update.view)
+                .unwrap()
+                .contains("private-unrelated")
+        );
         let backup = apply(update, &root.join("backups")).unwrap().unwrap();
         assert_eq!(std::fs::read(backup).unwrap(), before);
         let mut document: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -750,15 +759,17 @@ mod tests {
         );
         document["provider"]["spanreed-nous-work"]["options"]["headers"] = json!({"custom":"keep"});
         std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
-        assert!(prepare_change(
-            path.clone(),
-            "127.0.0.1:18736",
-            "nous",
-            "work",
-            "model",
-            Operation::Update
-        )
-        .is_err());
+        assert!(
+            prepare_change(
+                path.clone(),
+                "127.0.0.1:18736",
+                "nous",
+                "work",
+                "model",
+                Operation::Update
+            )
+            .is_err()
+        );
         assert_eq!(
             serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
             document
@@ -777,9 +788,11 @@ mod tests {
         std::fs::write(&path, original).unwrap();
         let plan = prepare_grok_change(path.clone(), "[::1]:18736", "work", None).unwrap();
         assert_eq!(plan.view.client, ConfigurationClient::Grok);
-        assert!(!serde_json::to_string(&plan.view)
-            .unwrap()
-            .contains("synthetic-secret"));
+        assert!(
+            !serde_json::to_string(&plan.view)
+                .unwrap()
+                .contains("synthetic-secret")
+        );
         let backup = apply(plan, &root.join("backups")).unwrap().unwrap();
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), original);
         #[cfg(unix)]
@@ -859,9 +872,11 @@ mod tests {
         std::fs::write(path.with_extension("jsonc"), b"{ /* keep comments */ }").unwrap();
         let jsonc = prepare(path.clone(), "127.0.0.1:18736", "grok", "work", "model").unwrap();
         assert_eq!(jsonc.path, path.with_extension("jsonc"));
-        assert!(String::from_utf8(jsonc.after)
-            .unwrap()
-            .contains("/* keep comments */"));
+        assert!(
+            String::from_utf8(jsonc.after)
+                .unwrap()
+                .contains("/* keep comments */")
+        );
         assert!(!path.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -884,9 +899,11 @@ mod tests {
             "chosen-model",
         )
         .unwrap();
-        assert!(!serde_json::to_string(&plan.view)
-            .unwrap()
-            .contains("synthetic-secret"));
+        assert!(
+            !serde_json::to_string(&plan.view)
+                .unwrap()
+                .contains("synthetic-secret")
+        );
         std::fs::write(&path, b"{}").unwrap();
         assert!(apply(plan, &root.join("backups")).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"{}");

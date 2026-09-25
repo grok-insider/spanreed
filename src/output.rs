@@ -328,10 +328,12 @@ mod tests {
         assert_eq!(j["text"], "codex 81%");
         assert_eq!(j["class"], "warning");
         assert_eq!(j["percentage"], 81);
-        assert!(j["tooltip"]
-            .as_str()
-            .unwrap()
-            .contains("<b>Codex (Max)</b>"));
+        assert!(
+            j["tooltip"]
+                .as_str()
+                .unwrap()
+                .contains("<b>Codex (Max)</b>")
+        );
     }
 
     #[test]
@@ -359,15 +361,17 @@ mod tests {
     fn waybar_bar_anchors_on_session_not_higher_weekly() {
         // The core bug: weekly 45% / session 0% (just reset) must show 0%,
         // not the misleading 45%.
-        let outputs = vec![ProviderOutput::new(
-            "codex",
-            "Codex",
-            vec![
-                MetricLine::percent("Session", 0.0, None),
-                MetricLine::percent("Weekly", 45.0, None),
-            ],
-        )
-        .with_plan(Some("Max 20x".into()))];
+        let outputs = vec![
+            ProviderOutput::new(
+                "codex",
+                "Codex",
+                vec![
+                    MetricLine::percent("Session", 0.0, None),
+                    MetricLine::percent("Weekly", 45.0, None),
+                ],
+            )
+            .with_plan(Some("Max 20x".into())),
+        ];
         let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "codex 0%");
         assert_eq!(j["percentage"], 0);
@@ -377,15 +381,17 @@ mod tests {
     #[test]
     fn waybar_escalates_to_weekly_when_weekly_critical() {
         // Weekly near-exhaustion still surfaces over a calm session.
-        let outputs = vec![ProviderOutput::new(
-            "codex",
-            "Codex",
-            vec![
-                MetricLine::percent("Session", 10.0, None),
-                MetricLine::percent("Weekly", 92.0, None),
-            ],
-        )
-        .with_plan(Some("Max 20x".into()))];
+        let outputs = vec![
+            ProviderOutput::new(
+                "codex",
+                "Codex",
+                vec![
+                    MetricLine::percent("Session", 10.0, None),
+                    MetricLine::percent("Weekly", 92.0, None),
+                ],
+            )
+            .with_plan(Some("Max 20x".into())),
+        ];
         let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "codex 92%");
         assert_eq!(j["class"], "warning");
@@ -395,18 +401,22 @@ mod tests {
     fn waybar_excludes_free_plan_from_bar_but_keeps_tooltip() {
         // Codex on Free with a high session must not drive the bar; when it's
         // the only provider the bar is "no data" but the tooltip still lists it.
-        let outputs = vec![ProviderOutput::new(
-            "codex",
-            "Codex",
-            vec![MetricLine::percent("Session", 88.0, None)],
-        )
-        .with_plan(Some("Free".into()))];
+        let outputs = vec![
+            ProviderOutput::new(
+                "codex",
+                "Codex",
+                vec![MetricLine::percent("Session", 88.0, None)],
+            )
+            .with_plan(Some("Free".into())),
+        ];
         let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "no data");
-        assert!(j["tooltip"]
-            .as_str()
-            .unwrap()
-            .contains("<b>Codex (Free)</b>"));
+        assert!(
+            j["tooltip"]
+                .as_str()
+                .unwrap()
+                .contains("<b>Codex (Free)</b>")
+        );
         assert!(j["tooltip"].as_str().unwrap().contains("Session: 88%"));
     }
 
@@ -435,12 +445,14 @@ mod tests {
 
     #[test]
     fn waybar_grok_uses_single_window_fallback() {
-        let outputs = vec![ProviderOutput::new(
-            "grok",
-            "Grok",
-            vec![MetricLine::percent("Weekly", 11.0, None)],
-        )
-        .with_plan(Some("SuperGrok Heavy".into()))];
+        let outputs = vec![
+            ProviderOutput::new(
+                "grok",
+                "Grok",
+                vec![MetricLine::percent("Weekly", 11.0, None)],
+            )
+            .with_plan(Some("SuperGrok Heavy".into())),
+        ];
         let j = waybar_no_activity(&outputs);
         assert_eq!(j["text"], "grok 11%");
     }

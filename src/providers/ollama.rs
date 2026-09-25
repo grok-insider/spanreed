@@ -5,8 +5,8 @@
 //! the model catalog is counted from `/api/tags`.
 
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any};
 
 const ID: &str = "ollama";
 const NAME: &str = "Ollama";

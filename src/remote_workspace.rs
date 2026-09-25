@@ -203,7 +203,10 @@ fn execute(
         if let Some(message) = response.json().as_ref().and_then(public_remote_error) {
             return Err(message.into());
         }
-        return Err(format!("ai-relay could not complete the operation (HTTP {}). Refresh before retrying a change.", response.status));
+        return Err(format!(
+            "ai-relay could not complete the operation (HTTP {}). Refresh before retrying a change.",
+            response.status
+        ));
     }
     response
         .json()
@@ -217,8 +220,12 @@ fn execute(
 
 fn public_remote_error(body: &serde_json::Value) -> Option<&'static str> {
     match body.get("error")?.as_str()? {
-        "provider_identity_already_linked" => Some("This provider identity is already connected. Renew authorization on its existing account."),
-        "account_name_already_exists" => Some("This account name already exists. Choose another name or renew the existing account."),
+        "provider_identity_already_linked" => Some(
+            "This provider identity is already connected. Renew authorization on its existing account.",
+        ),
+        "account_name_already_exists" => Some(
+            "This account name already exists. Choose another name or renew the existing account.",
+        ),
         _ => None,
     }
 }
@@ -244,11 +251,11 @@ mod tests {
     use super::*;
     #[test]
     fn only_known_public_error_codes_reach_the_renderer() {
-        assert!(public_remote_error(
-            &serde_json::json!({"error":"provider_identity_already_linked"})
-        )
-        .unwrap()
-        .contains("existing account"));
+        assert!(
+            public_remote_error(&serde_json::json!({"error":"provider_identity_already_linked"}))
+                .unwrap()
+                .contains("existing account")
+        );
         assert!(public_remote_error(&serde_json::json!({"error":"secret-token-value"})).is_none());
         assert!(public_remote_error(&serde_json::json!({"detail":"secret-token-value"})).is_none());
     }
@@ -261,13 +268,15 @@ mod tests {
         assert!(check_principal(token, Principal::Owner("alice")).is_err());
         assert!(check_principal(token, Principal::Subject("x-alice")).is_err());
         assert!(check_principal("invalid", Principal::Subject("alice")).is_err());
-        assert!(request(
-            RemoteOperation::CreateKey,
-            serde_json::json!({}),
-            None,
-            None
-        )
-        .is_err());
+        assert!(
+            request(
+                RemoteOperation::CreateKey,
+                serde_json::json!({}),
+                None,
+                None
+            )
+            .is_err()
+        );
     }
     #[test]
     fn renderer_cannot_supply_proxy_routes_or_arbitrary_origins() {

@@ -33,15 +33,14 @@ pub(crate) fn discover() -> Option<Discovered> {
         // Prefer the explicit extension server port if advertised.
         if let Some(port) = proc::extract_flag(&p.cmdline, "--extension_server_port")
             .and_then(|v| v.parse::<u16>().ok())
+            && !ports.contains(&port)
         {
-            if !ports.contains(&port) {
-                ports.insert(0, port);
-            }
+            ports.insert(0, port);
         }
-        if let Some(csrf) = csrf {
-            if !ports.is_empty() {
-                return Some(Discovered { csrf, ports });
-            }
+        if let Some(csrf) = csrf
+            && !ports.is_empty()
+        {
+            return Some(Discovered { csrf, ports });
         }
     }
     None
@@ -111,7 +110,7 @@ impl Provider for Antigravity {
                     ID,
                     NAME,
                     "Antigravity not running. Open the Antigravity app/IDE.",
-                )
+                );
             }
         };
 
@@ -130,7 +129,7 @@ impl Provider for Antigravity {
                     ID,
                     NAME,
                     "Could not reach Antigravity language server.",
-                )
+                );
             }
         };
 

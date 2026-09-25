@@ -101,11 +101,7 @@ fn fetch_stripe_balance(session: &str) -> i64 {
         .json()
         .and_then(|j| j.get("customerBalance").and_then(|v| v.as_f64()))
         .unwrap_or(0.0);
-    if balance < 0.0 {
-        (-balance) as i64
-    } else {
-        0
-    }
+    if balance < 0.0 { (-balance) as i64 } else { 0 }
 }
 
 /// Combined credits line: grant balance + Stripe prepaid balance (cents).
@@ -164,33 +160,32 @@ fn parse_usage(usage: &serde_json::Value) -> Vec<MetricLine> {
         } else if let (Some(limit), Some(remaining)) = (
             pu.get("limit").and_then(|v| v.as_f64()),
             pu.get("remaining").and_then(|v| v.as_f64()),
-        ) {
-            if limit > 0.0 {
-                let pct = (limit - remaining) / limit * 100.0;
-                lines.push(MetricLine::percent("Total usage", pct, None));
-            }
+        ) && limit > 0.0
+        {
+            let pct = (limit - remaining) / limit * 100.0;
+            lines.push(MetricLine::percent("Total usage", pct, None));
         }
 
-        if let Some(auto) = pu.get("autoPercentUsed").and_then(|v| v.as_f64()) {
-            if auto.is_finite() {
-                lines.push(MetricLine::percent("Auto usage", auto, None));
-            }
+        if let Some(auto) = pu.get("autoPercentUsed").and_then(|v| v.as_f64())
+            && auto.is_finite()
+        {
+            lines.push(MetricLine::percent("Auto usage", auto, None));
         }
-        if let Some(api) = pu.get("apiPercentUsed").and_then(|v| v.as_f64()) {
-            if api.is_finite() {
-                lines.push(MetricLine::percent("API usage", api, None));
-            }
+        if let Some(api) = pu.get("apiPercentUsed").and_then(|v| v.as_f64())
+            && api.is_finite()
+        {
+            lines.push(MetricLine::percent("API usage", api, None));
         }
 
         // Bonus spend (free credits from model providers), if any.
-        if let Some(bonus) = pu.get("bonusSpend").and_then(|v| v.as_f64()) {
-            if bonus > 0.0 {
-                lines.push(MetricLine::text(
-                    MetricKind::Cost,
-                    "Bonus spend",
-                    format!("${:.2}", util::cents_to_dollars(bonus)),
-                ));
-            }
+        if let Some(bonus) = pu.get("bonusSpend").and_then(|v| v.as_f64())
+            && bonus > 0.0
+        {
+            lines.push(MetricLine::text(
+                MetricKind::Cost,
+                "Bonus spend",
+                format!("${:.2}", util::cents_to_dollars(bonus)),
+            ));
         }
     }
 
@@ -238,7 +233,7 @@ impl Provider for Cursor {
                     ID,
                     NAME,
                     "No Cursor auth found. Sign in to the Cursor app.",
-                )
+                );
             }
         };
 
@@ -275,19 +270,15 @@ impl Provider for Cursor {
         }
 
         // Enterprise request count (best-effort).
-        if let Some((user_id, tok)) = &session {
-            if let Ok(resp) = Request::get(format!("{REST_USAGE_URL}?user={}", urlencode(user_id)))
+        if let Some((user_id, tok)) = &session
+            && let Ok(resp) = Request::get(format!("{REST_USAGE_URL}?user={}", urlencode(user_id)))
                 .header("Cookie", format!("WorkosCursorSessionToken={tok}"))
                 .send()
-            {
-                if (200..300).contains(&resp.status) {
-                    if let Some(rest) = resp.json() {
-                        if let Some(line) = requests_line(&rest) {
-                            lines.push(line);
-                        }
-                    }
-                }
-            }
+            && (200..300).contains(&resp.status)
+            && let Some(rest) = resp.json()
+            && let Some(line) = requests_line(&rest)
+        {
+            lines.push(line);
         }
 
         if lines.is_empty() {

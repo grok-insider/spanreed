@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
 pub use fabrials_metrics::pricing::{PricingMap, Usage};
-use fabrials_metrics::{build_limits, compose_upstream, LimitsMap, UpstreamTables};
+use fabrials_metrics::{LimitsMap, UpstreamTables, build_limits, compose_upstream};
 
 use crate::creds;
 use crate::http::Request;
@@ -171,15 +171,16 @@ mod tests {
     fn local_logs_stay_unpriced_for_dated_or_unknown_models() {
         let t = table_from(None, None);
         assert!(t.exact("claude-opus-4-8-20260601").is_none());
-        assert!(t
-            .exact_cost(
+        assert!(
+            t.exact_cost(
                 "totally-made-up-model-xyz",
                 Usage {
                     input: 10,
                     ..Default::default()
                 }
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]

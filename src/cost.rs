@@ -89,14 +89,12 @@ pub fn cost_lines(source: Source, weekly_start_ms: Option<i64>) -> Vec<crate::mo
     };
     lines.push(MetricLine::text(MetricKind::Cost, "Last 30 Days", value));
 
-    if let Some(start) = weekly_start_ms {
-        if let Some(win) = estimate_since(source, start) {
-            if let Some(l) =
-                usage_stats::since_weekly_reset_line(win.total_tokens, win.total_cost, win.partial)
-            {
-                lines.push(l);
-            }
-        }
+    if let Some(start) = weekly_start_ms
+        && let Some(win) = estimate_since(source, start)
+        && let Some(l) =
+            usage_stats::since_weekly_reset_line(win.total_tokens, win.total_cost, win.partial)
+    {
+        lines.push(l);
     }
 
     lines.extend(usage_stats::breakdown_lines(

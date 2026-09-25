@@ -3,8 +3,8 @@
 //! `GET https://api.moonshot.ai/v1/users/me/balance` (or the `.cn` host).
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "moonshot";
 const NAME: &str = "Moonshot";

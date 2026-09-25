@@ -25,12 +25,11 @@ fn api_key() -> Option<String> {
     // The key is stored under "apiKey@<host>"; scan for any apiKey@ field.
     let obj = v.as_object()?;
     for (k, val) in obj {
-        if k.starts_with("apiKey@") {
-            if let Some(s) = val.as_str() {
-                if !s.is_empty() {
-                    return Some(s.to_string());
-                }
-            }
+        if k.starts_with("apiKey@")
+            && let Some(s) = val.as_str()
+            && !s.is_empty()
+        {
+            return Some(s.to_string());
         }
     }
     None
@@ -62,7 +61,7 @@ impl Provider for Amp {
                     ID,
                     NAME,
                     "Not signed in. Run the Amp CLI to sign in.",
-                )
+                );
             }
         };
 
@@ -118,18 +117,18 @@ fn parse_display(text: &str) -> (Vec<MetricLine>, Option<String>) {
     .unwrap();
     let remaining = money(&balance_re, text, 1);
     let total = money(&balance_re, text, 2);
-    if let (Some(remaining), Some(total)) = (remaining, total) {
-        if total > 0.0 {
-            let used = (total - remaining).max(0.0);
-            lines.push(MetricLine::dollars(
-                MetricKind::Quota,
-                "Amp Free",
-                used,
-                total,
-                None,
-            ));
-            plan = Some("Free".into());
-        }
+    if let (Some(remaining), Some(total)) = (remaining, total)
+        && total > 0.0
+    {
+        let used = (total - remaining).max(0.0);
+        lines.push(MetricLine::dollars(
+            MetricKind::Quota,
+            "Amp Free",
+            used,
+            total,
+            None,
+        ));
+        plan = Some("Free".into());
     }
 
     // Promotional bonus: "+N% bonus for N more days"

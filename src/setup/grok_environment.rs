@@ -45,12 +45,12 @@ pub(super) fn warnings() -> Vec<String> {
                 }
             }
             let mut bytes = Vec::new();
-            if let Ok(file) = std::fs::File::open(&path) {
-                if file.take(64 * 1024).read_to_end(&mut bytes).is_ok() {
-                    let names = referenced_overrides(&bytes);
-                    if !names.is_empty() {
-                        warnings.push(format!("The grok launcher references {}. It may override this file; review the wrapper or use a launch command with the intended endpoints. Endpoint values and credentials are not shown.", names.join(", ")));
-                    }
+            if let Ok(file) = std::fs::File::open(&path)
+                && file.take(64 * 1024).read_to_end(&mut bytes).is_ok()
+            {
+                let names = referenced_overrides(&bytes);
+                if !names.is_empty() {
+                    warnings.push(format!("The grok launcher references {}. It may override this file; review the wrapper or use a launch command with the intended endpoints. Endpoint values and credentials are not shown.", names.join(", ")));
                 }
             }
             break 'search;

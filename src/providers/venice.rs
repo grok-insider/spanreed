@@ -3,8 +3,8 @@
 //! `GET https://api.venice.ai/api/v1/billing/balance`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field, number};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field, number};
 
 const ID: &str = "venice";
 const NAME: &str = "Venice";
@@ -28,20 +28,20 @@ pub(super) fn parse_balance(data: &serde_json::Value) -> Result<Vec<MetricLine>,
     if !can {
         return Ok(vec![MetricLine::percent("Balance", 100.0, None)]);
     }
-    if currency == "USD" {
-        if let Some(usd) = usd {
-            return Ok(vec![json_api::text_line(
-                "USD remaining",
-                json_api::usd(usd),
-            )]);
-        }
+    if currency == "USD"
+        && let Some(usd) = usd
+    {
+        return Ok(vec![json_api::text_line(
+            "USD remaining",
+            json_api::usd(usd),
+        )]);
     }
-    if let (Some(diem), Some(allocation)) = (diem, allocation) {
-        if allocation > 0.0 {
-            let used = (allocation - diem).max(0.0);
-            if let Some(pct) = json_api::used_percent(used, allocation) {
-                return Ok(vec![MetricLine::percent("DIEM", pct, None)]);
-            }
+    if let (Some(diem), Some(allocation)) = (diem, allocation)
+        && allocation > 0.0
+    {
+        let used = (allocation - diem).max(0.0);
+        if let Some(pct) = json_api::used_percent(used, allocation) {
+            return Ok(vec![MetricLine::percent("DIEM", pct, None)]);
         }
     }
     if let Some(diem) = diem.filter(|n| *n > 0.0) {

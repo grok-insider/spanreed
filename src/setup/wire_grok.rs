@@ -1,7 +1,7 @@
 //! Persist `GROK_CLI_CHAT_PROXY_BASE_URL` so Grok Build hits the capture proxy.
 
-use super::state::{GrokWireState, SetupState};
 use super::GROK_CAPTURE_BASE_URL;
+use super::state::{GrokWireState, SetupState};
 
 pub const ENV_KEY: &str = "GROK_CLI_CHAT_PROXY_BASE_URL";
 
@@ -159,11 +159,7 @@ mod platform {
             return None;
         }
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        if s.is_empty() { None } else { Some(s) }
     }
 
     pub fn set_env(value: &str) -> Result<(), String> {
@@ -219,10 +215,10 @@ mod platform {
         }
         // shell profiles
         for p in profile_paths() {
-            if let Ok(text) = std::fs::read_to_string(&p) {
-                if text.contains(BLOCK_BEGIN) {
-                    return Some(GROK_CAPTURE_BASE_URL.to_string());
-                }
+            if let Ok(text) = std::fs::read_to_string(&p)
+                && text.contains(BLOCK_BEGIN)
+            {
+                return Some(GROK_CAPTURE_BASE_URL.to_string());
             }
         }
         None

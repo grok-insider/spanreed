@@ -5,8 +5,8 @@
 
 use crate::creds;
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "huggingface";
@@ -43,10 +43,10 @@ pub(super) fn parse_billing(body: &serde_json::Value) -> Vec<MetricLine> {
     let included = field(inference, "includedNanoUsd").unwrap_or(0.0) / 1e9;
     let billable = (gross - included).max(0.0);
     let mut lines = vec![json_api::text_line("This month", json_api::usd(billable))];
-    if let Some(limit) = field(inference, "limitNanoUsd") {
-        if limit > 0.0 {
-            lines.push(json_api::text_line("Limit", json_api::usd(limit / 1e9)));
-        }
+    if let Some(limit) = field(inference, "limitNanoUsd")
+        && limit > 0.0
+    {
+        lines.push(json_api::text_line("Limit", json_api::usd(limit / 1e9)));
     }
     if let Some(requests) = field(inference, "numRequests") {
         lines.push(json_api::text_line("Requests", format!("{requests:.0}")));
@@ -99,10 +99,9 @@ impl Provider for HuggingFace {
         }
         if let Ok(gpu) =
             json_api::get_bearer("https://huggingface.co/api/spaces/zero-gpu/quota", &token)
+            && let Some(line) = parse_zerogpu(&gpu)
         {
-            if let Some(line) = parse_zerogpu(&gpu) {
-                lines.push(line);
-            }
+            lines.push(line);
         }
         if lines.is_empty() {
             ProviderOutput::error(

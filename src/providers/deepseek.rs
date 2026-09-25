@@ -3,8 +3,8 @@
 //! `GET https://api.deepseek.com/user/balance`.
 
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, number};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, number};
 
 const ID: &str = "deepseek";
 const NAME: &str = "DeepSeek";

@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
+use super::OPENCODE_XAI_CAPTURE_BASE_URL;
 use super::detect::{self, Detection};
 use super::paths;
 use super::state::{OpenCodeWireState, SetupState};
-use super::OPENCODE_XAI_CAPTURE_BASE_URL;
 
 /// True when OpenCode xAI baseURL points at the local capture proxy.
 pub fn is_wired_to_capture(det: &Detection, state: &SetupState) -> bool {

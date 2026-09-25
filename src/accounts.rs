@@ -12,7 +12,7 @@ use crate::secret;
 
 const KEYRING_PREFIX: &str = "spanreed:account";
 
-pub use fabrials_accounts::{parse_id, unique_alias_among, valid_alias, Account, Registry};
+pub use fabrials_accounts::{Account, Registry, parse_id, unique_alias_among, valid_alias};
 
 /// A new account with a fresh generation, so a re-added alias is a new identity.
 pub fn new_account(provider: &str, alias: &str) -> Result<Account, String> {
@@ -492,7 +492,7 @@ pub fn rename(provider: &str, old_alias: &str, new_alias: &str) -> Result<Accoun
                 return Err(
                     "Authorize this account again before renaming; its refresh was interrupted"
                         .into(),
-                )
+                );
             }
             fabrials_runtime::credential_journal::Recovery::Replacement(value) => {
                 document = Some(value)
@@ -577,10 +577,10 @@ fn remove_inner(id: &str, expected: Option<Option<&str>>) -> Result<(), String> 
         return Err("Account changed; refresh Accounts before removing it".into());
     }
     let acc = reg.accounts.remove(pos);
-    if acc.active {
-        if let Some(next) = reg.accounts.iter_mut().find(|a| a.provider == acc.provider) {
-            next.active = true;
-        }
+    if acc.active
+        && let Some(next) = reg.accounts.iter_mut().find(|a| a.provider == acc.provider)
+    {
+        next.active = true;
     }
     let journal = rotation(&acc.provider, &acc.alias)?;
     reg.removed
@@ -838,10 +838,12 @@ mod tests {
             registry.accounts.push(ghost);
             vault.commit(&registry, Vec::new()).unwrap();
         }
-        assert!(get_secret_using("grok", "disconnected", |_, _| panic!(
-            "must not revive keyring credential"
-        ))
-        .is_none());
+        assert!(
+            get_secret_using("grok", "disconnected", |_, _| panic!(
+                "must not revive keyring credential"
+            ))
+            .is_none()
+        );
         assert_eq!(
             crate::migration::candidates().unwrap()[0].credential_kind,
             fabrials_types::migration::CredentialKind::Unavailable
@@ -913,9 +915,11 @@ mod tests {
         remove("nous/personal").unwrap();
         assert!(!file_secret_path("nous", "personal").exists());
         let vault = lock_vault().unwrap();
-        assert!(vault
-            .register(moved.clone(), &replacement.to_string(), None)
-            .is_err());
+        assert!(
+            vault
+                .register(moved.clone(), &replacement.to_string(), None)
+                .is_err()
+        );
         let removal = vault.registry().unwrap().removed.get(&moved.id).cloned();
         let fresh = new_account("nous", "personal").unwrap();
         vault
@@ -951,18 +955,22 @@ mod tests {
             read_secret_document("openai", "api").unwrap().unwrap()["api_key"],
             "fixture-rotated-grant"
         );
-        assert!(replace_authorization(
-            &api_account,
-            "different-attempt",
-            r#"{"api_key":"fixture-stale"}"#
-        )
-        .is_err());
-        assert!(crate::account_keys::replace(
-            &api_account.id,
-            api_account.generation.as_deref(),
-            "stale-key"
-        )
-        .is_err());
+        assert!(
+            replace_authorization(
+                &api_account,
+                "different-attempt",
+                r#"{"api_key":"fixture-stale"}"#
+            )
+            .is_err()
+        );
+        assert!(
+            crate::account_keys::replace(
+                &api_account.id,
+                api_account.generation.as_deref(),
+                "stale-key"
+            )
+            .is_err()
+        );
         assert!(remove_if_current(&api_account.id, api_account.generation.as_deref()).is_err());
         let current = routing_registry()
             .unwrap()
@@ -989,12 +997,10 @@ mod tests {
             .unwrap();
         remove_if_current(&current.id, current.generation.as_deref()).unwrap();
         assert!(read_secret_document("openai", "api").unwrap().is_none());
-        assert!(crate::account_keys::replace(
-            &current.id,
-            current.generation.as_deref(),
-            "removed-key"
-        )
-        .is_err());
+        assert!(
+            crate::account_keys::replace(&current.id, current.generation.as_deref(), "removed-key")
+                .is_err()
+        );
         let recreated = crate::account_keys::add("openai", "api", "recreated-api-key").unwrap();
         let candidate = crate::migration::candidates()
             .unwrap()
@@ -1007,12 +1013,14 @@ mod tests {
         );
         assert_eq!(Some(candidate.generation), recreated.generation);
         assert_ne!(recreated.generation, current.generation);
-        assert!(lock_vault()
-            .unwrap()
-            .registry()
-            .unwrap()
-            .removed
-            .contains_key(&recreated.id));
+        assert!(
+            lock_vault()
+                .unwrap()
+                .registry()
+                .unwrap()
+                .removed
+                .contains_key(&recreated.id)
+        );
         remove_if_current(&recreated.id, recreated.generation.as_deref()).unwrap();
         let oauth = routing_registry()
             .unwrap()

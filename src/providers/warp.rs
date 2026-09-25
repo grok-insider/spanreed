@@ -4,8 +4,8 @@
 //! a `Warp/1.0` user agent; the OS in the query is this machine's OS.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 use crate::util;
 
 const ID: &str = "warp";
@@ -33,11 +33,11 @@ pub(super) fn parse_limit(body: &serde_json::Value) -> Vec<MetricLine> {
     let used = field(info, "requestsUsedSinceLastRefresh");
     let limit = field(info, "requestLimit");
     let mut lines = Vec::new();
-    if let (Some(used), Some(limit)) = (used, limit) {
-        if let Some(pct) = json_api::used_percent(used, limit) {
-            let resets = info.get("nextRefreshTime").and_then(util::to_iso);
-            lines.push(MetricLine::percent("Credits", pct, resets));
-        }
+    if let (Some(used), Some(limit)) = (used, limit)
+        && let Some(pct) = json_api::used_percent(used, limit)
+    {
+        let resets = info.get("nextRefreshTime").and_then(util::to_iso);
+        lines.push(MetricLine::percent("Credits", pct, resets));
     }
     let grants = info
         .pointer("/bonusGrants")

@@ -128,7 +128,7 @@ impl Provider for Factory {
                     ID,
                     NAME,
                     "No credentials found. Run `droid` to log in.",
-                )
+                );
             }
         };
 
@@ -138,13 +138,13 @@ impl Provider for Factory {
             None => return ProviderOutput::error(ID, NAME, "No access token in auth file."),
         };
 
-        if !token_valid(&access) {
-            if let Some(rt) = &refresh_token {
-                match refresh(&mut auth, rt) {
-                    Ok(Some(new)) => access = new,
-                    Ok(None) => {}
-                    Err(e) => return ProviderOutput::error(ID, NAME, e),
-                }
+        if !token_valid(&access)
+            && let Some(rt) = &refresh_token
+        {
+            match refresh(&mut auth, rt) {
+                Ok(Some(new)) => access = new,
+                Ok(None) => {}
+                Err(e) => return ProviderOutput::error(ID, NAME, e),
             }
         }
 

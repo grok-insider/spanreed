@@ -10,7 +10,7 @@ use crate::forecast::{
 };
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
 
-pub use fabrials_share::{scale_to_full_pool, scale_tokens_to_full, MONTH_WEEK_FACTOR};
+pub use fabrials_share::{MONTH_WEEK_FACTOR, scale_to_full_pool, scale_tokens_to_full};
 pub use fabrials_types::{ModelEconomics, ProviderEconomics};
 
 /// Pure at 100% week estimate. `pct_start` is first-seen pool % this week.
@@ -25,16 +25,16 @@ pub fn estimate_full_week(
 ) -> FullWeekEst {
     let lo = pct_start.unwrap_or(pct_now);
     let from_origin = origin_is_near_zero(lo);
-    if let Some(lo) = pct_start.filter(|p| *p + crate::forecast::MIN_PCT_DELTA <= pct_now) {
-        if let Some(usd) = scale_span_to_full(obs_usd, lo, pct_now) {
-            let d = (pct_now - lo).max(crate::forecast::MIN_PCT_DELTA);
-            return FullWeekEst {
-                usd: Some(usd),
-                tokens: obs_tokens.map(|t| ((t as f64) * (100.0 / d)).round() as u64),
-                method: "scale_by_pool_span",
-                partial: !from_origin,
-            };
-        }
+    if let Some(lo) = pct_start.filter(|p| *p + crate::forecast::MIN_PCT_DELTA <= pct_now)
+        && let Some(usd) = scale_span_to_full(obs_usd, lo, pct_now)
+    {
+        let d = (pct_now - lo).max(crate::forecast::MIN_PCT_DELTA);
+        return FullWeekEst {
+            usd: Some(usd),
+            tokens: obs_tokens.map(|t| ((t as f64) * (100.0 / d)).round() as u64),
+            method: "scale_by_pool_span",
+            partial: !from_origin,
+        };
     }
     if from_origin {
         if let (Some(tok), Some((tp, cp))) = (
@@ -81,17 +81,17 @@ pub fn parse_usd_and_tokens(value: &str) -> (Option<f64>, Option<u64>) {
     // $1.23 or ~$1.23
     for cap in value.split(['·', '|']) {
         let t = cap.trim();
-        if let Some(rest) = t.strip_prefix('~').or(Some(t)) {
-            if let Some(s) = rest.strip_prefix('$') {
-                let n: f64 = s
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit() || *c == '.')
-                    .collect::<String>()
-                    .parse()
-                    .unwrap_or(f64::NAN);
-                if n.is_finite() {
-                    usd = Some(n);
-                }
+        if let Some(rest) = t.strip_prefix('~').or(Some(t))
+            && let Some(s) = rest.strip_prefix('$')
+        {
+            let n: f64 = s
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect::<String>()
+                .parse()
+                .unwrap_or(f64::NAN);
+            if n.is_finite() {
+                usd = Some(n);
             }
         }
         // 51M tokens or ~794M
@@ -100,10 +100,11 @@ pub fn parse_usd_and_tokens(value: &str) -> (Option<f64>, Option<u64>) {
                 .chars()
                 .filter(|c| c.is_ascii_digit() || *c == '.')
                 .collect();
-            if let Ok(m) = num.parse::<f64>() {
-                if m.is_finite() && m >= 0.0 {
-                    tokens = Some((m * 1_000_000.0).round() as u64);
-                }
+            if let Ok(m) = num.parse::<f64>()
+                && m.is_finite()
+                && m >= 0.0
+            {
+                tokens = Some((m * 1_000_000.0).round() as u64);
             }
         }
     }
@@ -115,16 +116,14 @@ fn weekly_pct(lines: &[MetricLine]) -> Option<(String, f64)> {
         if let MetricLine::Progress {
             kind, label, used, ..
         } = l
+            && *kind == MetricKind::Quota
+            && (label.eq_ignore_ascii_case("Weekly")
+                || label.eq_ignore_ascii_case("5h")
+                || label.eq_ignore_ascii_case("Session"))
         {
-            if *kind == MetricKind::Quota
-                && (label.eq_ignore_ascii_case("Weekly")
-                    || label.eq_ignore_ascii_case("5h")
-                    || label.eq_ignore_ascii_case("Session"))
-            {
-                // Prefer Weekly over session/5h when both exist — first Weekly wins later.
-                if label.eq_ignore_ascii_case("Weekly") {
-                    return Some((label.clone(), *used));
-                }
+            // Prefer Weekly over session/5h when both exist — first Weekly wins later.
+            if label.eq_ignore_ascii_case("Weekly") {
+                return Some((label.clone(), *used));
             }
         }
     }
@@ -132,10 +131,10 @@ fn weekly_pct(lines: &[MetricLine]) -> Option<(String, f64)> {
         if let MetricLine::Progress {
             kind, label, used, ..
         } = l
+            && *kind == MetricKind::Quota
+            && label.eq_ignore_ascii_case("Weekly")
         {
-            if *kind == MetricKind::Quota && label.eq_ignore_ascii_case("Weekly") {
-                return Some((label.clone(), *used));
-            }
+            return Some((label.clone(), *used));
         }
     }
     // fallback first quota percent
@@ -147,10 +146,9 @@ fn weekly_pct(lines: &[MetricLine]) -> Option<(String, f64)> {
             format: crate::model::ProgressFormat::Percent,
             ..
         } = l
+            && *kind == MetricKind::Quota
         {
-            if *kind == MetricKind::Quota {
-                return Some((label.clone(), *used));
-            }
+            return Some((label.clone(), *used));
         }
     }
     None
@@ -158,13 +156,12 @@ fn weekly_pct(lines: &[MetricLine]) -> Option<(String, f64)> {
 
 fn text_value(lines: &[MetricLine], label_sub: &str) -> Option<String> {
     for l in lines {
-        if let MetricLine::Text { label, value, .. } = l {
-            if label
+        if let MetricLine::Text { label, value, .. } = l
+            && label
                 .to_ascii_lowercase()
                 .contains(&label_sub.to_ascii_lowercase())
-            {
-                return Some(value.clone());
-            }
+        {
+            return Some(value.clone());
         }
     }
     None
@@ -224,22 +221,22 @@ pub fn from_output(o: &ProviderOutput, by_model: Vec<ModelEconomics>) -> Option<
 
     let mut pool_pct_at_start = None;
     let mut partial_observation = false;
-    if full_week_api.is_none() {
-        if let (Some(usd), Some(pct)) = (api_usd_obs, pool_pct) {
-            let weekly_aligned = observed_window.as_deref() == Some("since_weekly_reset");
-            if weekly_aligned {
-                let week_id = crate::pool_baseline::week_and_pct(o).map(|(w, _)| w);
-                let first_pct = week_id
-                    .as_deref()
-                    .and_then(|w| crate::pool_baseline::baseline_pct(&o.provider_id, w))
-                    .or_else(|| crate::forecast::earliest_weekly_pct(&o.provider_id));
-                pool_pct_at_start = first_pct;
-                let est = estimate_full_week(usd, tokens_obs, pct, first_pct);
-                full_week_api = est.usd;
-                full_week_tok = est.tokens;
-                method = Some(est.method.into());
-                partial_observation = est.partial;
-            }
+    if full_week_api.is_none()
+        && let (Some(usd), Some(pct)) = (api_usd_obs, pool_pct)
+    {
+        let weekly_aligned = observed_window.as_deref() == Some("since_weekly_reset");
+        if weekly_aligned {
+            let week_id = crate::pool_baseline::week_and_pct(o).map(|(w, _)| w);
+            let first_pct = week_id
+                .as_deref()
+                .and_then(|w| crate::pool_baseline::baseline_pct(&o.provider_id, w))
+                .or_else(|| crate::forecast::earliest_weekly_pct(&o.provider_id));
+            pool_pct_at_start = first_pct;
+            let est = estimate_full_week(usd, tokens_obs, pct, first_pct);
+            full_week_api = est.usd;
+            full_week_tok = est.tokens;
+            method = Some(est.method.into());
+            partial_observation = est.partial;
         }
     }
 

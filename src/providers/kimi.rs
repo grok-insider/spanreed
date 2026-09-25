@@ -162,16 +162,14 @@ fn parse_usages(data: &serde_json::Value) -> Vec<MetricLine> {
     let mut lines = Vec::new();
 
     // Overall (weekly) usage.
-    if let Some(usage) = data.get("usage") {
-        if let (Some(limit), Some(remaining)) =
+    if let Some(usage) = data.get("usage")
+        && let (Some(limit), Some(remaining)) =
             (numf(usage.get("limit")), numf(usage.get("remaining")))
-        {
-            if limit > 0.0 {
-                let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
-                let resets = usage.get("resetTime").and_then(util::to_iso);
-                lines.push(MetricLine::percent("Weekly", used_pct, resets));
-            }
-        }
+        && limit > 0.0
+    {
+        let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
+        let resets = usage.get("resetTime").and_then(util::to_iso);
+        lines.push(MetricLine::percent("Weekly", used_pct, resets));
     }
 
     // First windowed quota = session (5h).
@@ -180,16 +178,13 @@ fn parse_usages(data: &serde_json::Value) -> Vec<MetricLine> {
         .and_then(|l| l.as_array())
         .and_then(|arr| arr.first())
         .and_then(|w| w.get("detail"))
-    {
-        if let (Some(limit), Some(remaining)) =
+        && let (Some(limit), Some(remaining)) =
             (numf(window.get("limit")), numf(window.get("remaining")))
-        {
-            if limit > 0.0 {
-                let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
-                let resets = window.get("resetTime").and_then(util::to_iso);
-                lines.insert(0, MetricLine::percent("Session", used_pct, resets));
-            }
-        }
+        && limit > 0.0
+    {
+        let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
+        let resets = window.get("resetTime").and_then(util::to_iso);
+        lines.insert(0, MetricLine::percent("Session", used_pct, resets));
     }
 
     lines

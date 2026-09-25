@@ -1,7 +1,7 @@
 //! Deprecated CLI shim: `spanreed grok` → `spanreed account`.
 
-use super::protocol::{AddonCaps, AddonHello};
 use super::Addon;
+use super::protocol::{AddonCaps, AddonHello};
 use crate::model::ProviderOutput;
 
 pub struct GrokBridge;

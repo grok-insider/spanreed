@@ -339,10 +339,10 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
         }
     }
 
-    if !flags.dry_run {
-        if let Err(e) = state::save(&state) {
-            eprintln!("  warning: could not save setup state: {e}");
-        }
+    if !flags.dry_run
+        && let Err(e) = state::save(&state)
+    {
+        eprintln!("  warning: could not save setup state: {e}");
     }
 
     println!();
@@ -444,12 +444,12 @@ fn run_uninstall(flags: SetupFlags) -> ExitCode {
             let ledger = crate::app::data_dir().join(name);
             if flags.dry_run {
                 println!("  Usage:    would remove {}", ledger.display());
-            } else if ledger.exists() {
-                if let Err(error) = std::fs::remove_file(&ledger) {
-                    let message = format!("remove usage data: {error}");
-                    eprintln!("  Usage:    {message}");
-                    errors.push(message);
-                }
+            } else if ledger.exists()
+                && let Err(error) = std::fs::remove_file(&ledger)
+            {
+                let message = format!("remove usage data: {error}");
+                eprintln!("  Usage:    {message}");
+                errors.push(message);
             }
         }
         let bin = install_bin_path();

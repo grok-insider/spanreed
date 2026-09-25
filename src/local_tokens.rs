@@ -100,21 +100,22 @@ pub fn grok(alias: Option<&str>) -> Result<Option<String>, String> {
     }
     let result = (|| {
         let mut document = read(alias)?.ok_or("Grok credential missing")?;
-        if let Some(pending) = queue.take_reserved(&key) {
-            if document == pending.expected && journal.rotated(&pending.replacement).is_err() {
-                let token = offline_token(&pending.replacement);
-                queue.insert(key.clone(), pending, crate::util::now_ms())?;
-                return token
-                    .map(Some)
-                    .ok_or("Credential persistence unavailable".into());
-            }
+        if let Some(pending) = queue.take_reserved(&key)
+            && document == pending.expected
+            && journal.rotated(&pending.replacement).is_err()
+        {
+            let token = offline_token(&pending.replacement);
+            queue.insert(key.clone(), pending, crate::util::now_ms())?;
+            return token
+                .map(Some)
+                .ok_or("Credential persistence unavailable".into());
         }
         match journal.recover(&document)? {
             Recovery::Clean => {}
             Recovery::Interrupted => {
                 return offline_token(&document).map(Some).ok_or(
                     "Previous Grok refresh was interrupted; authorize this account again".into(),
-                )
+                );
             }
             Recovery::Replacement(replacement) => {
                 if read(alias)?.as_ref() != Some(&document) {

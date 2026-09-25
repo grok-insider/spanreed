@@ -122,10 +122,10 @@ fn capture_runs_independently_with_local_controls_and_closed_credential_boundary
                 )) > 0,
                 "{method} {path}: missing response headers"
             );
-            if let Some((key, value)) = line.split_once(':') {
-                if key.eq_ignore_ascii_case("content-length") {
-                    length = Some(value.trim().parse::<usize>().unwrap());
-                }
+            if let Some((key, value)) = line.split_once(':')
+                && key.eq_ignore_ascii_case("content-length")
+            {
+                length = Some(value.trim().parse::<usize>().unwrap());
             }
             response.push_str(&line);
             if line == "\r\n" {
@@ -193,13 +193,15 @@ fn capture_runs_independently_with_local_controls_and_closed_credential_boundary
     assert!(request("GET", "/__spanreed/autosteer", "", "").contains("\"autosteer\":false"));
     assert!(request("POST", "/v1/files", "", "{}").starts_with("HTTP/1.1 404"));
     assert!(request("POST", "/v1/responses", "", r#"{"model":12}"#).starts_with("HTTP/1.1 400"));
-    assert!(request(
-        "POST",
-        "/acct/unknown/nous/v1/responses",
-        "",
-        r#"{"model":"fixture"}"#
-    )
-    .starts_with("HTTP/1.1 503"));
+    assert!(
+        request(
+            "POST",
+            "/acct/unknown/nous/v1/responses",
+            "",
+            r#"{"model":"fixture"}"#
+        )
+        .starts_with("HTTP/1.1 503")
+    );
     assert!(request("GET", "/__spanreed/limits", "", "").starts_with("HTTP/1.1 200"));
 }
 

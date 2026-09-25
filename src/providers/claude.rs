@@ -87,18 +87,17 @@ fn parse_oauth(value: &serde_json::Value) -> Option<Oauth> {
 fn load_credentials() -> Option<(serde_json::Value, Oauth, Source)> {
     // 1) plaintext file (default on Linux)
     let path = credentials_path();
-    if let Some(value) = creds::read_json(&path) {
-        if let Some(oauth) = parse_oauth(&value) {
-            return Some((value, oauth, Source::File));
-        }
+    if let Some(value) = creds::read_json(&path)
+        && let Some(oauth) = parse_oauth(&value)
+    {
+        return Some((value, oauth, Source::File));
     }
     // 2) OS keyring fallback (some setups store the JSON blob there)
-    if let Some(text) = secret::lookup(KEYCHAIN_SERVICE) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim()) {
-            if let Some(oauth) = parse_oauth(&value) {
-                return Some((value, oauth, Source::Secret));
-            }
-        }
+    if let Some(text) = secret::lookup(KEYCHAIN_SERVICE)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim())
+        && let Some(oauth) = parse_oauth(&value)
+    {
+        return Some((value, oauth, Source::Secret));
     }
     None
 }
@@ -286,25 +285,24 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
     }
     lines.extend(model_window_lines(data));
 
-    if let Some(extra) = data.get("extra_usage") {
-        if extra
+    if let Some(extra) = data.get("extra_usage")
+        && extra
             .get("is_enabled")
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
+    {
+        let used = extra.get("used_credits").and_then(|v| v.as_f64());
+        let limit = extra.get("monthly_limit").and_then(|v| v.as_f64());
+        if let (Some(used), Some(limit)) = (used, limit)
+            && limit > 0.0
         {
-            let used = extra.get("used_credits").and_then(|v| v.as_f64());
-            let limit = extra.get("monthly_limit").and_then(|v| v.as_f64());
-            if let (Some(used), Some(limit)) = (used, limit) {
-                if limit > 0.0 {
-                    lines.push(MetricLine::dollars(
-                        MetricKind::Cost,
-                        "Extra usage spent",
-                        util::cents_to_dollars(used),
-                        util::cents_to_dollars(limit),
-                        None,
-                    ));
-                }
-            }
+            lines.push(MetricLine::dollars(
+                MetricKind::Cost,
+                "Extra usage spent",
+                util::cents_to_dollars(used),
+                util::cents_to_dollars(limit),
+                None,
+            ));
         }
     }
     lines
@@ -340,7 +338,7 @@ impl Provider for Claude {
                     ID,
                     NAME,
                     "No credentials found. Run `claude` to log in.",
-                )
+                );
             }
         };
 

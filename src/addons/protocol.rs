@@ -206,8 +206,8 @@ pub fn dispatch_inproc(addon: &dyn crate::addons::Addon, req: &AddonRequest) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::addons::grok_bridge::GrokBridge;
     use crate::addons::Addon;
+    use crate::addons::grok_bridge::GrokBridge;
 
     #[test]
     fn hello_roundtrip() {

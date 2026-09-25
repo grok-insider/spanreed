@@ -2,7 +2,7 @@
 //! accepted; upstream OAuth credentials never enter this configuration flow.
 use crate::{
     codex_session_move::{client_config, read_regular, session_home},
-    remote_workspace::{request, RemoteOperation},
+    remote_workspace::{RemoteOperation, request},
 };
 use serde::Serialize;
 use serde_json::json;
@@ -233,7 +233,7 @@ mod tests {
     use super::*;
     #[test]
     fn hosted_opencode_preserves_comments_default_model_and_unrelated_providers() {
-        let original="{\n// keep this comment\n\"model\":\"other/model\",\"provider\":{\"other\":{\"name\":\"Other\"}}}";
+        let original = "{\n// keep this comment\n\"model\":\"other/model\",\"provider\":{\"other\":{\"name\":\"Other\"}}}";
         let after = opencode(
             Some(original),
             "work",

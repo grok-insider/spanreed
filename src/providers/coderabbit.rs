@@ -4,8 +4,8 @@
 //! credential files, and neither does this provider.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::env_any;
 use crate::providers::Provider;
+use crate::providers::json_api::env_any;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};

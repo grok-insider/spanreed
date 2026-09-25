@@ -4,8 +4,8 @@
 //! `GET https://management-api.x.ai/v1/billing/teams/{team}/prepaid/balance`.
 
 use crate::model::ProviderOutput;
-use crate::providers::json_api::{self, env_any};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any};
 
 const ID: &str = "xai";
 const NAME: &str = "xAI";

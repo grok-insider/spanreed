@@ -3,8 +3,8 @@
 //! `GET https://api.poe.com/usage/current_balance`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, number};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, number};
 
 const ID: &str = "poe";
 const NAME: &str = "Poe";

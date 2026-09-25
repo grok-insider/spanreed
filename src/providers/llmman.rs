@@ -4,8 +4,8 @@
 //! is set. A force probe uses `http://127.0.0.1:17434`.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "llmman";
 const NAME: &str = "llmman";

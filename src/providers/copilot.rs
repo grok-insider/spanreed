@@ -59,11 +59,7 @@ fn stored_token() -> Option<String> {
     }
     let text = creds::read_file(&token_path())?;
     let t = text.trim().to_string();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t)
-    }
+    if t.is_empty() { None } else { Some(t) }
 }
 
 fn write_token_file(token: &str) -> Result<(), String> {
@@ -131,11 +127,7 @@ pub fn token_for_gh_user(user: &str) -> Option<String> {
             return util::base64_decode_str(b64).filter(|s| !s.is_empty());
         }
         let t = raw.trim().to_string();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
+        if t.is_empty() { None } else { Some(t) }
     })
 }
 
@@ -151,11 +143,7 @@ fn token_from_gh_cli_user(user: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 /// Minimal YAML scrape of:
@@ -274,20 +262,20 @@ pub fn validate_token(token: &str) -> Result<(String, Option<String>, Vec<Metric
     let resets = data.get("quota_reset_date").and_then(util::to_iso);
     let mut lines = Vec::new();
     if let Some(snaps) = data.get("quota_snapshots") {
-        if let Some(prem) = snaps.get("premium_interactions") {
-            if let Some(l) = snapshot_line("Premium", prem, &resets) {
-                lines.push(l);
-            }
+        if let Some(prem) = snaps.get("premium_interactions")
+            && let Some(l) = snapshot_line("Premium", prem, &resets)
+        {
+            lines.push(l);
         }
-        if let Some(chat) = snaps.get("chat") {
-            if let Some(l) = snapshot_line("Chat", chat, &resets) {
-                lines.push(l);
-            }
+        if let Some(chat) = snaps.get("chat")
+            && let Some(l) = snapshot_line("Chat", chat, &resets)
+        {
+            lines.push(l);
         }
-        if let Some(comp) = snaps.get("completions") {
-            if let Some(l) = snapshot_line("Completions", comp, &resets) {
-                lines.push(l);
-            }
+        if let Some(comp) = snaps.get("completions")
+            && let Some(l) = snapshot_line("Completions", comp, &resets)
+        {
+            lines.push(l);
         }
     }
     if lines.is_empty() {
@@ -428,7 +416,7 @@ impl Provider for Copilot {
         let token = match stored_token() {
             Some(t) => t,
             None => {
-                return ProviderOutput::error(ID, NAME, "Not linked. Run `spanreed auth copilot`.")
+                return ProviderOutput::error(ID, NAME, "Not linked. Run `spanreed auth copilot`.");
             }
         };
 

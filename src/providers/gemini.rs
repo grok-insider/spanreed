@@ -5,8 +5,8 @@
 
 use crate::creds;
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, field};
 use crate::util;
 
 const ID: &str = "gemini";
@@ -29,10 +29,11 @@ fn access_token() -> Result<String, String> {
         .ok_or_else(|| {
             "Gemini credentials are missing an access token. Run `gemini`.".to_string()
         })?;
-    if let Some(expiry) = data.get("expiry_date").and_then(json_api::number) {
-        if expiry > 0.0 && crate::util::now_ms() as f64 >= expiry {
-            return Err("Gemini access token expired. Run `gemini` to log in again.".into());
-        }
+    if let Some(expiry) = data.get("expiry_date").and_then(json_api::number)
+        && expiry > 0.0
+        && crate::util::now_ms() as f64 >= expiry
+    {
+        return Err("Gemini access token expired. Run `gemini` to log in again.".into());
     }
     Ok(token.to_string())
 }
@@ -86,11 +87,11 @@ pub(super) fn parse_quota(body: &serde_json::Value) -> Vec<MetricLine> {
     if let Some((used, resets)) = flash {
         lines.push(MetricLine::percent("Flash", used, resets));
     }
-    if lines.is_empty() {
-        if let Some((used, resets, model)) = other {
-            let label = if model.is_empty() { "Quota" } else { &model };
-            lines.push(MetricLine::percent(label, used, resets));
-        }
+    if lines.is_empty()
+        && let Some((used, resets, model)) = other
+    {
+        let label = if model.is_empty() { "Quota" } else { &model };
+        lines.push(MetricLine::percent(label, used, resets));
     }
     lines
 }

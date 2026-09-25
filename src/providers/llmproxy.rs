@@ -3,8 +3,8 @@
 //! Both `LLM_PROXY_BASE_URL` and `LLM_PROXY_API_KEY` are required.
 
 use crate::model::{MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "llmproxy";
 const NAME: &str = "LLM Proxy";

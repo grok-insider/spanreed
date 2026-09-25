@@ -63,7 +63,7 @@ impl Provider for Devin {
         let text = match creds::read_file(&creds_path()) {
             Some(t) => t,
             None => {
-                return ProviderOutput::error(ID, NAME, "Not signed in. Run `devin auth login`.")
+                return ProviderOutput::error(ID, NAME, "Not signed in. Run `devin auth login`.");
             }
         };
         let api_key = match toml_string(&text, "windsurf_api_key") {
@@ -73,7 +73,7 @@ impl Provider for Devin {
                     ID,
                     NAME,
                     "Devin credentials missing windsurf_api_key.",
-                )
+                );
             }
         };
         let server = clean_server(toml_string(&text, "api_server_url"));
@@ -114,7 +114,7 @@ impl Provider for Devin {
                     ID,
                     NAME,
                     "Devin quota data unavailable. Try again later.",
-                )
+                );
             }
         };
 
@@ -125,7 +125,7 @@ impl Provider for Devin {
                     ID,
                     NAME,
                     "Devin quota data unavailable. Try again later.",
-                )
+                );
             }
         };
 
@@ -166,14 +166,13 @@ fn parse_status(plan_status: &serde_json::Value) -> Vec<MetricLine> {
     if let Some(micros) = plan_status
         .get("overageBalanceMicros")
         .and_then(|v| v.as_f64())
+        && micros > 0.0
     {
-        if micros > 0.0 {
-            lines.push(MetricLine::text(
-                MetricKind::Cost,
-                "Extra usage",
-                format!("${:.2}", micros / 1_000_000.0),
-            ));
-        }
+        lines.push(MetricLine::text(
+            MetricKind::Cost,
+            "Extra usage",
+            format!("${:.2}", micros / 1_000_000.0),
+        ));
     }
 
     lines

@@ -51,17 +51,17 @@ pub fn codex(
                 .map_err(str::to_string)
         });
     let mut observed = observation("codex-reset-inventory", result);
-    if observed.value.is_none() {
-        if let Some(available) = fabrials_providers::codex::reset_count(usage) {
-            observed.availability = Availability::Available;
-            observed.source = "codex-usage-count".into();
-            observed.observed_at_ms = Some(crate::util::now_ms());
-            observed.value = Some(ResetInventory {
-                available,
-                credits: vec![],
-                details_complete: available == 0,
-            });
-        }
+    if observed.value.is_none()
+        && let Some(available) = fabrials_providers::codex::reset_count(usage)
+    {
+        observed.availability = Availability::Available;
+        observed.source = "codex-usage-count".into();
+        observed.observed_at_ms = Some(crate::util::now_ms());
+        observed.value = Some(ResetInventory {
+            available,
+            credits: vec![],
+            details_complete: available == 0,
+        });
     }
     observed
 }

@@ -117,11 +117,9 @@ pub fn roots(client: &ClientDefinition, settings: &UsageSettings) -> Vec<PathBuf
                 paths.push(crate::creds::expand(&root).join("projects.json"));
             }
         }
-        "codebuff" | "freebuff" => {
-            if !explicit_home {
-                for channel in ["manicode", "manicode-dev", "manicode-staging"] {
-                    paths.push(crate::creds::config_home().join(channel).join("projects"));
-                }
+        "codebuff" | "freebuff" if !explicit_home => {
+            for channel in ["manicode", "manicode-dev", "manicode-staging"] {
+                paths.push(crate::creds::config_home().join(channel).join("projects"));
             }
         }
         "copilot" => paths.push(crate::creds::config_home().join("Code/User/workspaceStorage")),

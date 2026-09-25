@@ -83,12 +83,11 @@ fn load_auth() -> Option<(serde_json::Value, Source, std::path::PathBuf)> {
     if let Some((_, value, source, path)) = best {
         return Some((value, source, path));
     }
-    if let Some(text) = secret::lookup(KEYCHAIN_SERVICE) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim()) {
-            if has_token_like(&value) {
-                return Some((value, Source::Secret, std::path::PathBuf::new()));
-            }
-        }
+    if let Some(text) = secret::lookup(KEYCHAIN_SERVICE)
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim())
+        && has_token_like(&value)
+    {
+        return Some((value, Source::Secret, std::path::PathBuf::new()));
     }
     None
 }
@@ -306,10 +305,10 @@ fn refresh_if_needed(
             tokens.insert("id_token".into(), serde_json::json!(idt));
         }
     }
-    if let Some(obj) = auth.as_object_mut() {
-        if let Some(iso) = util::ms_to_iso(util::now_ms()) {
-            obj.insert("last_refresh".into(), serde_json::json!(iso));
-        }
+    if let Some(obj) = auth.as_object_mut()
+        && let Some(iso) = util::ms_to_iso(util::now_ms())
+    {
+        obj.insert("last_refresh".into(), serde_json::json!(iso));
     }
     save_auth(auth, source, path);
     Ok(())
@@ -361,15 +360,15 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
     let mut lines = Vec::new();
 
     if let Some(rl) = data.get("rate_limit") {
-        if let Some(w) = rl.get("primary_window") {
-            if let Some(l) = window_progress(w, "Session", now_sec) {
-                lines.push(l);
-            }
+        if let Some(w) = rl.get("primary_window")
+            && let Some(l) = window_progress(w, "Session", now_sec)
+        {
+            lines.push(l);
         }
-        if let Some(w) = rl.get("secondary_window") {
-            if let Some(l) = window_progress(w, "Weekly", now_sec) {
-                lines.push(l);
-            }
+        if let Some(w) = rl.get("secondary_window")
+            && let Some(l) = window_progress(w, "Weekly", now_sec)
+        {
+            lines.push(l);
         }
         if let Some(obj) = rl.as_object() {
             for (key, w) in obj {
@@ -389,10 +388,9 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
     if let Some(review) = data
         .get("code_review_rate_limit")
         .and_then(|c| c.get("primary_window"))
+        && let Some(l) = window_progress(review, "Reviews", now_sec)
     {
-        if let Some(l) = window_progress(review, "Reviews", now_sec) {
-            lines.push(l);
-        }
+        lines.push(l);
     }
 
     if let Some(credits) = data.get("credits") {
@@ -412,16 +410,14 @@ fn parse_usage(data: &serde_json::Value) -> Vec<MetricLine> {
                 color: None,
                 subtitle: None,
             });
-        } else if has {
-            if let Some(balance) = credits.get("balance").and_then(|v| v.as_f64()) {
-                lines.push(MetricLine::Text {
-                    kind: MetricKind::Plan,
-                    label: "Credits".into(),
-                    value: format!("${balance:.2}"),
-                    color: None,
-                    subtitle: None,
-                });
-            }
+        } else if has && let Some(balance) = credits.get("balance").and_then(|v| v.as_f64()) {
+            lines.push(MetricLine::Text {
+                kind: MetricKind::Plan,
+                label: "Credits".into(),
+                value: format!("${balance:.2}"),
+                color: None,
+                subtitle: None,
+            });
         }
     }
 
@@ -432,11 +428,7 @@ fn build_plan(data: &serde_json::Value) -> Option<String> {
     let plan = data.get("plan_type").and_then(|v| v.as_str())?;
     let normalized = plan.replace(['_', '-'], " ");
     let label = util::plan_label(&normalized);
-    if label.is_empty() {
-        None
-    } else {
-        Some(label)
-    }
+    if label.is_empty() { None } else { Some(label) }
 }
 
 fn urlencode(s: &str) -> String {
@@ -475,7 +467,11 @@ impl Provider for Codex {
             Err(error) => return ProviderOutput::error(ID, NAME, error),
         };
         if crate::codex_session_move::retired() {
-            return ProviderOutput::error(ID,NAME,"Codex session moved to ai-relay. View hosted usage or recover the saved session move.");
+            return ProviderOutput::error(
+                ID,
+                NAME,
+                "Codex session moved to ai-relay. View hosted usage or recover the saved session move.",
+            );
         }
         let (mut auth, source, path) = match load_auth() {
             Some(t) => t,
@@ -484,7 +480,7 @@ impl Provider for Codex {
                     ID,
                     NAME,
                     "No credentials found. Run `codex` to log in.",
-                )
+                );
             }
         };
 
@@ -658,10 +654,12 @@ mod tests {
 
     #[test]
     fn consume_results_use_the_status_code_and_drop_credit_identifiers() {
-        assert!(interpret_consume(
-            &serde_json::json!({"code":"reset","credit":{"id":"RateLimitResetCredit_secret"}})
-        )
-        .is_ok());
+        assert!(
+            interpret_consume(
+                &serde_json::json!({"code":"reset","credit":{"id":"RateLimitResetCredit_secret"}})
+            )
+            .is_ok()
+        );
         assert!(interpret_consume(&serde_json::json!({"code":"already_redeemed"})).is_ok());
         assert_eq!(
             interpret_consume(
@@ -694,9 +692,11 @@ mod tests {
             "credits": { "has_credits": false, "balance": 0 }
         });
         let lines = parse_usage(&data);
-        assert!(!lines
-            .iter()
-            .any(|l| matches!(l, MetricLine::Text { label, .. } if label == "Credits")));
+        assert!(
+            !lines
+                .iter()
+                .any(|l| matches!(l, MetricLine::Text { label, .. } if label == "Credits"))
+        );
     }
 
     #[test]

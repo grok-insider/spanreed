@@ -4,8 +4,8 @@
 //! `http://127.0.0.1:8088`. HTTP is limited to loopback.
 
 use crate::model::ProviderOutput;
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "wayfinder";
 const NAME: &str = "Wayfinder";

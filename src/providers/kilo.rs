@@ -4,8 +4,8 @@
 
 use crate::creds;
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "kilo";
 const NAME: &str = "Kilo";

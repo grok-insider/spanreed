@@ -4,8 +4,8 @@
 //! the legacy credit-grants balance.
 
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "openai";
 const NAME: &str = "OpenAI";
@@ -145,8 +145,10 @@ mod tests {
             "total_used": 5.0,
             "total_available": 15.0
         }));
-        assert!(lines
-            .iter()
-            .any(|l| matches!(l, MetricLine::Progress { label, .. } if label == "Credits")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| matches!(l, MetricLine::Progress { label, .. } if label == "Credits"))
+        );
     }
 }

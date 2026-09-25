@@ -194,10 +194,10 @@ pub fn record_sample(sample: &PctSample) -> Option<(f64, f64, bool)> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-        if let Ok(line) = serde_json::to_string(sample) {
-            let _ = writeln!(f, "{line}");
-        }
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path)
+        && let Ok(line) = serde_json::to_string(sample)
+    {
+        let _ = writeln!(f, "{line}");
     }
 
     let prior = load_samples_for_week(&sample.provider, &sample.week_id);
@@ -211,10 +211,10 @@ pub fn record_sample(sample: &PctSample) -> Option<(f64, f64, bool)> {
             densities.push(d);
         }
     }
-    if let Some(last) = prior.last() {
-        if let Some(d) = density_from_band(last, sample) {
-            densities.push(d);
-        }
+    if let Some(last) = prior.last()
+        && let Some(d) = density_from_band(last, sample)
+    {
+        densities.push(d);
     }
 
     if !densities.is_empty() {
@@ -330,15 +330,15 @@ pub fn forecast_lines(
     ));
 
     // Persist completed weeks when week_end has passed (best-effort).
-    if let Some(end) = week_end_ms {
-        if util::now_ms() >= end {
-            append_week_snapshot(&WeekSnapshot {
-                provider: provider.to_string(),
-                week_end_ms: end,
-                tokens: tokens_week,
-                cost_usd: cost_week,
-            });
-        }
+    if let Some(end) = week_end_ms
+        && util::now_ms() >= end
+    {
+        append_week_snapshot(&WeekSnapshot {
+            provider: provider.to_string(),
+            week_end_ms: end,
+            tokens: tokens_week,
+            cost_usd: cost_week,
+        });
     }
 
     lines
@@ -390,19 +390,19 @@ fn append_week_snapshot(s: &WeekSnapshot) {
     for (t, _) in load_week_snapshots(&s.provider) {
         let _ = t;
     }
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        if existing.lines().any(|l| {
+    if let Ok(existing) = std::fs::read_to_string(&path)
+        && existing.lines().any(|l| {
             serde_json::from_str::<WeekSnapshot>(l)
                 .map(|e| e.provider == s.provider && e.week_end_ms == s.week_end_ms)
                 .unwrap_or(false)
-        }) {
-            return;
-        }
+        })
+    {
+        return;
     }
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-        if let Ok(line) = serde_json::to_string(s) {
-            let _ = writeln!(f, "{line}");
-        }
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path)
+        && let Ok(line) = serde_json::to_string(s)
+    {
+        let _ = writeln!(f, "{line}");
     }
 }
 

@@ -15,7 +15,7 @@ pub fn settings() -> Result<Settings, String> {
     let file = match std::fs::File::open(crate::app::config_dir().join("notifications.json")) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Settings::default())
+            return Ok(Settings::default());
         }
         Err(_) => return Err("Notification settings unavailable".into()),
     };
@@ -111,7 +111,12 @@ pub fn deliver_outputs(
             .filter(|c| !c.is_control())
             .take(120)
             .collect();
-        send("Reset credits expire soon", &format!("{name}: {count} reset credit(s) expire within 24 hours. Open Spanreed for expiry dates."))?;
+        send(
+            "Reset credits expire soon",
+            &format!(
+                "{name}: {count} reset credit(s) expire within 24 hours. Open Spanreed for expiry dates."
+            ),
+        )?;
         store.acknowledge(&claim)?;
         delivered += 1;
     }
@@ -402,8 +407,10 @@ mod tests {
             std::env::var("SPANREED_NOTIFICATION_QA_ROOT").expect("isolated QA root required"),
         );
         assert!(root.is_absolute());
-        std::env::set_var("XDG_CONFIG_HOME", root.join("config"));
-        std::env::set_var("XDG_DATA_HOME", root.join("data"));
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", root.join("config")) };
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("XDG_DATA_HOME", root.join("data")) };
         let now = crate::util::now_ms();
         std::fs::create_dir_all(&root).unwrap();
         let restart = std::env::var_os("SPANREED_NOTIFICATION_QA_RESTART").is_some();

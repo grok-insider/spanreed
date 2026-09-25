@@ -2,7 +2,7 @@
 use crate::local_relay::LocalRelay;
 use fabrials_runtime::listener::{self, ConnectionHost};
 use std::net::SocketAddr;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{Arc, atomic::AtomicBool};
 
 /// Default capture fabric listener (Grok Build and xAI clients point here).
 pub const DEFAULT_GROK_CLI_BIND: &str = "127.0.0.1:18736";

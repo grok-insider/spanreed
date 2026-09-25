@@ -186,10 +186,9 @@ pub fn refresh(selected: Option<&str>, force: bool) -> Result<Vec<SourceStatus>,
         }
         let connected = connected_clients.contains(&client.id);
         let mut remote_error = None;
-        if connected {
-            if let Err(error) = super::connections::collect(&client.id, &mut store, force) {
-                remote_error = Some(error);
-            }
+        if connected && let Err(error) = super::connections::collect(&client.id, &mut store, force)
+        {
+            remote_error = Some(error);
         }
         let discovered = if connected {
             discovery::Discovery {
@@ -211,24 +210,22 @@ pub fn refresh(selected: Option<&str>, force: bool) -> Result<Vec<SourceStatus>,
                 last_success = Some(last_success.map_or(source.last_success_ms, |t: i64| {
                     t.max(source.last_success_ms)
                 }));
-                if errors.is_empty() {
-                    if let Some(path) = id.strip_prefix(&format!("{}:", client.id)) {
-                        if std::fs::metadata(path)
-                            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-                        {
-                            store.import(ImportBatch {
-                                source: &id,
-                                client: &client.id,
-                                parser_version: VERSION,
-                                fingerprint: "removed",
-                                expected_generation: Some(source.generation),
-                                replace: true,
-                                checkpoint: &ImportCheckpoint::default(),
-                                records: &[],
-                                at_ms: crate::util::now_ms(),
-                            })?;
-                        }
-                    }
+                if errors.is_empty()
+                    && let Some(path) = id.strip_prefix(&format!("{}:", client.id))
+                    && std::fs::metadata(path)
+                        .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                {
+                    store.import(ImportBatch {
+                        source: &id,
+                        client: &client.id,
+                        parser_version: VERSION,
+                        fingerprint: "removed",
+                        expected_generation: Some(source.generation),
+                        replace: true,
+                        checkpoint: &ImportCheckpoint::default(),
+                        records: &[],
+                        at_ms: crate::util::now_ms(),
+                    })?;
                 }
             }
         }

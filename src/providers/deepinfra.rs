@@ -3,8 +3,8 @@
 //! Amounts on the checklist are USD. `usage.months[].total_cost` is cents.
 
 use crate::model::{MetricKind, MetricLine, ProviderOutput};
-use crate::providers::json_api::{self, env_any, field};
 use crate::providers::Provider;
+use crate::providers::json_api::{self, env_any, field};
 
 const ID: &str = "deepinfra";
 const NAME: &str = "DeepInfra";

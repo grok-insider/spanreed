@@ -1,9 +1,9 @@
 //! Exclusive handoff of a file-backed Codex grant. The server cancellation
 //! receipt, never a timeout or an absent receipt, authorizes local restoration.
-use crate::remote_workspace::{request, RemoteOperation};
+use crate::remote_workspace::{RemoteOperation, request};
 use fabrials_runtime::{file_set::FileSet, files::atomic_write_private};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -211,9 +211,9 @@ pub fn preview(owner: &str, alias: &str) -> Result<SessionMoveView, String> {
         .get("tokens")
         .cloned()
         .ok_or("Codex OAuth session unavailable")?;
-    if !document["refresh_token"]
+    if document["refresh_token"]
         .as_str()
-        .is_some_and(|s| !s.is_empty())
+        .is_none_or(|s| s.is_empty())
     {
         return Err("No renewable Codex session; use independent hosted authorization".into());
     }
