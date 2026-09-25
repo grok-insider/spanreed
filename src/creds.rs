@@ -7,6 +7,7 @@
 //! SecretStore seam); process & listening-port discovery lives in
 //! [`crate::proc`] (the cross-platform ProcessList seam).
 
+pub mod antigravity;
 pub mod opencode;
 
 use std::path::{Path, PathBuf};

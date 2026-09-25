@@ -206,8 +206,9 @@ async fn save_usage_sources(settings: spanreed::usage::discovery::UsageSettings)
 }
 
 #[tauri::command]
-async fn snapshot(force: bool) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || serde_json::to_value(spanreed::desktop::snapshot(force)).map_err(|_| "Could not encode usage".into()))
+async fn snapshot(ctx: tauri::State<'_, spanreed::context::AppContext>, force: bool) -> Result<serde_json::Value, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || serde_json::to_value(spanreed::desktop::snapshot(&ctx, force)).map_err(|_| "Could not encode usage".into()))
         .await.map_err(|_| "Usage worker stopped".to_string())?
 }
 #[tauri::command]
@@ -254,8 +255,9 @@ async fn publication_status() -> Result<spanreed::sharing_control::PublicationSt
     tauri::async_runtime::spawn_blocking(spanreed::sharing_control::status).await.map_err(|_|"Publication worker stopped".to_string())
 }
 #[tauri::command]
-async fn publish_metrics() -> Result<String,String> {
-    tauri::async_runtime::spawn_blocking(spanreed::sharing_control::publish).await.map_err(|_|"Publication worker stopped".to_string())?
+async fn publish_metrics(ctx: tauri::State<'_, spanreed::context::AppContext>) -> Result<String,String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || spanreed::sharing_control::publish(&ctx)).await.map_err(|_|"Publication worker stopped".to_string())?
 }
 #[tauri::command]
 async fn set_publication_schedule(enabled: bool) -> Result<String,String> {
@@ -364,6 +366,7 @@ fn open_url(url: &str) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .manage(spanreed::context::AppContext::new())
         .invoke_handler(tauri::generate_handler![take_desktop_route, disconnect_usage_source, connect_usage_source, usage_report, usage_sources, save_usage_sources, preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
         .setup(|app| {
             spanreed::desktop_open::mark_running();

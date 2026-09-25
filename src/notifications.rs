@@ -71,13 +71,6 @@ fn expiring(observation: &Observation<ResetInventory>, now: i64) -> Option<(u32,
     ))
 }
 
-pub fn deliver(send: impl FnMut(&str, &str) -> Result<(), String>) -> Result<u32, String> {
-    if !settings()?.reset_expiry {
-        return Ok(0);
-    }
-    deliver_outputs(&crate::desktop::snapshot(false), send)
-}
-
 pub fn deliver_outputs(
     outputs: &[crate::model::ProviderOutput],
     mut send: impl FnMut(&str, &str) -> Result<(), String>,
@@ -125,6 +118,15 @@ pub fn deliver_outputs(
 
 pub fn deliver_background(outputs: &[crate::model::ProviderOutput]) -> Result<u32, String> {
     deliver_outputs(outputs, deliver_user_visible)
+}
+
+/// `Notifier` for reset-credit expiry through OS notifications.
+pub struct ResetExpiryNotifier;
+
+impl crate::ports::Notifier for ResetExpiryNotifier {
+    fn notify(&self, outputs: &[crate::model::ProviderOutput]) -> Result<u32, String> {
+        deliver_background(outputs)
+    }
 }
 
 /// Deliver an alert, then show a dialog when the banner command is not proof

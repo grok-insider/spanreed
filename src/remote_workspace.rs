@@ -162,10 +162,10 @@ fn execute(
         }
         url.push_str(&format!("?days={days}"));
     }
-    if crate::share::api_base().trim_end_matches('/') != "https://fabrials.com/api/spanreed" {
+    if crate::share_state::api_base().trim_end_matches('/') != "https://fabrials.com/api/spanreed" {
         return Err("The hosted workspace requires a session linked through fabrials.com".into());
     }
-    let token = crate::share_session::ensure_access(&crate::share::api_base())?;
+    let token = crate::share_session::ensure_access(&crate::share_state::api_base())?;
     check_principal(&token, principal)?;
     let subject = crate::util::jwt_payload(&token)
         .and_then(|claims| claims["sub"].as_str().map(str::to_owned))

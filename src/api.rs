@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::model::ProviderOutput;
-use crate::probe;
+use crate::ports::{Notifier, SnapshotProvider};
 
 const BIND_ADDR: &str = "127.0.0.1:6736";
 const CONN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,8 +49,8 @@ pub fn fetch_cached() -> Option<Vec<ProviderOutput>> {
 /// Probe all detected providers, retrying with a short backoff while every
 /// provider errors (network likely not up yet). Gives up after the schedule
 /// and returns whatever the last attempt produced.
-fn probe_with_retry() -> Vec<ProviderOutput> {
-    let mut outputs = probe::probe_detected();
+fn probe_with_retry(source: &dyn SnapshotProvider) -> Vec<ProviderOutput> {
+    let mut outputs = source.probe_detected();
     for backoff in RETRY_BACKOFF_SECS {
         let all_err = !outputs.is_empty() && outputs.iter().all(ProviderOutput::has_error);
         if !all_err {
@@ -58,7 +58,7 @@ fn probe_with_retry() -> Vec<ProviderOutput> {
         }
         log::info!("all probes failed (network down?), retrying in {backoff}s");
         std::thread::sleep(Duration::from_secs(backoff));
-        outputs = probe::probe_detected();
+        outputs = source.probe_detected();
     }
     outputs
 }
@@ -113,7 +113,14 @@ fn merge(
         .collect()
 }
 
-pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
+/// Collaborators of the local API's background refresh.
+#[derive(Clone)]
+pub struct Services {
+    pub source: Arc<dyn SnapshotProvider>,
+    pub notifier: Arc<dyn Notifier>,
+}
+
+pub fn serve(refresh_secs: u64, services: Services) -> std::io::Result<()> {
     let listener = TcpListener::bind(BIND_ADDR)?;
     log::info!("local API listening on http://{BIND_ADDR}");
 
@@ -126,9 +133,9 @@ pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
             std::thread::sleep(Duration::from_secs(refresh_secs.max(60)));
         }
     });
-    let initial = probe_with_retry();
+    let initial = probe_with_retry(services.source.as_ref());
     crate::history::record(&initial);
-    if let Err(error) = crate::notifications::deliver_background(&initial) {
+    if let Err(error) = services.notifier.notify(&initial) {
         log::warn!("{error}");
     }
     let cache: Cache = Arc::new(Mutex::new(initial));
@@ -140,9 +147,9 @@ pub fn serve(refresh_secs: u64) -> std::io::Result<()> {
             let mut stale_counts = HashMap::new();
             loop {
                 std::thread::sleep(Duration::from_secs(refresh_secs.max(30)));
-                let fresh = probe_with_retry();
+                let fresh = probe_with_retry(services.source.as_ref());
                 crate::history::record(&fresh);
-                if let Err(error) = crate::notifications::deliver_background(&fresh) {
+                if let Err(error) = services.notifier.notify(&fresh) {
                     log::warn!("{error}");
                 }
                 if let Ok(mut c) = cache.lock() {

@@ -1,7 +1,5 @@
 //! Typed desktop boundary. The renderer receives only presentation data.
 use crate::model::ProviderOutput;
-use std::sync::OnceLock;
-use std::time::Duration;
 
 pub fn history() -> Result<Vec<crate::history::HistorySample>, String> {
     crate::history::local_samples(None, 500)
@@ -32,19 +30,19 @@ pub fn set_routing(provider: &str, on: bool, threshold: f64) -> Result<(), Strin
     crate::local_control::set_policy(provider, on, Some(threshold))
 }
 
-pub fn snapshot(force: bool) -> Vec<ProviderOutput> {
-    static SNAPSHOT: OnceLock<fabrials_runtime::Snapshot<Vec<ProviderOutput>>> = OnceLock::new();
-    SNAPSHOT
-        .get_or_init(|| fabrials_runtime::Snapshot::new(Duration::from_secs(120)))
-        .refresh(force, || {
-            let outputs = if force {
-                crate::probe::probe_detected()
-            } else {
-                crate::api::fetch_cached().unwrap_or_else(crate::probe::probe_detected)
-            };
-            crate::history::record(&outputs);
-            outputs
-        })
+pub fn snapshot(ctx: &crate::context::AppContext, force: bool) -> Vec<ProviderOutput> {
+    ctx.snapshot(force)
+}
+
+/// Reset-expiry alerts for the current snapshot; probes only when enabled.
+pub fn deliver_notifications(
+    ctx: &crate::context::AppContext,
+    send: impl FnMut(&str, &str) -> Result<(), String>,
+) -> Result<u32, String> {
+    if !crate::notifications::settings()?.reset_expiry {
+        return Ok(0);
+    }
+    crate::notifications::deliver_outputs(&ctx.snapshot(false), send)
 }
 
 #[cfg_attr(feature = "contracts", derive(ts_rs::TS))]

@@ -8,13 +8,12 @@ use crate::http::Request;
 use crate::model::{MetricLine, ProviderOutput};
 use crate::util;
 
-use fabrials_providers::grok::device::CLIENT_ID;
 const BILLING_CREDITS_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const BILLING_LEGACY_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
 const SUBS_URL: &str = "https://grok.com/rest/subscriptions";
+use crate::account_login::grok_tokens_to_auth_json as tokens_to_auth_json;
 use fabrials_providers::grok_cli::{TOKEN_AUTH, token_from_doc};
-const AUTH_JSON_ENTRY: &str = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
 
 pub fn login_add(requested: Option<&str>) -> Result<String, String> {
     eprintln!("spanreed: device login (Grok / SuperGrok)");
@@ -235,32 +234,6 @@ fn device_login() -> Result<serde_json::Value, String> {
             Progress::Pending { retry_after_secs } => interval = retry_after_secs,
         }
     }
-}
-
-pub(crate) fn tokens_to_auth_json(tok: &serde_json::Value) -> serde_json::Value {
-    let access = tok
-        .get("access_token")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let refresh = tok.get("refresh_token").and_then(|v| v.as_str());
-    let now = util::now_ms();
-    let expires_at = tok
-        .get("expires_in")
-        .and_then(|v| v.as_f64())
-        .filter(|n| *n > 0.0)
-        .map(|n| now.saturating_add((n.min(86400.0) as i64) * 1000))
-        .or_else(|| util::jwt_exp_ms(access))
-        .unwrap_or(now + 3600 * 1000);
-    let iso = util::ms_to_iso(expires_at).unwrap_or_default();
-    let mut entry = serde_json::json!({
-        "key": access,
-        "expires_at": iso,
-        "oidc_client_id": CLIENT_ID,
-    });
-    if let Some(rt) = refresh {
-        entry["refresh_token"] = serde_json::json!(rt);
-    }
-    serde_json::json!({ AUTH_JSON_ENTRY: entry })
 }
 
 fn ensure_token(alias: &str) -> Option<String> {

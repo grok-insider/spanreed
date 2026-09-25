@@ -749,24 +749,6 @@ fn migrate_legacy_grok_vault(vault: &Vault) -> Result<(), String> {
     Ok(())
 }
 
-pub fn cmd(args: &[String]) -> std::process::ExitCode {
-    match crate::drivers::dispatch_account(args) {
-        Ok(out) => {
-            if !out.is_empty() {
-                print!("{out}");
-                if !out.ends_with('\n') {
-                    println!();
-                }
-            }
-            std::process::ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::ExitCode::FAILURE
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,7 +841,8 @@ mod tests {
 
         assert!(!crate::notifications::settings().unwrap().reset_expiry);
         assert_eq!(
-            crate::notifications::deliver(|_, _| panic!("notifications default off")).unwrap(),
+            crate::notifications::deliver_outputs(&[], |_, _| panic!("notifications default off"))
+                .unwrap(),
             0
         );
         crate::notifications::set_enabled(true).unwrap();

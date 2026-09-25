@@ -9,21 +9,15 @@
 //! **Login once:** `spanreed share login` (device code → browser X login).
 //! **At most one meaningful sample per product day** (Europe/Madrid); the
 //! server **upserts** the same day. Auto-share is installed by
-//! `spanreed setup` via [`crate::share_schedule`].
+//! `spanreed setup` via [`crate::setup::share_schedule`].
 //!
 //! Never includes provider tokens, API keys, or raw capture logs.
 
-use std::path::PathBuf;
-
 use crate::http::Request;
 use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
-use crate::probe;
 use crate::util;
 
-const DEFAULT_API_BASE: &str = "https://fabrials.com/api/spanreed";
-const ENV_API_BASE: &str = "SPANREED_API_BASE";
-const ENV_OFFLINE: &str = "SPANREED_OFFLINE";
-const LAST_SHARE_DAY_FILE: &str = "last_share_day";
+use crate::share_state::{DEFAULT_API_BASE, api_base, is_due_today, is_offline, mark_shared_day};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct ShareSnapshot {
@@ -167,54 +161,6 @@ fn line_to_share(line: &MetricLine) -> Option<ShareLine> {
     }
 }
 
-pub fn api_base() -> String {
-    std::env::var(ENV_API_BASE).unwrap_or_else(|_| DEFAULT_API_BASE.into())
-}
-
-pub fn is_offline() -> bool {
-    matches!(
-        std::env::var(ENV_OFFLINE).as_deref(),
-        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes")
-    )
-}
-
-fn last_share_path() -> PathBuf {
-    crate::app::config_dir().join(LAST_SHARE_DAY_FILE)
-}
-
-/// Last successfully recorded share day (`YYYY-MM-DD`), if any.
-pub fn last_shared_day() -> Option<String> {
-    let raw = crate::creds::read_file(&last_share_path())?;
-    let day = raw.trim();
-    if day.len() == 10 && day.as_bytes()[4] == b'-' && day.as_bytes()[7] == b'-' {
-        Some(day.to_string())
-    } else {
-        None
-    }
-}
-
-/// Whether a share is still due given last recorded day and today's key.
-pub fn is_due_for_day(last: Option<&str>, today: &str) -> bool {
-    match last {
-        None => true,
-        Some(d) => d != today,
-    }
-}
-
-/// Whether a share is still due for the current product day.
-pub fn is_due_today() -> bool {
-    is_due_for_day(last_shared_day().as_deref(), &util::today_day_key_madrid())
-}
-
-/// Persist successful (or server-already-counted) share for the product day.
-pub fn mark_shared_day(day: &str) -> Result<(), String> {
-    let p = last_share_path();
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir last_share_day: {e}"))?;
-    }
-    std::fs::write(&p, format!("{day}\n")).map_err(|e| format!("write last_share_day: {e}"))
-}
-
 /// Outcome of a share POST (for due-gate bookkeeping).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostOutcome {
@@ -259,7 +205,7 @@ pub fn post_snapshot(
     }
 }
 
-pub fn cmd(args: &[String]) -> std::process::ExitCode {
+pub fn cmd(ctx: &crate::context::AppContext, args: &[String]) -> std::process::ExitCode {
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!(
             "spanreed share — authenticated upload of plan/quota metrics\n\n\
@@ -288,7 +234,7 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
     }
 
     let force = args.iter().any(|a| a == "--force");
-    match share_once(force) {
+    match share_once(ctx, force) {
         Ok(msg) => {
             println!("{msg}");
             std::process::ExitCode::SUCCESS
@@ -309,7 +255,7 @@ pub fn cmd(args: &[String]) -> std::process::ExitCode {
 }
 
 /// Probe + POST. `force` bypasses the local same-day skip.
-pub fn share_once(force: bool) -> Result<String, String> {
+pub fn share_once(ctx: &crate::context::AppContext, force: bool) -> Result<String, String> {
     if !crate::privacy::load().share_metrics {
         return Err(
             "Metrics sharing is off. Enable explicitly: spanreed privacy metrics on".into(),
@@ -329,7 +275,7 @@ pub fn share_once(force: bool) -> Result<String, String> {
     let base = api_base();
     let access = crate::share_session::ensure_access(&base)?;
 
-    let outputs = probe::probe_detected();
+    let outputs = ctx.probe_detected();
     let version = env!("CARGO_PKG_VERSION");
     let snap = snapshot_from_outputs(&outputs, version);
     if snap.providers.is_empty() {
@@ -373,13 +319,6 @@ pub fn share_once(force: bool) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::model::{MetricKind, MetricLine, ProgressFormat, ProviderOutput};
-
-    #[test]
-    fn due_gate_skips_same_day_only() {
-        assert!(is_due_for_day(None, "2026-08-10"));
-        assert!(is_due_for_day(Some("2026-08-09"), "2026-08-10"));
-        assert!(!is_due_for_day(Some("2026-08-10"), "2026-08-10"));
-    }
 
     #[test]
     fn maps_quota_progress_and_skips_cost_charts() {

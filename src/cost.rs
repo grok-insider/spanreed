@@ -16,11 +16,28 @@ pub enum Source {
 }
 
 impl Source {
+    pub fn from_provider(provider_id: &str) -> Option<Self> {
+        match provider_id {
+            "codex" => Some(Source::Codex),
+            "claude" => Some(Source::Claude),
+            _ => None,
+        }
+    }
+
     fn id(self) -> &'static str {
         match self {
             Source::Claude => "claude",
             Source::Codex => "codex",
         }
+    }
+}
+
+/// `CostSource` over the shared local consumption store.
+pub struct LocalCost;
+
+impl crate::ports::CostSource for LocalCost {
+    fn local_cost_lines(&self, provider_id: &str) -> Vec<crate::model::MetricLine> {
+        Source::from_provider(provider_id).map_or_else(Vec::new, |source| cost_lines(source, None))
     }
 }
 

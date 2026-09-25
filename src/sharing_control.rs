@@ -9,13 +9,13 @@ pub struct PublicationStatus {
 }
 pub fn status() -> PublicationStatus {
     PublicationStatus {
-        last_shared_day: crate::share::last_shared_day(),
-        due: crate::share::is_due_today(),
-        schedule: crate::share_schedule::status(),
+        last_shared_day: crate::share_state::last_shared_day(),
+        due: crate::share_state::is_due_today(),
+        schedule: crate::setup::share_schedule::status(),
     }
 }
-pub fn publish() -> Result<String, String> {
-    crate::share::share_once(false)
+pub fn publish(ctx: &crate::context::AppContext) -> Result<String, String> {
+    crate::share::share_once(ctx, false)
 }
 pub fn schedule(enabled: bool) -> Result<String, String> {
     if enabled {
@@ -25,8 +25,8 @@ pub fn schedule(enabled: bool) -> Result<String, String> {
         if !crate::share_session::is_logged_in() {
             return Err("Connect this installation to Fabrials first".into());
         }
-        crate::share_schedule::enable(false)
+        crate::setup::share_schedule::enable(false)
     } else {
-        crate::share_schedule::disable(false)
+        crate::setup::share_schedule::disable(false)
     }
 }

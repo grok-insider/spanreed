@@ -45,7 +45,7 @@ pub struct FabrialsIdentity {
 }
 
 fn linked_view() -> Result<LinkView, String> {
-    let base = crate::share::api_base();
+    let base = crate::share_state::api_base();
     let token = share_session::ensure_access(&base)?;
     let response =
         crate::http::Request::get(format!("{}/auth/session", base.trim_end_matches('/')))
@@ -150,7 +150,7 @@ pub fn begin() -> Result<LinkView, String> {
     let _lock = lock()?;
     let now = crate::util::now_ms();
     if let Some(pending) = load()? {
-        validate_pending_base(&pending, &crate::share::api_base())?;
+        validate_pending_base(&pending, &crate::share_state::api_base())?;
         if pending.authorized.is_some() || now < pending.expires_at_ms {
             return Ok(view(&pending, now));
         }
@@ -158,7 +158,7 @@ pub fn begin() -> Result<LinkView, String> {
     let authorization = share_session::start_device_login()?;
     let pending = Pending {
         id: format!("{}-{now}", authorization.user_code),
-        api_base: Some(crate::share::api_base()),
+        api_base: Some(crate::share_state::api_base()),
         expires_at_ms: now.saturating_add(authorization.expires_in.min(3600) as i64 * 1000),
         next_poll_ms: now.saturating_add(authorization.interval_secs.clamp(2, 60) as i64 * 1000),
         authorization,
@@ -174,7 +174,7 @@ pub fn poll(id: &str) -> Result<LinkView, String> {
     if pending.id != id {
         return Err("Fabrials connection changed; reopen the current connection".into());
     }
-    validate_pending_base(&pending, &crate::share::api_base())?;
+    validate_pending_base(&pending, &crate::share_state::api_base())?;
     let now = crate::util::now_ms();
     if pending.authorized.is_none() {
         if now >= pending.expires_at_ms {
@@ -223,7 +223,7 @@ pub fn cancel(id: &str) -> Result<(), String> {
 pub fn disconnect() -> Result<(), String> {
     let _lock = lock()?;
     if share_session::is_logged_in() {
-        let base = crate::share::api_base();
+        let base = crate::share_state::api_base();
         let token = share_session::ensure_access(&base)?;
         let response =
             crate::http::Request::delete(format!("{}/auth/session", base.trim_end_matches('/')))
@@ -245,11 +245,11 @@ pub fn verification_url(id: &str) -> Result<String, String> {
     if pending.id != id || crate::util::now_ms() >= pending.expires_at_ms {
         return Err("Fabrials connection expired or changed".into());
     }
-    validate_pending_base(&pending, &crate::share::api_base())?;
+    validate_pending_base(&pending, &crate::share_state::api_base())?;
     let url = reqwest::Url::parse(&pending.authorization.verification_uri)
         .map_err(|_| "Invalid verification URL")?;
-    let base =
-        reqwest::Url::parse(&crate::share::api_base()).map_err(|_| "Invalid Fabrials origin")?;
+    let base = reqwest::Url::parse(&crate::share_state::api_base())
+        .map_err(|_| "Invalid Fabrials origin")?;
     if url.origin() != base.origin()
         || url.scheme() != "https"
         || !url.username().is_empty()

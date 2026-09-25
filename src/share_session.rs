@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::creds;
 use crate::http::Request;
-use crate::share;
+use crate::share_state as share;
 use fabrials_runtime::credential_journal::{Recovery, Rotation, Scope};
 
 const SESSION_FILE: &str = "share_session.json";

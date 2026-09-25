@@ -24,14 +24,13 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::api;
 use crate::capture_log;
+use crate::context::AppContext;
 use crate::model::ProviderOutput;
-use crate::probe;
 use crate::self_update;
 use crate::setup;
+use crate::setup::share_schedule;
 use crate::share;
-use crate::share_schedule;
 use crate::share_session;
 use crate::tray_format::{self, TraySeverity};
 use crate::util;
@@ -54,6 +53,7 @@ pub const MENU_SETTINGS: &str = "Settings";
 pub const MENU_QUIT: &str = "Quit tray";
 
 struct TrayState {
+    ctx: AppContext,
     outputs: Vec<ProviderOutput>,
     capture_up: bool,
     max_used: Option<f64>,
@@ -74,9 +74,10 @@ struct TrayState {
     reset_in_flight: bool,
 }
 
-impl Default for TrayState {
-    fn default() -> Self {
+impl TrayState {
+    fn new(ctx: AppContext) -> Self {
         Self {
+            ctx,
             outputs: Vec::new(),
             capture_up: false,
             max_used: None,
@@ -96,7 +97,7 @@ impl Default for TrayState {
 }
 
 /// CLI entry.
-pub fn cmd(args: &[String]) -> ExitCode {
+pub fn cmd(ctx: &AppContext, args: &[String]) -> ExitCode {
     let mut interval = DEFAULT_INTERVAL_SECS;
     let mut i = 0;
     while i < args.len() {
@@ -137,7 +138,7 @@ pub fn cmd(args: &[String]) -> ExitCode {
         i += 1;
     }
 
-    if let Err(e) = run_tray(interval) {
+    if let Err(e) = run_tray(ctx.clone(), interval) {
         eprintln!("tray: {e}");
         ExitCode::FAILURE
     } else {
@@ -145,7 +146,7 @@ pub fn cmd(args: &[String]) -> ExitCode {
     }
 }
 
-fn run_tray(interval_secs: u64) -> Result<(), String> {
+fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
     let _lock = acquire_single_instance()?;
 
     let event_loop = EventLoopBuilder::new().build();
@@ -198,7 +199,7 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
     let id_settings = item_settings.id().clone();
     let id_quit = item_quit.id().clone();
 
-    let state = Arc::new(Mutex::new(TrayState::default()));
+    let state = Arc::new(Mutex::new(TrayState::new(ctx)));
     // First probe on main thread so tooltip is ready.
     refresh_state(&state);
 
@@ -416,7 +417,8 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                     set_status(&state, "Sharing usage…");
                     let st = state.clone();
                     thread::spawn(move || {
-                        let msg = match share::share_once(false) {
+                        let ctx = st.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
+                        let msg = match share::share_once(&ctx, false) {
                             Ok(m) => m,
                             Err(e) => e,
                         };
@@ -678,7 +680,8 @@ fn stamp_status(guard: &mut TrayState, note: impl Into<String>) {
 
 fn refresh_state(state: &Arc<Mutex<TrayState>>) {
     let capture_up = setup::capture_ports_up();
-    let outputs = api::fetch_cached().unwrap_or_else(probe::probe_detected);
+    let ctx = state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
+    let outputs = ctx.cached_or_probe();
     let max_used = tray_format::max_used_pct(&outputs);
 
     let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -695,7 +698,7 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
     let today = util::today_day_key_madrid();
     g.share_line = tray_format::format_share_line(
         g.share_logged_in,
-        share::last_shared_day().as_deref(),
+        crate::share_state::last_shared_day().as_deref(),
         &today,
     );
     g.dirty = true;

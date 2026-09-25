@@ -4,7 +4,7 @@
 //! public plan pool happen automatically after `spanreed share login`.
 //!
 //! **Semantics:** at most one successful sample per Europe/Madrid product day
-//! (client due-gate in [`crate::share`]). OS jobs may fire more often (evening
+//! (client due-gate in [`crate::share_state`]). OS jobs may fire more often (evening
 //! timer + login / missed-run catch-up); extras no-op.
 //!
 //! Platforms:
@@ -29,7 +29,7 @@ pub fn kind_label() -> &'static str {
 
 pub fn status() -> String {
     let sched = platform::status();
-    match crate::share::last_shared_day() {
+    match crate::share_state::last_shared_day() {
         Some(d) => format!("{sched}; last shared {d}"),
         None => format!("{sched}; last shared: never"),
     }

@@ -25,9 +25,13 @@ pub async fn set_reset_notifications(app: tauri::AppHandle, enabled: bool) -> Re
     .map_err(|_| "Notification worker stopped".to_string())?
 }
 #[tauri::command]
-pub async fn check_reset_notifications(_app: tauri::AppHandle) -> Result<u32, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        spanreed::notifications::deliver(spanreed::notifications::deliver_user_visible)
+pub async fn check_reset_notifications(
+    _app: tauri::AppHandle,
+    ctx: tauri::State<'_, spanreed::context::AppContext>,
+) -> Result<u32, String> {
+    let ctx = ctx.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        spanreed::desktop::deliver_notifications(&ctx, spanreed::notifications::deliver_user_visible)
     })
     .await
     .map_err(|_| "Notification worker stopped".to_string())?

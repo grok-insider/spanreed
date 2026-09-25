@@ -29,8 +29,10 @@ mod app;
 mod capture;
 mod capture_log;
 mod capture_watchdog;
+mod cli;
 mod client_id;
 pub mod codex_session_move;
+pub mod context;
 mod cost;
 mod creds;
 pub mod desktop;
@@ -52,6 +54,7 @@ pub mod model;
 mod output;
 pub mod panel;
 mod pool_baseline;
+mod ports;
 mod pricing;
 pub mod privacy;
 mod probe;
@@ -68,8 +71,8 @@ pub use setup::review as client_configuration;
 mod provider_icons;
 mod share;
 mod share_economics;
-mod share_schedule;
 mod share_session;
+mod share_state;
 pub mod sharing_control;
 pub mod sync;
 mod sync_store;
@@ -116,28 +119,29 @@ pub fn run_cli() -> ExitCode {
     if agent::invoked_as_legacy_bridge(&argv0) {
         return agent::cmd(&args);
     }
+    let ctx = context::AppContext::new();
     let cmd = args.first().map(String::as_str).unwrap_or("probe");
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
 
     match cmd {
         "list" => cmd_list(),
-        "account" => accounts::cmd(rest),
+        "account" => cli::account::cmd(rest),
         "agent" => agent::cmd(rest),
         "addon" => addons::cmd_addon(rest),
         "plugin" => addons::cmd_addon(rest),
-        "probe" => cmd_probe(rest),
-        "waybar" => cmd_waybar(),
-        "json" => cmd_json(),
-        "serve" => cmd_serve(rest),
+        "probe" => cmd_probe(&ctx, rest),
+        "waybar" => cmd_waybar(&ctx),
+        "json" => cmd_json(&ctx),
+        "serve" => cmd_serve(&ctx, rest),
         "history" => cmd_history(rest),
         "usage" => usage::cmd(rest),
         "capture" => cmd_capture(rest),
         "grok-proxy" => cmd_grok_proxy(rest),
         "setup" => setup::cmd(rest),
-        "share" => share::cmd(rest),
+        "share" => share::cmd(&ctx, rest),
         "privacy" => privacy::cmd(rest),
         "profile" => profiles::cmd(rest),
-        "widget" => profiles::widget(rest),
+        "widget" => profiles::widget(&ctx, rest),
         "gui" => match crate::desktop_open::request("overview") {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
@@ -149,7 +153,7 @@ pub fn run_cli() -> ExitCode {
         "auth" => cmd_auth(rest),
         "update-pricing" => cmd_update_pricing(rest),
         "self-update" => self_update::cmd(rest),
-        "tray" => cmd_tray(rest),
+        "tray" => cmd_tray(&ctx, rest),
         "help" | "-h" | "--help" => {
             print_help();
             ExitCode::SUCCESS
@@ -226,14 +230,14 @@ fn print_help() {
     );
 }
 
-fn cmd_tray(args: &[String]) -> ExitCode {
+fn cmd_tray(ctx: &context::AppContext, args: &[String]) -> ExitCode {
     #[cfg(feature = "tray")]
     {
-        tray::cmd(args)
+        tray::cmd(ctx, args)
     }
     #[cfg(not(feature = "tray"))]
     {
-        let _ = args;
+        let _ = (ctx, args);
         eprintln!(
             "tray: this binary was built without the `tray` feature\n\
              rebuild with: cargo build --release --features tray"
@@ -305,13 +309,13 @@ fn parse_probe_view(args: &[String]) -> model::ProbeView {
     }
 }
 
-fn cmd_probe(args: &[String]) -> ExitCode {
+fn cmd_probe(ctx: &context::AppContext, args: &[String]) -> ExitCode {
     let force = args.iter().any(|a| a == "--force");
     let view = parse_probe_view(args);
     let id = args.iter().find(|a| !a.starts_with("--"));
 
     let outputs = match id {
-        Some(id) => match probe::probe_one(id) {
+        Some(id) => match ctx.probe_one(id) {
             Some(out) => vec![out],
             None => {
                 eprintln!("unknown provider: {id}");
@@ -320,9 +324,9 @@ fn cmd_probe(args: &[String]) -> ExitCode {
         },
         None => {
             if force {
-                probe::probe_all()
+                ctx.probe_all()
             } else {
-                probe::probe_detected()
+                ctx.probe_detected()
             }
         }
     };
@@ -366,16 +370,16 @@ fn cmd_history(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_waybar() -> ExitCode {
+fn cmd_waybar(ctx: &context::AppContext) -> ExitCode {
     // Prefer the running daemon's cached data (instant); fall back to probing.
-    let outputs = api::fetch_cached().unwrap_or_else(probe::probe_detected);
+    let outputs = ctx.cached_or_probe();
     let json = output::waybar(&outputs);
     println!("{json}");
     ExitCode::SUCCESS
 }
 
-fn cmd_json() -> ExitCode {
-    let outputs = probe::probe_detected();
+fn cmd_json(ctx: &context::AppContext) -> ExitCode {
+    let outputs = ctx.probe_detected();
     match serde_json::to_string_pretty(&outputs) {
         Ok(s) => {
             println!("{s}");
@@ -409,7 +413,7 @@ fn cmd_update_pricing(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_serve(args: &[String]) -> ExitCode {
+fn cmd_serve(ctx: &context::AppContext, args: &[String]) -> ExitCode {
     let interval = args
         .iter()
         .position(|a| a == "--interval")
@@ -417,7 +421,7 @@ fn cmd_serve(args: &[String]) -> ExitCode {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(300);
 
-    match api::serve(interval) {
+    match api::serve(interval, ctx.api_services()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("server error: {e}");

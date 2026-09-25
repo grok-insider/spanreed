@@ -134,9 +134,9 @@ pub fn poll(id: &str) -> Result<Progress, String> {
         now,
         |code| match login.account.provider.as_str() {
             "grok" => match fabrials_providers::grok::device::Client::new()?.poll(code)? {
-                PollResult::Authorized(tokens) => Ok(PollResult::Authorized(
-                    crate::drivers::grok::tokens_to_auth_json(&tokens),
-                )),
+                PollResult::Authorized(tokens) => {
+                    Ok(PollResult::Authorized(grok_tokens_to_auth_json(&tokens)))
+                }
                 result => Ok(result),
             },
             "codex" => fabrials_providers::codex::auth::Client::new()?.poll(code, now),
@@ -188,4 +188,34 @@ pub fn verification_url(id: &str) -> Result<String, String> {
         .filter(|login| login.id == id)
         .map(|login| login.flow.view().verification_uri)
         .ok_or("Authorization no longer available".into())
+}
+
+pub(crate) const GROK_AUTH_JSON_ENTRY: &str =
+    "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
+
+/// Grok CLI `auth.json` document for freshly issued device-flow tokens.
+pub(crate) fn grok_tokens_to_auth_json(tok: &serde_json::Value) -> serde_json::Value {
+    let access = tok
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let refresh = tok.get("refresh_token").and_then(|v| v.as_str());
+    let now = crate::util::now_ms();
+    let expires_at = tok
+        .get("expires_in")
+        .and_then(|v| v.as_f64())
+        .filter(|n| *n > 0.0)
+        .map(|n| now.saturating_add((n.min(86400.0) as i64) * 1000))
+        .or_else(|| crate::util::jwt_exp_ms(access))
+        .unwrap_or(now + 3600 * 1000);
+    let iso = crate::util::ms_to_iso(expires_at).unwrap_or_default();
+    let mut entry = serde_json::json!({
+        "key": access,
+        "expires_at": iso,
+        "oidc_client_id": fabrials_providers::grok::device::CLIENT_ID,
+    });
+    if let Some(rt) = refresh {
+        entry["refresh_token"] = serde_json::json!(rt);
+    }
+    serde_json::json!({ GROK_AUTH_JSON_ENTRY: entry })
 }

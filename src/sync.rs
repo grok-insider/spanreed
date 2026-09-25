@@ -162,39 +162,49 @@ fn save_status(owner: &str, status: SyncStatus) {
         );
     }
 }
-pub fn after_probe(outputs: &[crate::model::ProviderOutput]) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static RUNNING: AtomicBool = AtomicBool::new(false);
-    if !crate::privacy::load().sync_history
-        || crate::app::env_offline()
-        || !crate::share_session::is_logged_in()
-    {
-        return;
-    }
-    if RUNNING
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return;
-    }
-    let outputs = outputs.to_vec();
-    let owner = cached_owner();
-    std::thread::spawn(move || {
-        struct Guard;
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                RUNNING.store(false, Ordering::Release);
-            }
-        }
-        let _guard = Guard;
-        if let Err(error) = run_outputs(&outputs)
-            && let Some(owner) = owner
+/// `AfterProbe` hook: uploads fresh outputs when private history sync is on.
+/// At most one upload runs at a time per hook instance.
+#[derive(Default)]
+pub struct HistorySync {
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl crate::ports::AfterProbe for HistorySync {
+    fn after_probe(&self, outputs: &[crate::model::ProviderOutput]) {
+        use std::sync::atomic::Ordering;
+        if !crate::privacy::load().sync_history
+            || crate::app::env_offline()
+            || !crate::share_session::is_logged_in()
         {
-            let mut status = status_for(&owner);
-            status.error = Some(error);
-            save_status(&owner, status);
+            return;
         }
-    });
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let outputs = outputs.to_vec();
+        let owner = cached_owner();
+        let running = std::sync::Arc::clone(&self.running);
+        std::thread::spawn(move || {
+            struct Guard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+            impl Drop for Guard {
+                fn drop(&mut self) {
+                    self.0.store(false, Ordering::Release);
+                }
+            }
+            let _guard = Guard(running);
+            if let Err(error) = run_outputs(&outputs)
+                && let Some(owner) = owner
+            {
+                let mut status = status_for(&owner);
+                status.error = Some(error);
+                save_status(&owner, status);
+            }
+        });
+    }
 }
 
 pub fn cmd(args: &[String]) -> std::process::ExitCode {

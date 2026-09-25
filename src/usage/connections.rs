@@ -35,7 +35,7 @@ fn connection_lock() -> Result<fabrials_runtime::credential_journal::Rotation, S
 }
 pub fn status() -> Result<Vec<String>, String> {
     let mut clients: Vec<_> = load()?.into_keys().collect();
-    if crate::providers::antigravity::discover().is_some() {
+    if crate::creds::antigravity::discover().is_some() {
         clients.push("antigravity".into());
     }
     Ok(clients)
@@ -154,7 +154,7 @@ pub fn collect(client: &str, store: &mut UsageStore, force: bool) -> Result<bool
 }
 
 fn collect_antigravity(store: &mut UsageStore, force: bool) -> Result<bool, String> {
-    let Some(connection) = crate::providers::antigravity::discover() else {
+    let Some(connection) = crate::creds::antigravity::discover() else {
         return Ok(false);
     };
     let source = "remote:antigravity:local";

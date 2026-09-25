@@ -14,6 +14,7 @@ pub(crate) mod jsonc;
 mod paths;
 pub mod review;
 mod service;
+pub mod share_schedule;
 mod state;
 mod tray_autostart;
 mod wire_grok;
@@ -302,12 +303,12 @@ fn run_setup(flags: SetupFlags) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        match crate::share_schedule::enable(flags.dry_run) {
+        match share_schedule::enable(flags.dry_run) {
             Ok(msg) => {
                 println!("  Share:    {msg}");
                 state.share_schedule = Some(state::ServiceState {
                     enabled: true,
-                    kind: crate::share_schedule::kind_label().into(),
+                    kind: share_schedule::kind_label().into(),
                 });
             }
             Err(e) => {
@@ -404,7 +405,7 @@ fn run_uninstall(flags: SetupFlags) -> ExitCode {
         kind: tray_autostart::kind_label().into(),
     });
 
-    match crate::share_schedule::disable(flags.dry_run) {
+    match share_schedule::disable(flags.dry_run) {
         Ok(msg) => println!("  Share:    {msg}"),
         Err(e) => {
             eprintln!("  Share:    {e}");
@@ -413,7 +414,7 @@ fn run_uninstall(flags: SetupFlags) -> ExitCode {
     }
     state.share_schedule = Some(state::ServiceState {
         enabled: false,
-        kind: crate::share_schedule::kind_label().into(),
+        kind: share_schedule::kind_label().into(),
     });
 
     match wire_grok::unwire(flags.dry_run, &mut state) {
@@ -516,7 +517,7 @@ fn print_status() -> ExitCode {
     let svc = service::status();
     println!("  Capture service:  {svc}");
     println!("  Tray autostart:   {}", tray_autostart::status());
-    println!("  Share schedule:   {}", crate::share_schedule::status());
+    println!("  Share schedule:   {}", share_schedule::status());
 
     println!(
         "  Grok Build:       {} — {}",

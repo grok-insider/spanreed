@@ -104,7 +104,7 @@ pub fn cmd(args: &[String]) -> ExitCode {
     }
 }
 
-pub fn widget(args: &[String]) -> ExitCode {
+pub fn widget(ctx: &crate::context::AppContext, args: &[String]) -> ExitCode {
     if args.first().is_some_and(|arg| arg == "panel") {
         println!("{}", crate::panel::snapshot());
         return ExitCode::SUCCESS;
@@ -113,7 +113,7 @@ pub fn widget(args: &[String]) -> ExitCode {
         eprintln!("Usage: spanreed widget json | panel");
         return ExitCode::FAILURE;
     }
-    let mut outputs = crate::desktop::snapshot(false);
+    let mut outputs = ctx.snapshot(false);
     for output in &mut outputs {
         for line in &mut output.lines {
             if let crate::model::MetricLine::Progress {
