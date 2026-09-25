@@ -12,10 +12,12 @@ workspace, one version line, never published to crates.io (`publish = false`).
 | `fabrials-providers` | Provider protocols: OAuth and device flows, Grok CLI auth, usage parsers, local session readers |
 | `fabrials-runtime` | Proxy engine: listener, routing, forwarding, hop and history stores; defines the `Provider` port |
 | `fabrials-upstreams` | Provider adapters that implement the engine's `Provider` port |
+| `fabrials-agent-host` | Agent host that supervises the Grok Build CLI over ACP and serves the desktop.grok.me contract (edition 2024, MSRV 1.95) |
 
 Dependencies point one way: `types` at the bottom; `metrics`, `accounts`
 and `providers` above it; the engine (`runtime`) knows no provider;
-`upstreams` depends on the engine and on `providers`.
+`upstreams` depends on the engine and on `providers`. `agent-host` stands
+alone and depends on no other crate here.
 
 ## Consumers
 
