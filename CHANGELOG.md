@@ -6,6 +6,11 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.6.1] - 2026-09-25
 
+- fix: keep the Windows alert on the user desktop
+- fix: show the Windows alert on the active desktop
+- fix: keep the macOS alert dialog off System Events
+- fix: show the macOS alert dialog from the background tray
+- fix: show the Windows alert with a WinForms dialog
 - fix: realize the tray card before attaching its view
 - fix: keep a parked desktop named spanreed-desktop
 - fix: recognize a desktop process before its command line appears
