@@ -138,7 +138,52 @@ fn desktop_alive() -> bool {
     let Ok(pid) = text.trim().parse::<u32>() else {
         return false;
     };
-    pid == std::process::id() || process_alive(pid)
+    let alive = pid == std::process::id() || process_alive(pid);
+    if !alive {
+        return false;
+    }
+    match process_command(pid) {
+        Some(command) => command_is_desktop(&command),
+        None => true,
+    }
+}
+
+fn command_is_desktop(command: &str) -> bool {
+    command
+        .split(['\0', ' ', '\\', '/'])
+        .any(|part| desktop_binary_names().contains(&part))
+}
+
+fn process_command(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        Some(text.to_string())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = pid;
+        None
+    }
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -414,6 +459,17 @@ mod tests {
             is_cli_binary(&exe) || !name.eq_ignore_ascii_case(crate::app::bin_name()),
             "the test harness must not be treated as a packaged desktop"
         );
+    }
+
+    #[test]
+    fn a_live_cli_process_is_not_the_desktop() {
+        assert!(command_is_desktop(desktop_binary_names()[0]));
+        assert!(command_is_desktop(&format!(
+            "/usr/bin/{}\0",
+            desktop_binary_names()[1]
+        )));
+        assert!(!command_is_desktop("/usr/bin/spanreed\0"));
+        assert!(!command_is_desktop("bash"));
     }
 
     #[test]
