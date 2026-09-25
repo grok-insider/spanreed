@@ -226,13 +226,7 @@ fn deliver_linux(title: &str, body: &str) -> std::io::Result<std::process::Outpu
     if sent.as_ref().is_ok_and(|output| output.status.success()) {
         return sent;
     }
-    if sent
-        .as_ref()
-        .is_ok_and(|output| output.status.code().is_some())
-    {
-        return sent;
-    }
-    std::process::Command::new("gdbus")
+    let bus = std::process::Command::new("gdbus")
         .args([
             "call",
             "--session",
@@ -252,7 +246,12 @@ fn deliver_linux(title: &str, body: &str) -> std::io::Result<std::process::Outpu
             "5000",
         ])
         .stdin(std::process::Stdio::null())
-        .output()
+        .output();
+    match &bus {
+        Ok(output) if output.status.success() => bus,
+        _ if sent.is_err() => bus,
+        _ => sent,
+    }
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
