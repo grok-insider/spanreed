@@ -65,6 +65,7 @@ mod tests {
 pub mod accounting;
 pub mod files;
 pub mod forward;
+pub mod wire_compat;
 pub mod http;
 pub mod listener;
 pub mod models;
