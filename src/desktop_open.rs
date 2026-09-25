@@ -116,7 +116,9 @@ pub fn unmark_running() {
 pub fn route_location_script(href: &str) -> Option<String> {
     match href {
         "#/local/overview" | "#/local/usage" | "#/local/accounts" | "#/local/routing"
-        | "#/local/connect" | "#/local/settings" => Some(format!("location.hash = {href:?}")),
+        | "#/local/connect" | "#/local/settings" => Some(format!(
+            "location.hash = {href:?}; dispatchEvent(new HashChangeEvent(\"hashchange\"))"
+        )),
         _ => None,
     }
 }
@@ -515,11 +517,15 @@ mod tests {
     fn route_script_only_accepts_local_pages() {
         assert_eq!(
             route_location_script("#/local/overview").as_deref(),
-            Some("location.hash = \"#/local/overview\"")
+            Some(
+                "location.hash = \"#/local/overview\"; dispatchEvent(new HashChangeEvent(\"hashchange\"))"
+            )
         );
         assert_eq!(
             route_location_script("#/local/settings").as_deref(),
-            Some("location.hash = \"#/local/settings\"")
+            Some(
+                "location.hash = \"#/local/settings\"; dispatchEvent(new HashChangeEvent(\"hashchange\"))"
+            )
         );
         assert!(route_location_script("#/local/overview'; alert(1)").is_none());
     }
