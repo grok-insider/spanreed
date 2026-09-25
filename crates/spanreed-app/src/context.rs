@@ -37,6 +37,7 @@ pub struct AppContext {
 struct Inner {
     paths: AppPaths,
     proxy: crate::desktop_runtime::ProxyControl,
+    agent: crate::desktop_runtime::AgentControl,
     reviews: crate::client_configuration::Reviews,
     hosted_reviews: crate::hosted_client_configuration::HostedReviews,
     logins: crate::account_login::Logins,
@@ -64,6 +65,7 @@ impl AppContext {
                 pricing,
                 logins: Default::default(),
                 proxy: Default::default(),
+                agent: Default::default(),
                 reviews: Default::default(),
                 hosted_reviews: Default::default(),
                 notifier: Arc::new(crate::notifications::ResetExpiryNotifier),
@@ -129,6 +131,11 @@ impl AppContext {
     /// The local proxy this process owns (desktop).
     pub fn proxy(&self) -> &crate::desktop_runtime::ProxyControl {
         &self.inner.proxy
+    }
+
+    /// The agent host this process runs (desktop and tray).
+    pub fn agent(&self) -> &crate::desktop_runtime::AgentControl {
+        &self.inner.agent
     }
 
     /// Pending client configuration review (desktop).

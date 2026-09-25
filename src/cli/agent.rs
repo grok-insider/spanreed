@@ -5,21 +5,11 @@
 
 use std::process::ExitCode;
 
-use fabrials_agent_host::{CliDefaults, HostIdentity};
-
-/// How `/healthz` and the CLI name this host.
-pub const HOST: HostIdentity = HostIdentity::new("spanreed", env!("CARGO_PKG_VERSION"));
-
-/// The command users type to reach the agent host.
-pub const COMMAND: &str = "spanreed agent";
+use crate::app::agent::defaults;
 
 /// Program names that run straight into `spanreed agent` (installed as links
 /// so existing `grok-bridge …` scripts and autostart entries keep working).
 const LEGACY_PROGRAMS: &[&str] = &["grok-bridge", "grok-bridge.exe"];
-
-pub fn defaults() -> CliDefaults {
-    CliDefaults::new(HOST, COMMAND)
-}
 
 pub(super) fn run(_ctx: &crate::app::AppContext, args: &[String]) -> ExitCode {
     cmd(args)

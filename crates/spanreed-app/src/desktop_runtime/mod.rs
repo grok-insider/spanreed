@@ -1,4 +1,8 @@
-//! Lifecycle of the proxy instance owned by this GUI process.
+//! Lifecycle of the local proxy and the agent host owned by this GUI process.
+
+mod agent;
+
+pub use agent::{AgentControl, AgentLaunch, AgentStatus, defaults as agent_defaults};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},

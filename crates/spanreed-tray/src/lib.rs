@@ -55,6 +55,8 @@ pub const MENU_SHARE_NOW: &str = "Share now";
 pub const MENU_UNLINK_SHARE: &str = "Unlink share";
 pub const MENU_DASHBOARD: &str = "Open dashboard";
 pub const MENU_SETTINGS: &str = "Settings";
+pub const MENU_AGENT_START: &str = "Start agent host";
+pub const MENU_AGENT_STOP: &str = "Stop agent host";
 pub const MENU_QUIT: &str = "Quit tray";
 
 /// Run the tray until Quit; refreshes usage every `interval_secs`.

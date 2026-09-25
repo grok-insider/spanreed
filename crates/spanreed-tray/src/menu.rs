@@ -3,8 +3,8 @@
 use tray_icon::menu::{Menu, MenuId, MenuItem, PredefinedMenuItem};
 
 use super::{
-    MENU_CHECK, MENU_DASHBOARD, MENU_ENSURE, MENU_LINK_SHARE, MENU_LOG, MENU_QUIT, MENU_REFRESH,
-    MENU_SETTINGS, MENU_UNLINK_SHARE, MENU_UPDATE,
+    MENU_AGENT_START, MENU_CHECK, MENU_DASHBOARD, MENU_ENSURE, MENU_LINK_SHARE, MENU_LOG,
+    MENU_QUIT, MENU_REFRESH, MENU_SETTINGS, MENU_UNLINK_SHARE, MENU_UPDATE,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,6 +18,7 @@ pub(super) enum Action {
     Unlink,
     CheckUpdates,
     InstallUpdate,
+    AgentHost,
     Quit,
 }
 
@@ -27,6 +28,7 @@ pub(super) struct TrayMenu {
     pub(super) update: MenuItem,
     pub(super) share: MenuItem,
     pub(super) unlink: MenuItem,
+    pub(super) agent: MenuItem,
     ids: Vec<(MenuId, Action)>,
 }
 
@@ -43,6 +45,7 @@ impl TrayMenu {
         let unlink = item(MENU_UNLINK_SHARE, false);
         let check = item(MENU_CHECK, true);
         let update = item(MENU_UPDATE, false);
+        let agent = item(MENU_AGENT_START, true);
         let quit = item(MENU_QUIT, true);
         let separator = PredefinedMenuItem::separator;
         let menu = Menu::new();
@@ -60,6 +63,8 @@ impl TrayMenu {
             &check,
             &update,
             &separator(),
+            &agent,
+            &separator(),
             &quit,
         ])
         .map_err(|e| format!("menu: {e}"))?;
@@ -73,6 +78,7 @@ impl TrayMenu {
             (unlink.id().clone(), Action::Unlink),
             (check.id().clone(), Action::CheckUpdates),
             (update.id().clone(), Action::InstallUpdate),
+            (agent.id().clone(), Action::AgentHost),
             (quit.id().clone(), Action::Quit),
         ];
         Ok((
@@ -82,6 +88,7 @@ impl TrayMenu {
                 update,
                 share,
                 unlink,
+                agent,
                 ids,
             },
         ))

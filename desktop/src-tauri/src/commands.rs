@@ -260,6 +260,27 @@ pub async fn stop_local_proxy(ctx: Ctx<'_>) -> Result<app::proxy::Status, String
     blocking(PROXY, move || app::proxy::stop(&ctx)).await
 }
 
+const AGENT: &str = "Agent host worker stopped";
+
+#[tauri::command]
+pub async fn agent_status(ctx: Ctx<'_>) -> Result<app::agent::AgentStatus, String> {
+    let ctx = ctx.inner().clone();
+    blocking(AGENT, move || app::agent::status(&ctx)).await
+}
+
+/// Run `spanreed agent serve` inside this process on the agent host's own port.
+#[tauri::command]
+pub async fn agent_start(ctx: Ctx<'_>) -> Result<app::agent::AgentStatus, String> {
+    let ctx = ctx.inner().clone();
+    blocking(AGENT, move || app::agent::start(&ctx)).await
+}
+
+#[tauri::command]
+pub async fn agent_stop(ctx: Ctx<'_>) -> Result<app::agent::AgentStatus, String> {
+    let ctx = ctx.inner().clone();
+    blocking(AGENT, move || app::agent::stop(&ctx)).await
+}
+
 #[tauri::command]
 pub async fn models(account_id: String) -> Result<app::accounts::ModelCatalog, String> {
     blocking("Model discovery worker stopped", move || {

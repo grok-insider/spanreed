@@ -5,6 +5,7 @@
 
 pub mod accounts;
 pub mod addons;
+pub mod agent;
 pub mod capture;
 pub mod clients;
 pub mod fabrials;

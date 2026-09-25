@@ -52,6 +52,7 @@ pub(super) fn menu_action(action: Action, state: &Shared, menu: &TrayMenu) {
             check_updates(state);
         }
         Action::InstallUpdate => install_update(state),
+        Action::AgentHost => toggle_agent_host(state),
         Action::Quit => {}
     }
 }
@@ -183,6 +184,35 @@ fn check_updates(state: &Shared) {
         let summary = run_update_check(&state);
         set_status(&state, &summary);
         user_notify("spanreed — updates", &summary, true);
+    });
+}
+
+/// Start the agent host for desktop.grok.me on its own port, or stop it.
+fn toggle_agent_host(state: &Shared) {
+    let ctx = state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
+    let running = app::agent::status(&ctx)
+        .is_ok_and(|status| status.state == app::proxy::ProxyState::Running);
+    set_status(
+        state,
+        if running {
+            "Stopping agent host…"
+        } else {
+            "Starting agent host…"
+        },
+    );
+    let state = state.clone();
+    thread::spawn(move || {
+        let message = if running {
+            app::agent::stop(&ctx).map(|_| "Agent host stopped".to_string())
+        } else {
+            app::agent::start(&ctx).map(|status| match status.origin {
+                Some(origin) => format!("Agent host listening on {origin}"),
+                None => "Agent host starting".into(),
+            })
+        }
+        .unwrap_or_else(|error| format!("Agent host: {error}"));
+        set_status(&state, &message);
+        user_notify("spanreed — agent host", &message, false);
     });
 }
 

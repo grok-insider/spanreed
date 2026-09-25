@@ -5,7 +5,7 @@ use tray_icon::{Icon, TrayIcon};
 
 use super::menu::TrayMenu;
 use super::state::Shared;
-use super::{MENU_CHECK, MENU_LINK_SHARE, MENU_SHARE_NOW};
+use super::{MENU_AGENT_START, MENU_AGENT_STOP, MENU_CHECK, MENU_LINK_SHARE, MENU_SHARE_NOW};
 use spanreed_app::app;
 use spanreed_domain::tray_format::{self, TraySeverity};
 
@@ -55,6 +55,14 @@ pub(super) fn apply_visual(state: &Shared, tray: &mut TrayIcon, menu: &TrayMenu)
     if current != "Checking for updates…" {
         item_check.set_text(check_label);
     }
+    let ctx = state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
+    let agent_running = app::agent::status(&ctx)
+        .is_ok_and(|status| status.state == app::proxy::ProxyState::Running);
+    menu.agent.set_text(if agent_running {
+        MENU_AGENT_STOP
+    } else {
+        MENU_AGENT_START
+    });
     let _ = tray.set_tooltip(Some(tip));
     tray.set_title(Some(title));
     if let Ok(icon) = icon_for_severity(sev) {

@@ -4183,6 +4183,7 @@ dependencies = [
  "spanreed-domain",
  "tar",
  "time",
+ "tokio",
  "toml 0.8.23",
  "toml_edit 0.20.7",
  "zip",
