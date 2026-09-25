@@ -3950,7 +3950,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "env_logger",
  "fabrials-agent-host",
@@ -3966,7 +3966,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-adapters"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "dirs 5.0.1",
  "fabrials-accounts",
@@ -4003,7 +4003,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-app"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "fabrials-fabric",
  "fabrials-pricing",
@@ -4017,7 +4017,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-domain"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "fabrials-types",
  "serde",
@@ -4027,7 +4027,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-tray"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "getrandom 0.2.17",
  "gtk",
