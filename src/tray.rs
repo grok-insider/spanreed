@@ -24,14 +24,8 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::capture_log;
-use crate::context::AppContext;
+use crate::app::{self, AppContext};
 use crate::model::ProviderOutput;
-use crate::self_update;
-use crate::setup;
-use crate::setup::share_schedule;
-use crate::share;
-use crate::share_session;
 use crate::tray_format::{self, TraySeverity};
 use crate::util;
 
@@ -210,7 +204,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
         .with_menu_on_left_click(false)
         .with_tooltip(tooltip_from(&state))
         .with_icon(icon)
-        .with_title(crate::app::APP_NAME)
+        .with_title(crate::product::APP_NAME)
         .build()
         .map_err(|e| format!("tray icon: {e}"))?;
 
@@ -332,7 +326,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                 set_status(&state, "Ensuring capture…");
                 let st = state.clone();
                 thread::spawn(move || {
-                    let msg = match setup::service_ensure(false) {
+                    let msg = match app::capture::ensure(false) {
                         Ok(m) => format!("Capture: {m}"),
                         Err(e) => format!("Capture ensure failed: {e}"),
                     };
@@ -340,14 +334,14 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                     refresh_state(&st);
                 });
             } else if message == "log" {
-                let path = capture_log::capture_log_path();
+                let path = app::capture::log_path();
                 match open_path(&path) {
                     Ok(()) => set_status(&state, "Opened capture log"),
                     Err(e) => set_status(&state, &format!("Could not open log: {e}")),
                 }
             } else if message == "dashboard" || message == "settings" {
                 let page = if message == "settings" { "settings" } else { "overview" };
-                match crate::desktop_open::request(page) {
+                match app::window::open(page) {
                     Ok(()) => set_status(&state, "Opened Spanreed"),
                     Err(error) => set_status(&state, &format!("Could not open Spanreed: {error}")),
                 }
@@ -367,7 +361,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
             let id = ev.id;
             if id == id_dashboard || id == id_settings {
                 let page = if id == id_settings { "settings" } else { "overview" };
-                match crate::desktop_open::request(page) {
+                match app::window::open(page) {
                     Ok(()) => set_status(&state, "Opened Spanreed"),
                     Err(error) => set_status(&state, &format!("Could not open Spanreed: {error}")),
                 }
@@ -380,7 +374,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                 set_status(&state, "Ensuring capture…");
                 let st = state.clone();
                 thread::spawn(move || {
-                    let msg = match setup::service_ensure(false) {
+                    let msg = match app::capture::ensure(false) {
                         Ok(m) => {
                             log::info!("ensure: {m}");
                             format!("Capture: {m}")
@@ -395,7 +389,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                     user_notify("spanreed — capture", &msg, false);
                 });
             } else if id == id_log {
-                let path = capture_log::capture_log_path();
+                let path = app::capture::log_path();
                 match open_path(&path) {
                     Ok(()) => {
                         let msg = format!("Opened log:\n{}", path.display());
@@ -418,7 +412,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                     let st = state.clone();
                     thread::spawn(move || {
                         let ctx = st.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
-                        let msg = match share::share_once(&ctx, false) {
+                        let msg = match app::sharing::share_now(&ctx, false) {
                             Ok(m) => m,
                             Err(e) => e,
                         };
@@ -429,7 +423,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                 } else {
                     set_status(&state, "Starting share login…");
                     let st = state.clone();
-                    thread::spawn(move || match share_session::start_device_login() {
+                    thread::spawn(move || match app::sharing::begin_link() {
                         Ok(pending) => {
                             let _ = open_url(&pending.verification_uri);
                             let code_msg = format!(
@@ -438,9 +432,8 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                             );
                             set_status(&st, &format!("Share code: {}", pending.user_code));
                             user_notify("spanreed — share login", &code_msg, true);
-                            match share_session::wait_device_login(&pending) {
-                                Ok(_) => {
-                                    let _ = share_schedule::enable(false);
+                            match app::sharing::finish_link(&pending) {
+                                Ok(()) => {
                                     set_status(&st, "Share linked");
                                     refresh_state(&st);
                                     user_notify(
@@ -462,7 +455,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                     });
                 }
             } else if id == id_unlink {
-                match share_session::clear() {
+                match app::sharing::unlink() {
                     Ok(()) => {
                         set_status(&state, "Share unlinked");
                         refresh_state(&state);
@@ -483,7 +476,7 @@ fn run_tray(ctx: AppContext, interval_secs: u64) -> Result<(), String> {
                     user_notify("spanreed — updates", &summary, true);
                 });
             } else if id == id_update {
-                if let Some(why) = self_update::apply_blocked_reason() {
+                if let Some(why) = app::updates::apply_blocked_reason() {
                     set_status(&state, why);
                     user_notify("spanreed — updates", why, true);
                     continue;
@@ -561,7 +554,7 @@ fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
         if guard.reset_in_flight {
             return;
         }
-        if !guard.outputs.iter().any(crate::tray_card::can_use_reset) {
+        if !guard.outputs.iter().any(app::usage::can_use_reset) {
             stamp_status(&mut guard, "No limit reset credit is available");
             return;
         }
@@ -581,7 +574,7 @@ fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
             .clone()
             .unwrap_or_else(|| "invalid".into())
     };
-    if !crate::providers::codex::valid_redeem_request_id(&request_id) {
+    if !app::accounts::valid_reset_request(&request_id) {
         let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
         guard.reset_in_flight = false;
         guard.reset_request_id = None;
@@ -593,7 +586,7 @@ fn redeem_from_card(state: &Arc<Mutex<TrayState>>) {
         let _reset = ResetFlight {
             state: state.clone(),
         };
-        let result = crate::providers::codex::redeem_reset(&request_id);
+        let result = app::accounts::redeem_codex_reset(&request_id);
         {
             let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
             guard.reset_in_flight = false;
@@ -679,9 +672,9 @@ fn stamp_status(guard: &mut TrayState, note: impl Into<String>) {
 }
 
 fn refresh_state(state: &Arc<Mutex<TrayState>>) {
-    let capture_up = setup::capture_ports_up();
+    let capture_up = app::capture::is_up();
     let ctx = state.lock().unwrap_or_else(|e| e.into_inner()).ctx.clone();
-    let outputs = ctx.cached_or_probe();
+    let outputs = app::usage::cached_or_probe(&ctx);
     let max_used = tray_format::max_used_pct(&outputs);
 
     let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -694,11 +687,11 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
     }
     g.outputs = outputs;
     g.max_used = max_used;
-    g.share_logged_in = share_session::is_logged_in();
+    g.share_logged_in = app::sharing::is_linked();
     let today = util::today_day_key_madrid();
     g.share_line = tray_format::format_share_line(
         g.share_logged_in,
-        crate::share_state::last_shared_day().as_deref(),
+        app::sharing::last_shared_day().as_deref(),
         &today,
     );
     g.dirty = true;
@@ -747,16 +740,16 @@ fn refresh_state(state: &Arc<Mutex<TrayState>>) {
 
 /// Run GitHub Releases check; returns a user-facing summary string.
 fn run_update_check(state: &Arc<Mutex<TrayState>>) -> String {
-    if crate::app::env_offline() {
+    if app::updates::offline() {
         let msg = "Offline (SPANREED_OFFLINE=1) — not checking GitHub.".to_string();
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.update_note = Some("Update: offline".into());
         g.dirty = true;
         return msg;
     }
-    match self_update::check_for_update() {
+    match app::updates::check_for_update() {
         Ok(r) if r.newer => {
-            let how = if let Some(why) = self_update::apply_blocked_reason() {
+            let how = if let Some(why) = app::updates::apply_blocked_reason() {
                 format!("\n\nCannot auto-install: {why}")
             } else {
                 "\n\nUse “Install update…” to apply.".into()
@@ -789,12 +782,13 @@ fn run_update_check(state: &Arc<Mutex<TrayState>>) -> String {
 
 fn usage_card(state: &Arc<Mutex<TrayState>>) -> String {
     let guard = state.lock().unwrap_or_else(|error| error.into_inner());
-    crate::tray_card::present(
-        &guard.outputs,
-        guard.capture_up,
-        guard.status_note.as_deref(),
-        crate::util::now_ms(),
-        &guard.ctx.pricing().table(),
+    app::usage::card_html(
+        &guard.ctx,
+        app::usage::CardInput {
+            outputs: &guard.outputs,
+            capture_up: guard.capture_up,
+            status: guard.status_note.as_deref(),
+        },
     )
 }
 
@@ -819,13 +813,14 @@ fn apply_visual(
         let mut g = state.lock().unwrap_or_else(|e| e.into_inner());
         g.dirty = false;
         let sev = tray_format::severity(g.capture_up, g.max_used);
-        let title = tray_format::indicator_title(g.status_note.as_deref(), crate::app::APP_NAME);
+        let title =
+            tray_format::indicator_title(g.status_note.as_deref(), crate::product::APP_NAME);
         let tip = tray_format::compose_tooltip(
             g.status_note.as_deref(),
             &g.share_line,
             &tray_format::format_tooltip(&g.outputs, g.capture_up, g.update_note.as_deref()),
         );
-        let update_enabled = self_update::can_apply_self_update()
+        let update_enabled = app::updates::can_apply_self_update()
             && g.update_note
                 .as_deref()
                 .map(|n| n.contains("available"))
@@ -897,7 +892,7 @@ impl Drop for InstanceLock {
 }
 
 fn acquire_single_instance() -> Result<InstanceLock, String> {
-    let dir = crate::app::data_dir();
+    let dir = crate::product::data_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir tray lock: {e}"))?;
     let path = dir.join(LOCK_FILE);
     if path.exists() {
@@ -1088,10 +1083,10 @@ fn user_notify(title: &str, body: &str, modal: bool) {
     thread::spawn(move || {
         // Deliver before asking the desktop. The desktop handshake waits, and a
         // successful plugin show can still drop the banner.
-        if let Err(error) = crate::notifications::deliver_user_visible(&title, &body) {
+        if let Err(error) = app::notifications::deliver_user_visible(&title, &body) {
             log::warn!("tray notify failed: {error}");
         }
-        let _handed_to_desktop = crate::desktop_open::hand_off_alert(&title, &body);
+        let _handed_to_desktop = app::window::hand_off_alert(&title, &body);
     });
 }
 
@@ -1118,7 +1113,7 @@ mod tests {
 
     #[test]
     fn capture_log_path_is_under_spanreed_logs() {
-        let p: PathBuf = capture_log::capture_log_path();
+        let p: PathBuf = app::capture::log_path();
         let s = p.to_string_lossy();
         assert!(
             s.contains("spanreed") && s.contains("capture.log"),

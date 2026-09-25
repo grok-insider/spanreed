@@ -9,8 +9,8 @@ use serde::Deserialize;
 
 use super::protocol::{AddonRequest, AddonResponse, dispatch_inproc};
 use super::{Addon, command_owner, compiled_in};
-use crate::app;
 use crate::model::ProviderOutput;
+use crate::product;
 
 const EXEC_TIMEOUT_MS: u64 = 4000;
 
@@ -103,7 +103,7 @@ pub fn list_all() -> Vec<AddonListing> {
 }
 
 fn manifests_dir() -> PathBuf {
-    app::config_dir().join("addons")
+    product::config_dir().join("addons")
 }
 
 fn read_manifests() -> Vec<(PathBuf, Manifest)> {

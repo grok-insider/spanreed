@@ -31,7 +31,7 @@ struct Journal {
     key_hash: String,
 }
 fn root() -> PathBuf {
-    crate::app::data_dir().join("codex-session-move")
+    crate::product::data_dir().join("codex-session-move")
 }
 pub(crate) fn probe_lock() -> Result<FileSet, String> {
     FileSet::acquire_wait(&root())

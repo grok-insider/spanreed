@@ -6,7 +6,7 @@ pub const PROVIDERS: &[&str] = &["grok", "codex", "nous", "openai"];
 
 fn config() -> Result<Value, String> {
     use std::io::Read;
-    match std::fs::File::open(crate::app::config_dir().join("config.json")) {
+    match std::fs::File::open(crate::product::config_dir().join("config.json")) {
         Ok(file) => {
             let mut bytes = Vec::new();
             file.take(1_048_577)
@@ -72,7 +72,7 @@ pub fn set_policy(provider: &str, on: bool, threshold: Option<f64>) -> Result<()
     }
     let bytes = serde_json::to_vec_pretty(&config).map_err(|_| "Invalid settings")?;
     fabrials_runtime::files::atomic_write_private(
-        &crate::app::config_dir().join("config.json"),
+        &crate::product::config_dir().join("config.json"),
         &bytes,
     )
     .map_err(|_| "Could not save settings".into())
@@ -207,8 +207,8 @@ pub fn limits() -> Result<Value, String> {
 }
 
 pub(crate) fn environment_id() -> Result<String, String> {
-    let _guard = fabrials_runtime::file_set::FileSet::acquire_wait(&crate::app::data_dir())?;
-    let path = crate::app::data_dir().join("environment-id");
+    let _guard = fabrials_runtime::file_set::FileSet::acquire_wait(&crate::product::data_dir())?;
+    let path = crate::product::data_dir().join("environment-id");
     let id = match std::fs::read_to_string(&path) {
         Ok(id) if id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) => id,
         Ok(_) => return Err("Invalid local environment identity".into()),

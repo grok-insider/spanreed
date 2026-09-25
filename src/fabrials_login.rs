@@ -75,12 +75,12 @@ fn linked_view() -> Result<LinkView, String> {
 }
 
 fn path() -> PathBuf {
-    crate::app::config_dir().join("fabrials-link.json")
+    crate::product::config_dir().join("fabrials-link.json")
 }
 fn lock() -> Result<Rotation, String> {
-    let environment = crate::app::config_dir().to_string_lossy().into_owned();
+    let environment = crate::product::config_dir().to_string_lossy().into_owned();
     Rotation::acquire(
-        &crate::app::data_dir().join("credential-recovery"),
+        &crate::product::data_dir().join("credential-recovery"),
         Scope {
             environment: &environment,
             owner: "local",

@@ -70,7 +70,7 @@ struct OwnedStatus {
 }
 
 pub fn settings() -> Result<SyncSettings, String> {
-    match std::fs::read(crate::app::config_dir().join("sync-selection.json")) {
+    match std::fs::read(crate::product::config_dir().join("sync-selection.json")) {
         Ok(bytes) => {
             // Legacy selections were not bound to an identity; require a new explicit selection.
             let value: serde_json::Value =
@@ -132,7 +132,7 @@ pub fn save_settings(mut settings: SyncSettings) -> Result<(), String> {
     })
     .map_err(|_| "Invalid sync selection")?;
     fabrials_runtime::files::atomic_write_private(
-        &crate::app::config_dir().join("sync-selection.json"),
+        &crate::product::config_dir().join("sync-selection.json"),
         &bytes,
     )
     .map_err(|_| "Could not save sync selection".into())
@@ -144,7 +144,7 @@ pub fn status() -> SyncStatus {
     status_for(&owner)
 }
 fn status_for(owner: &str) -> SyncStatus {
-    std::fs::read(crate::app::data_dir().join("sync-status.json"))
+    std::fs::read(crate::product::data_dir().join("sync-status.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<OwnedStatus>(&bytes).ok())
         .filter(|saved| saved.owner == owner)
@@ -157,7 +157,7 @@ fn save_status(owner: &str, status: SyncStatus) {
         status,
     }) {
         let _ = fabrials_runtime::files::atomic_write_private(
-            &crate::app::data_dir().join("sync-status.json"),
+            &crate::product::data_dir().join("sync-status.json"),
             &bytes,
         );
     }
@@ -182,7 +182,7 @@ impl crate::ports::AfterProbe for HistorySync {
     fn after_probe(&self, outputs: &[crate::model::ProviderOutput]) {
         use std::sync::atomic::Ordering;
         if !crate::privacy::load().sync_history
-            || crate::app::env_offline()
+            || crate::product::env_offline()
             || !crate::share_session::is_logged_in()
         {
             return;
@@ -253,7 +253,7 @@ fn run_outputs(
     outputs: &[crate::model::ProviderOutput],
     pricing: &crate::pricing::PricingMap,
 ) -> Result<String, String> {
-    if crate::app::env_offline() {
+    if crate::product::env_offline() {
         return Err("Offline mode is enabled".into());
     }
     if !crate::privacy::load().sync_history {
@@ -263,9 +263,9 @@ fn run_outputs(
     if selection.sources.is_empty() {
         return Err("Select the providers and accounts to synchronize in Settings".into());
     }
-    let environment = crate::app::config_dir().to_string_lossy().into_owned();
+    let environment = crate::product::config_dir().to_string_lossy().into_owned();
     let _lock = Rotation::acquire(
-        &crate::app::data_dir().join("credential-recovery"),
+        &crate::product::data_dir().join("credential-recovery"),
         Scope {
             environment: &environment,
             owner: "local",

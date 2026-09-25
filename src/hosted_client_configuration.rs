@@ -211,7 +211,7 @@ impl HostedReviews {
         }
         if let Some(before) = &plan.before {
             fabrials_runtime::files::atomic_write_private(
-                &crate::app::data_dir()
+                &crate::product::data_dir()
                     .join("backups")
                     .join(format!("{}-{}.config", plan.view.client, id)),
                 before.as_bytes(),

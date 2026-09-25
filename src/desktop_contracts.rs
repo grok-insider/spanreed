@@ -4,7 +4,7 @@ use ts_rs::{Config, TS};
 pub fn typescript() -> String {
     let config = Config::new().with_large_int("number");
     let declarations = [
-        crate::sharing_control::PublicationStatus::decl(&config),
+        crate::app::sharing::PublicationStatus::decl(&config),
         crate::sync::SyncSettings::decl(&config),
         crate::codex_session_move::SessionMoveView::decl(&config),
         crate::hosted_client_configuration::HostedClientReview::decl(&config),
@@ -22,14 +22,14 @@ pub fn typescript() -> String {
         crate::local_control::PoolAccount::decl(&config),
         crate::local_control::ProviderPool::decl(&config),
         crate::local_control::RoutingLimits::decl(&config),
-        crate::desktop::RoutingSnapshot::decl(&config),
+        crate::app::routing::RoutingSnapshot::decl(&config),
         fabrials_providers::device_flow::DeviceView::decl(&config),
         fabrials_providers::device_flow::Progress::decl(&config),
         crate::account_login::LoginView::decl(&config),
-        crate::desktop::AccountSummary::decl(&config),
-        crate::desktop::AccountsView::decl(&config),
-        crate::desktop::Detection::decl(&config),
-        crate::desktop::ModelCatalog::decl(&config),
+        crate::app::accounts::AccountSummary::decl(&config),
+        crate::app::accounts::AccountsView::decl(&config),
+        crate::app::usage::Detection::decl(&config),
+        crate::app::accounts::ModelCatalog::decl(&config),
         crate::desktop_runtime::ProxyState::decl(&config),
         crate::desktop_runtime::Status::decl(&config),
         crate::client_configuration::ConfigurationClient::decl(&config),

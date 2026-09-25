@@ -42,7 +42,7 @@ fn validate_base(session: &ShareSession, base: &str) -> Result<(), String> {
 }
 
 fn session_path() -> PathBuf {
-    crate::app::config_dir().join(SESSION_FILE)
+    crate::product::config_dir().join(SESSION_FILE)
 }
 
 pub fn load() -> Option<ShareSession> {
@@ -51,9 +51,9 @@ pub fn load() -> Option<ShareSession> {
 }
 
 fn session_lock() -> Result<Rotation, String> {
-    let environment = crate::app::config_dir().to_string_lossy().into_owned();
+    let environment = crate::product::config_dir().to_string_lossy().into_owned();
     Rotation::acquire(
-        &crate::app::data_dir().join("credential-recovery"),
+        &crate::product::data_dir().join("credential-recovery"),
         Scope {
             environment: &environment,
             owner: "local",

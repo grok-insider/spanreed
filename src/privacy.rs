@@ -3,14 +3,14 @@ use fabrials_types::SharingConsent;
 use std::process::ExitCode;
 
 pub fn load() -> SharingConsent {
-    std::fs::read(crate::app::config_dir().join("sharing.json"))
+    std::fs::read(crate::product::config_dir().join("sharing.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
 }
 
 pub fn save(consent: &SharingConsent) -> Result<(), String> {
-    let directory = crate::app::config_dir();
+    let directory = crate::product::config_dir();
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let bytes = serde_json::to_vec_pretty(consent).map_err(|e| e.to_string())?;
     fabrials_runtime::files::atomic_write_private(&directory.join("sharing.json"), &bytes)

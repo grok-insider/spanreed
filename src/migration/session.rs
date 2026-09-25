@@ -78,7 +78,7 @@ fn saved_at(directory: &Path) -> Result<Vec<SavedSession>, String> {
 }
 
 fn root() -> PathBuf {
-    crate::app::data_dir().join("migration-sessions")
+    crate::product::data_dir().join("migration-sessions")
 }
 fn filename(id: &str) -> Result<String, String> {
     if !(32..=128).contains(&id.len())
@@ -301,7 +301,7 @@ pub fn execute(id: &str, confirmed_revision: &str) -> Result<Vec<String>, String
     let client = Client::new(&record.origin)?;
     Execution {
         files: &files,
-        accounts: &crate::app::data_dir().join("accounts"),
+        accounts: &crate::product::data_dir().join("accounts"),
         client: &client,
         #[cfg(test)]
         exit_before_receipt: false,

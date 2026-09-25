@@ -18,12 +18,12 @@ pub fn log_dir() -> PathBuf {
     #[cfg(windows)]
     {
         creds::data_local_home()
-            .join(crate::app::APP_ID)
+            .join(crate::product::APP_ID)
             .join("logs")
     }
     #[cfg(not(windows))]
     {
-        crate::app::data_dir().join("logs")
+        crate::product::data_dir().join("logs")
     }
 }
 

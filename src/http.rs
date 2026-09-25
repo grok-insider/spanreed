@@ -34,7 +34,7 @@ impl Response {
 /// `{ "proxy": { "enabled": true, "url": "socks5://127.0.0.1:9050" } }`
 fn resolved_proxy() -> Option<reqwest::Proxy> {
     {
-        let path = crate::app::config_dir().join("config.json");
+        let path = crate::product::config_dir().join("config.json");
         let cfg = creds::read_json(&path)?;
         let proxy = cfg.get("proxy")?;
         if !proxy
@@ -64,7 +64,7 @@ fn client_with(insecure: bool) -> reqwest::Result<reqwest::blocking::Client> {
         .connect_timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         // OS tag follows the build target (linux/macos/windows/...).
-        .user_agent(crate::app::user_agent());
+        .user_agent(crate::product::user_agent());
     if let Some(proxy) = resolved_proxy() {
         builder = builder.proxy(proxy);
     }
@@ -180,7 +180,7 @@ impl Request {
             .timeout(Duration::from_secs(120))
             .connect_timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::limited(10))
-            .user_agent(crate::app::user_agent());
+            .user_agent(crate::product::user_agent());
         if let Some(proxy) = resolved_proxy() {
             builder = builder.proxy(proxy);
         }

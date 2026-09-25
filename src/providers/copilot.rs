@@ -38,7 +38,7 @@ const GH_KEYRING_SERVICE: &str = "gh:github.com";
 pub struct Copilot;
 
 fn config_dir() -> PathBuf {
-    crate::app::config_dir()
+    crate::product::config_dir()
 }
 
 fn token_path() -> PathBuf {

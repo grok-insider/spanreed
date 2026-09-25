@@ -21,7 +21,7 @@ pub fn is_offline() -> bool {
 }
 
 fn last_share_path() -> PathBuf {
-    crate::app::config_dir().join(LAST_SHARE_DAY_FILE)
+    crate::product::config_dir().join(LAST_SHARE_DAY_FILE)
 }
 
 /// Last successfully recorded share day (`YYYY-MM-DD`), if any.

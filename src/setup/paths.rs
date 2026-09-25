@@ -9,7 +9,7 @@ pub fn install_dir() -> PathBuf {
     #[cfg(windows)]
     {
         creds::data_local_home()
-            .join(crate::app::APP_ID)
+            .join(crate::product::APP_ID)
             .join("bin")
     }
     #[cfg(not(windows))]
@@ -20,12 +20,12 @@ pub fn install_dir() -> PathBuf {
 
 /// Full path to the installed `spanreed` binary.
 pub fn install_bin_path() -> PathBuf {
-    install_dir().join(crate::app::bin_name())
+    install_dir().join(crate::product::bin_name())
 }
 
 /// Parent data dir for spanreed (`…/spanreed`).
 pub fn data_dir() -> PathBuf {
-    crate::app::data_dir()
+    crate::product::data_dir()
 }
 
 /// Backups for rewritten client configs.

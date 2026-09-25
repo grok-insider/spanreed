@@ -12,7 +12,7 @@ pub struct Settings {
 
 pub fn settings() -> Result<Settings, String> {
     use std::io::Read;
-    let file = match std::fs::File::open(crate::app::config_dir().join("notifications.json")) {
+    let file = match std::fs::File::open(crate::product::config_dir().join("notifications.json")) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Settings::default());
@@ -34,7 +34,7 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
     })
     .map_err(|_| "Invalid notification settings")?;
     fabrials_runtime::files::atomic_write_private(
-        &crate::app::config_dir().join("notifications.json"),
+        &crate::product::config_dir().join("notifications.json"),
         &bytes,
     )
     .map_err(|_| "Could not save notification settings".into())
@@ -79,7 +79,7 @@ pub fn deliver_outputs(
         return Ok(0);
     }
     let store = fabrials_runtime::notifications::DeliveryStore::open(
-        &crate::app::data_dir().join("runtime.sqlite3"),
+        &crate::product::data_dir().join("runtime.sqlite3"),
     )?;
     let now = crate::util::now_ms();
     let mut delivered = 0;

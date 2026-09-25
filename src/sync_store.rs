@@ -10,7 +10,7 @@ impl Store {
     pub fn open() -> Result<Self, String> {
         crate::grok_ledger::ensure_store()?;
         crate::history::local_samples(None, 1)?;
-        let connection = Connection::open(crate::app::data_dir().join("runtime.sqlite3"))
+        let connection = Connection::open(crate::product::data_dir().join("runtime.sqlite3"))
             .map_err(|e| e.to_string())?;
         let mut store = Self::from_connection(connection)?;
         store.initialize_scan()?;

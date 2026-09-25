@@ -23,7 +23,7 @@ pub use fabrials_runtime::history::{HistorySample, prepare_sample};
 
 /// Default history path under XDG data.
 pub fn history_path() -> PathBuf {
-    crate::app::data_dir().join("runtime.sqlite3")
+    crate::product::data_dir().join("runtime.sqlite3")
 }
 
 fn sqlite_store(path: &Path) -> Result<fabrials_runtime::history::HistoryStore, String> {

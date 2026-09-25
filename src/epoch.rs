@@ -80,7 +80,7 @@ fn parse_ms_loose(s: &str) -> Option<i64> {
 }
 
 pub fn reset_events_path() -> PathBuf {
-    crate::app::data_dir().join("reset-events.jsonl")
+    crate::product::data_dir().join("reset-events.jsonl")
 }
 
 pub fn append_event(ev: &ResetEvent) -> Result<(), String> {

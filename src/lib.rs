@@ -25,7 +25,7 @@ mod activity;
 mod addons;
 pub mod agent;
 mod api;
-mod app;
+pub mod app;
 mod capture;
 mod capture_log;
 mod capture_watchdog;
@@ -35,7 +35,6 @@ pub mod codex_session_move;
 pub mod context;
 mod cost;
 mod creds;
-pub mod desktop;
 pub mod desktop_open;
 mod drivers;
 mod epoch;
@@ -59,6 +58,7 @@ mod pricing;
 pub mod privacy;
 mod probe;
 mod proc;
+mod product;
 mod profiles;
 pub mod providers;
 pub mod remote_workspace;
@@ -72,7 +72,6 @@ mod share;
 mod share_economics;
 mod share_session;
 mod share_state;
-pub mod sharing_control;
 pub mod sync;
 mod sync_store;
 mod tray_card;
@@ -141,7 +140,7 @@ pub fn run_cli() -> ExitCode {
         "privacy" => privacy::cmd(rest),
         "profile" => profiles::cmd(rest),
         "widget" => profiles::widget(&ctx, rest),
-        "gui" => match crate::desktop_open::request("overview") {
+        "gui" => match app::window::open("overview") {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("{error}");
@@ -281,17 +280,8 @@ fn cmd_auth(args: &[String]) -> ExitCode {
 }
 
 fn cmd_list() -> ExitCode {
-    for p in providers::all() {
-        let detected = if p.detect() { "detected" } else { "—" };
-        println!("{:<14} {:<12} {}", p.id(), detected, p.name());
-    }
-    for acc in accounts::list_provider("grok") {
-        let flag = if acc.active { "active" } else { "account" };
-        println!("{:<14} {:<12} Grok ({})", acc.id, flag, acc.alias);
-    }
-    for (id, name, detected) in addons::extra_provider_ids() {
-        let flag = if detected { "detected" } else { "—" };
-        println!("{id:<14} {flag:<12} {name} (addon)");
+    for row in app::usage::list() {
+        println!("{:<14} {:<12} {}", row.id, row.state, row.name);
     }
     ExitCode::SUCCESS
 }
@@ -313,30 +303,17 @@ fn cmd_probe(ctx: &context::AppContext, args: &[String]) -> ExitCode {
     let view = parse_probe_view(args);
     let id = args.iter().find(|a| !a.starts_with("--"));
 
-    let outputs = match id {
-        Some(id) => match ctx.probe_one(id) {
-            Some(out) => vec![out],
-            None => {
-                eprintln!("unknown provider: {id}");
-                return ExitCode::FAILURE;
-            }
-        },
-        None => {
-            if force {
-                ctx.probe_all()
-            } else {
-                ctx.probe_detected()
-            }
-        }
+    let Some(outputs) = app::usage::probe(ctx, id.map(String::as_str), force) else {
+        eprintln!(
+            "unknown provider: {}",
+            id.map(String::as_str).unwrap_or_default()
+        );
+        return ExitCode::FAILURE;
     };
 
     if outputs.is_empty() {
         println!("No providers detected. Try `spanreed list` or `spanreed probe <id> --force`.");
         return ExitCode::SUCCESS;
-    }
-
-    if history::should_record_on_probe() {
-        history::record(&outputs);
     }
 
     let text = if view.all {
@@ -358,7 +335,7 @@ fn cmd_history(args: &[String]) -> ExitCode {
         .iter()
         .find(|a| !a.starts_with("--"))
         .map(String::as_str);
-    let samples = match history::local_samples(provider, 100_000) {
+    let samples = match app::usage::samples(provider, 100_000) {
         Ok(samples) => samples,
         Err(error) => {
             eprintln!("history: {error}");
@@ -371,14 +348,14 @@ fn cmd_history(args: &[String]) -> ExitCode {
 
 fn cmd_waybar(ctx: &context::AppContext) -> ExitCode {
     // Prefer the running daemon's cached data (instant); fall back to probing.
-    let outputs = ctx.cached_or_probe();
+    let outputs = app::usage::cached_or_probe(ctx);
     let json = output::waybar(&outputs);
     println!("{json}");
     ExitCode::SUCCESS
 }
 
 fn cmd_json(ctx: &context::AppContext) -> ExitCode {
-    let outputs = ctx.probe_detected();
+    let outputs = app::usage::detected(ctx);
     match serde_json::to_string_pretty(&outputs) {
         Ok(s) => {
             println!("{s}");
@@ -420,7 +397,7 @@ fn cmd_serve(ctx: &context::AppContext, args: &[String]) -> ExitCode {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(300);
 
-    match api::serve(interval, ctx.api_services()) {
+    match app::local_api::serve(ctx, interval) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("server error: {e}");

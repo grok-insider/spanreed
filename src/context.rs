@@ -21,9 +21,9 @@ pub struct AppPaths {
 impl AppPaths {
     pub fn from_env() -> Self {
         Self {
-            config: crate::app::config_dir(),
-            data: crate::app::data_dir(),
-            cache: crate::app::cache_dir(),
+            config: crate::product::config_dir(),
+            data: crate::product::data_dir(),
+            cache: crate::product::cache_dir(),
         }
     }
 }

@@ -511,7 +511,7 @@ pub fn refresh_snapshot(acc: &accounts::Account) {
 }
 
 fn autosteer_cfg() -> (bool, f64) {
-    let path = crate::app::config_dir().join("config.json");
+    let path = crate::product::config_dir().join("config.json");
     let cfg = creds::read_json(&path);
     let g = cfg
         .as_ref()
@@ -529,7 +529,7 @@ fn autosteer_cfg() -> (bool, f64) {
 }
 
 pub fn autosteer_set(on: bool) -> Result<String, String> {
-    let path = crate::app::config_dir().join("config.json");
+    let path = crate::product::config_dir().join("config.json");
     let mut root = creds::read_json(&path).unwrap_or_else(|| serde_json::json!({}));
     if !root.is_object() {
         root = serde_json::json!({});

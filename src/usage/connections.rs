@@ -12,7 +12,7 @@ pub struct Connection {
     pub credential: String,
 }
 fn path() -> std::path::PathBuf {
-    crate::app::config_dir().join("usage-connections.json")
+    crate::product::config_dir().join("usage-connections.json")
 }
 fn load() -> Result<BTreeMap<String, Connection>, String> {
     match std::fs::read(path()) {
@@ -22,9 +22,9 @@ fn load() -> Result<BTreeMap<String, Connection>, String> {
     }
 }
 fn connection_lock() -> Result<fabrials_runtime::credential_journal::Rotation, String> {
-    let environment = crate::app::config_dir().to_string_lossy().into_owned();
+    let environment = crate::product::config_dir().to_string_lossy().into_owned();
     fabrials_runtime::credential_journal::Rotation::acquire(
-        &crate::app::data_dir().join("credential-recovery"),
+        &crate::product::data_dir().join("credential-recovery"),
         fabrials_runtime::credential_journal::Scope {
             environment: &environment,
             owner: "local",

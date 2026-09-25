@@ -11,7 +11,7 @@ pub struct UsageSettings {
 }
 
 pub fn settings() -> Result<UsageSettings, String> {
-    let path = crate::app::config_dir().join("usage-sources.json");
+    let path = crate::product::config_dir().join("usage-sources.json");
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|e| format!("Invalid usage source settings: {e}")),
@@ -38,7 +38,7 @@ pub fn save(value: &UsageSettings) -> Result<(), String> {
     }
     let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
     fabrials_runtime::files::atomic_write_private(
-        &crate::app::config_dir().join("usage-sources.json"),
+        &crate::product::config_dir().join("usage-sources.json"),
         &bytes,
     )
     .map_err(|e| e.to_string())
@@ -49,7 +49,7 @@ pub fn roots(client: &ClientDefinition, settings: &UsageSettings) -> Vec<PathBuf
     let mut paths = Vec::new();
     let base = match client.root.as_str() {
         "XdgData" => crate::creds::data_home(),
-        "Config" => crate::app::data_dir().join("usage-cache"),
+        "Config" => crate::product::data_dir().join("usage-cache"),
         "AppData" => crate::creds::config_home(),
         "EnvVar" => client
             .environment
@@ -91,7 +91,7 @@ pub fn roots(client: &ClientDefinition, settings: &UsageSettings) -> Vec<PathBuf
                 paths.push(crate::creds::config_home().join("codex/sessions"));
                 paths.push(crate::creds::config_home().join("codex/archived_sessions"));
             }
-            paths.push(crate::app::data_dir().join("headless/codex"));
+            paths.push(crate::product::data_dir().join("headless/codex"));
         }
         "claude" => {
             paths.push(base.join("transcripts"));
@@ -124,7 +124,7 @@ pub fn roots(client: &ClientDefinition, settings: &UsageSettings) -> Vec<PathBuf
         }
         "copilot" => paths.push(crate::creds::config_home().join("Code/User/workspaceStorage")),
         "opencode" => paths.push(crate::creds::data_home().join("opencode/opencode.db")),
-        "cursor" => paths.push(crate::app::data_dir().join("usage-cache/cursor")),
+        "cursor" => paths.push(crate::product::data_dir().join("usage-cache/cursor")),
         "grok" => paths.push(base.join("logs/unified.jsonl")),
         "kiro" => paths.push(crate::creds::data_home().join("amazon-q/data.sqlite3")),
         "devin-desktop" => paths.push(crate::creds::config_home().join("Devin/User/acp-events")),

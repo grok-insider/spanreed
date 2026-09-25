@@ -74,9 +74,9 @@ pub fn grok(alias: Option<&str>) -> Result<Option<String>, String> {
             Err("Grok credential missing".into())
         };
     }
-    let environment = crate::app::data_dir().to_string_lossy().into_owned();
+    let environment = crate::product::data_dir().to_string_lossy().into_owned();
     let journal = Rotation::acquire(
-        &crate::app::data_dir().join("credential-recovery"),
+        &crate::product::data_dir().join("credential-recovery"),
         Scope {
             environment: &environment,
             owner: "local",

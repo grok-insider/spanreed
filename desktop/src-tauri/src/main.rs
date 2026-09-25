@@ -1,406 +1,99 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use tauri::Manager;
+mod commands;
 mod notifications;
-
-#[tauri::command]
-async fn forget_migration(id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::forget(&id)).await.map_err(|_| "Migration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn begin_migration_authorization(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String, source_id: String) -> Result<spanreed::account_login::LoginView, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::begin_authorization(ctx.logins(), &id, &source_id)).await.map_err(|_| "Authorization worker stopped".to_string())?
-}
-#[tauri::command]
-async fn migration_authorizations(id: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::authorizations(&id)).await.map_err(|_| "Migration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn preview_opencode_remove(ctx: tauri::State<'_, spanreed::context::AppContext>, provider:String,alias:String)->Result<spanreed::client_configuration::Preview,String>{
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.reviews().preview_opencode_remove(ctx.proxy(),&provider,&alias)).await.map_err(|_| "Configuration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn preview_opencode_update(ctx: tauri::State<'_, spanreed::context::AppContext>, provider: String, alias: String, model: String) -> Result<spanreed::client_configuration::Preview, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.reviews().preview_opencode_change(ctx.proxy(),&provider,&alias,&model,true)).await.map_err(|_| "Configuration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn saved_migrations() -> Result<Vec<spanreed::migration::session::SavedSession>, String> {
-    tauri::async_runtime::spawn_blocking(spanreed::migration::session::saved).await.map_err(|_| "Migration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn begin_inactive_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, provider: String, alias: String) -> Result<spanreed::account_login::LoginView, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.logins().begin_inactive(&provider, alias)).await.map_err(|_| "Authorization worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn migration_inventory(id: String) -> Result<Vec<spanreed::migration::MigrationCandidate>, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::inventory(&id)).await.map_err(|_| "Migration worker stopped".to_string())?
-}
-#[tauri::command]
-async fn propose_migration(id: String, selection: Vec<spanreed::migration::MigrationSelection>) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::propose(&id, &selection).and_then(|view| serde_json::to_value(view).map_err(|_| "Invalid migration view".into()))).await.map_err(|_| "Migration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn execute_migration(id: String, revision: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::execute(&id, &revision)).await.map_err(|_| "Migration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn pair_migration(origin: String, id: String, invitation: String) -> Result<serde_json::Value,String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::pair(&origin,&id,&invitation).and_then(|view|serde_json::to_value(view).map_err(|_|"Invalid migration view".into()))).await.map_err(|_|"Migration worker stopped".to_string())?
-}
-#[tauri::command]
-async fn migration_status(id: String) -> Result<serde_json::Value,String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::status(&id).and_then(|view|serde_json::to_value(view).map_err(|_|"Invalid migration view".into()))).await.map_err(|_|"Migration worker stopped".to_string())?
-}
-#[tauri::command]
-async fn cancel_migration(id: String) -> Result<(),String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::migration::session::cancel(&id)).await.map_err(|_|"Migration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn migration_candidates() -> Result<Vec<spanreed::migration::MigrationCandidate>, String> {
-    tauri::async_runtime::spawn_blocking(spanreed::migration::candidates).await.map_err(|_| "Migration inventory worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn preview_grok_configuration(ctx: tauri::State<'_, spanreed::context::AppContext>, alias: String, model: Option<String>) -> Result<spanreed::client_configuration::Preview, String> {
-    let model = model.filter(|value| !value.is_empty());
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.reviews().preview_grok_with_model(ctx.proxy(), &alias, model.as_deref())).await.map_err(|_| "Configuration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn preview_opencode_configuration(ctx: tauri::State<'_, spanreed::context::AppContext>, provider: String, alias: String, model: String) -> Result<spanreed::client_configuration::Preview, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.reviews().preview_opencode(ctx.proxy(), &provider, &alias, &model)).await.map_err(|_| "Configuration worker stopped".to_string())?
-}
-#[tauri::command]
-async fn apply_client_configuration(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<Option<String>, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.reviews().apply_configuration(ctx.proxy(), &id)).await.map_err(|_| "Configuration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn local_proxy_status(ctx: tauri::State<'_, spanreed::context::AppContext>) -> Result<spanreed::desktop_runtime::Status, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.proxy().status()).await.map_err(|_| "Proxy control worker stopped".to_string())?
-}
-#[tauri::command]
-async fn start_local_proxy(ctx: tauri::State<'_, spanreed::context::AppContext>, bind: String) -> Result<spanreed::desktop_runtime::Status, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.proxy().start(&bind)).await.map_err(|_| "Proxy control worker stopped".to_string())?
-}
-#[tauri::command]
-async fn stop_local_proxy(ctx: tauri::State<'_, spanreed::context::AppContext>) -> Result<spanreed::desktop_runtime::Status, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.proxy().stop()).await.map_err(|_| "Proxy control worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn models(account_id: String) -> Result<spanreed::desktop::ModelCatalog, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::desktop::models(&account_id))
-        .await.map_err(|_| "Model discovery worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn reauthorize_account(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<serde_json::Value, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.logins().reauthorize(&id)
-        .and_then(|view| serde_json::to_value(view).map_err(|_| "Invalid authorization view".into())))
-        .await.map_err(|_| "Authorization worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn add_api_key(provider: String, alias: String, key: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::account_keys::add(&provider, &alias, &key).map(|_| ()))
-        .await.map_err(|_| "Account worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn replace_api_key(id: String, generation: Option<String>, key: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::account_keys::replace(&id, generation.as_deref(), &key))
-        .await.map_err(|_| "Account worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn remove_account(id: String, generation: Option<String>) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::accounts::remove_if_current(&id, generation.as_deref()))
-        .await.map_err(|_| "Account worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn hops() -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(|| spanreed::desktop::hops()
-        .and_then(|rows| serde_json::to_value(rows).map_err(|_| "Invalid request history".into())))
-        .await.map_err(|_| "Request history worker stopped".to_string())?
-}
-
-
-#[tauri::command]
-async fn history() -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(|| spanreed::desktop::history()
-        .and_then(|rows| serde_json::to_value(rows).map_err(|_| "Invalid history".into())))
-        .await.map_err(|_| "History worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn begin_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, provider: String, alias: String) -> Result<serde_json::Value, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.logins().begin(&provider, alias)
-        .and_then(|view| serde_json::to_value(view).map_err(|_| "Invalid authorization view".into())))
-        .await.map_err(|_| "Authorization worker stopped".to_string())?
-}
-#[tauri::command]
-async fn poll_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<serde_json::Value, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.logins().poll(&id)
-        .and_then(|progress| serde_json::to_value(progress).map_err(|_| "Invalid authorization state".into())))
-        .await.map_err(|_| "Authorization worker stopped".to_string())?
-}
-#[tauri::command]
-async fn cancel_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<(), String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ctx.logins().cancel(&id))
-        .await.map_err(|_| "Authorization worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn routing() -> Result<spanreed::desktop::RoutingSnapshot, String> {
-    tauri::async_runtime::spawn_blocking(spanreed::desktop::routing)
-        .await.map_err(|_| "Routing worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn set_routing(provider: String, on: bool, threshold: f64) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::desktop::set_routing(&provider, on, threshold))
-        .await.map_err(|_| "Routing worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn disconnect_usage_source(client:String)->Result<(),String> {
-    tauri::async_runtime::spawn_blocking(move ||spanreed::usage::connections::disconnect(&client)).await.map_err(|_|"Usage worker stopped".to_string())?
-}
-#[tauri::command]
-async fn connect_usage_source(connection:spanreed::usage::connections::Connection)->Result<(),String> {
-    tauri::async_runtime::spawn_blocking(move ||spanreed::usage::connections::save(connection)).await.map_err(|_|"Usage worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn usage_report(ctx: tauri::State<'_, spanreed::context::AppContext>, filter: fabrials_types::consumption::UsageFilter, force: bool) -> Result<serde_json::Value, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        serde_json::to_value(spanreed::usage::report(filter,force,&ctx.pricing().table())?).map_err(|e|e.to_string())
-    }).await.map_err(|_|"Usage worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn usage_sources() -> Result<serde_json::Value,String> {
-    tauri::async_runtime::spawn_blocking(|| Ok(serde_json::json!({
-        "clients":fabrials_providers_catalog(), "settings":spanreed::usage::discovery::settings()?, "connections":spanreed::usage::connections::status()?
-    }))).await.map_err(|_|"Usage worker stopped".to_string())?
-}
-
-fn fabrials_providers_catalog() -> serde_json::Value {
-    spanreed::usage::catalog_view()
-}
-
-#[tauri::command]
-async fn save_usage_sources(settings: spanreed::usage::discovery::UsageSettings) -> Result<(),String> {
-    tauri::async_runtime::spawn_blocking(move ||spanreed::usage::discovery::save(&settings))
-        .await.map_err(|_|"Usage worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn snapshot(ctx: tauri::State<'_, spanreed::context::AppContext>, force: bool) -> Result<serde_json::Value, String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || serde_json::to_value(spanreed::desktop::snapshot(&ctx, force)).map_err(|_| "Could not encode usage".into()))
-        .await.map_err(|_| "Usage worker stopped".to_string())?
-}
-#[tauri::command]
-fn detection() -> Vec<spanreed::desktop::Detection> { spanreed::desktop::detection() }
-#[tauri::command]
-async fn accounts() -> Result<spanreed::desktop::AccountsView, String> {
-    tauri::async_runtime::spawn_blocking(spanreed::desktop::accounts)
-        .await.map_err(|_| "Account worker stopped".to_string())?
-}
-#[tauri::command]
-fn privacy() -> fabrials_types::SharingConsent { spanreed::privacy::load() }
-#[tauri::command]
-fn set_privacy(consent: fabrials_types::SharingConsent) -> Result<(), String> { spanreed::privacy::save(&consent) }
-#[tauri::command]
-async fn activate_account(id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::accounts::set_active(&id).map(|_| ()))
-        .await.map_err(|_| "Account worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn private_history(before: Option<i64>) -> Result<serde_json::Value,String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::sync::recent(before).and_then(|page|serde_json::to_value(page).map_err(|_|"Could not encode private history".into()))).await.map_err(|_|"History worker stopped".to_string())?
-}
-#[tauri::command]
-async fn sync_settings() -> Result<spanreed::sync::SyncSettings,String> {
-    tauri::async_runtime::spawn_blocking(spanreed::sync::settings).await.map_err(|_|"Sync worker stopped".to_string())?
-}
-#[tauri::command]
-async fn save_sync_settings(settings: spanreed::sync::SyncSettings) -> Result<(),String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::sync::save_settings(settings)).await.map_err(|_|"Sync worker stopped".to_string())?
-}
-#[tauri::command]
-fn sync_status() -> spanreed::sync::SyncStatus {spanreed::sync::status()}
-#[tauri::command]
-async fn link_codex_source()->Result<String,String> {
-    tauri::async_runtime::spawn_blocking(spanreed::sync::link_codex).await.map_err(|_|"Identity matching interrupted".to_string())?
-}
-#[tauri::command]
-async fn sync_now(ctx: tauri::State<'_, spanreed::context::AppContext>) -> Result<String,String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || spanreed::sync::run(&ctx.pricing().table())).await.map_err(|_|"Sync worker stopped".to_string())?
-}
-#[tauri::command]
-async fn publication_status() -> Result<spanreed::sharing_control::PublicationStatus,String> {
-    tauri::async_runtime::spawn_blocking(spanreed::sharing_control::status).await.map_err(|_|"Publication worker stopped".to_string())
-}
-#[tauri::command]
-async fn publish_metrics(ctx: tauri::State<'_, spanreed::context::AppContext>) -> Result<String,String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || spanreed::sharing_control::publish(&ctx)).await.map_err(|_|"Publication worker stopped".to_string())?
-}
-#[tauri::command]
-async fn set_publication_schedule(enabled: bool) -> Result<String,String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::sharing_control::schedule(enabled)).await.map_err(|_|"Publication worker stopped".to_string())?
-}
-
-#[tauri::command]
-fn remote_open_authorization(url: String) -> Result<(), String> {
-    open_url(&spanreed::remote_workspace::verification_url(&url)?)
-}
-
-#[tauri::command]
-async fn preview_hosted_client(ctx: tauri::State<'_, spanreed::context::AppContext>, owner:String,client:String,alias:String,key:String,model:String)->Result<spanreed::hosted_client_configuration::HostedClientReview,String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move||ctx.hosted_reviews().preview(&owner,&client,&alias,&key,&model)).await.map_err(|_|"Configuration worker stopped".to_string())?
-}
-#[tauri::command]
-async fn apply_hosted_client(ctx: tauri::State<'_, spanreed::context::AppContext>, owner:String,id:String)->Result<String,String> {
-    let ctx = ctx.inner().clone();
-    tauri::async_runtime::spawn_blocking(move||ctx.hosted_reviews().apply(&owner,&id)).await.map_err(|_|"Configuration worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn codex_session_move(owner:String, operation:String, id:Option<String>, alias:Option<String>)->Result<serde_json::Value,String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        use spanreed::codex_session_move as session;
-        let view=match operation.as_str() {
-            "current"=>return serde_json::to_value(session::current(&owner)?).map_err(|_|"Invalid session view".into()),
-            "preview"=>session::preview(&owner,alias.as_deref().ok_or("Choose an account name")?)?,
-            "apply"=>session::apply(&owner,id.as_deref().ok_or("Select a saved session move")?)?,
-            "recover"|"cancel"=>session::recover(&owner,id.as_deref().ok_or("Select a saved session move")?,operation=="cancel")?,
-            "dismiss"=>{session::dismiss(&owner,id.as_deref().ok_or("Select a saved session move")?)?;return Ok(serde_json::Value::Null);},
-            _=>return Err("Unknown session move operation".into()),
-        };
-        serde_json::to_value(view).map_err(|_|"Invalid session view".into())
-    }).await.map_err(|_|"Session move worker stopped; reopen its recovery view".to_string())?
-}
-
-#[tauri::command]
-async fn remote_request(operation: spanreed::remote_workspace::RemoteOperation, body: serde_json::Value, days: Option<u32>, owner: Option<String>) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::remote_workspace::request(operation, body, days, owner.as_deref()))
-        .await.map_err(|_| "Remote workspace worker stopped".to_string())?
-}
-
-#[tauri::command]
-async fn fabrials_status() -> Result<spanreed::fabrials_login::LinkView, String> {
-    tauri::async_runtime::spawn_blocking(spanreed::fabrials_login::status)
-        .await.map_err(|_| "Fabrials connection worker stopped".to_string())?
-}
-#[tauri::command]
-async fn fabrials_begin() -> Result<spanreed::fabrials_login::LinkView, String> {
-    tauri::async_runtime::spawn_blocking(spanreed::fabrials_login::begin)
-        .await.map_err(|_| "Fabrials connection worker stopped".to_string())?
-}
-#[tauri::command]
-async fn fabrials_disconnect() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(spanreed::fabrials_login::disconnect)
-        .await.map_err(|_| "Fabrials connection worker stopped".to_string())?
-}
-#[tauri::command]
-async fn fabrials_poll(id: String) -> Result<spanreed::fabrials_login::LinkView, String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::fabrials_login::poll(&id))
-        .await.map_err(|_| "Fabrials connection worker stopped".to_string())?
-}
-#[tauri::command]
-async fn fabrials_cancel(id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || spanreed::fabrials_login::cancel(&id))
-        .await.map_err(|_| "Fabrials connection worker stopped".to_string())?
-}
-#[tauri::command]
-async fn fabrials_open(id: String) -> Result<(), String> {
-    let url = tauri::async_runtime::spawn_blocking(move || spanreed::fabrials_login::verification_url(&id))
-        .await.map_err(|_| "Fabrials connection worker stopped".to_string())??;
-    open_url(&url)
-}
-
-#[tauri::command]
-fn open_hosted() -> Result<(), String> {
-    open_url("https://ai.fabrials.com")
-}
-
-#[tauri::command]
-fn open_device_login(ctx: tauri::State<'_, spanreed::context::AppContext>, id: String) -> Result<(), String> {
-    open_url(&ctx.logins().verification_url(&id)?)
-}
-
-#[tauri::command]
-fn take_desktop_route(app: tauri::AppHandle) -> Option<String> {
-    let href = spanreed::desktop_open::take()?;
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-    Some(href)
-}
-
-fn open_url(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    let result = std::process::Command::new("xdg-open").arg(url).spawn();
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
-    result.map(|_| ()).map_err(|_| "Could not open the browser".into())
-}
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .manage(spanreed::context::AppContext::new())
-        .invoke_handler(tauri::generate_handler![take_desktop_route, disconnect_usage_source, connect_usage_source, usage_report, usage_sources, save_usage_sources, preview_hosted_client, apply_hosted_client, codex_session_move, private_history, sync_settings, save_sync_settings, sync_status, sync_now, link_codex_source, publication_status, publish_metrics, set_publication_schedule, remote_open_authorization, remote_request, fabrials_status, fabrials_begin, fabrials_poll, fabrials_cancel, fabrials_disconnect, fabrials_open, forget_migration, begin_migration_authorization, migration_authorizations, preview_opencode_remove, preview_opencode_update, saved_migrations, begin_inactive_device_login, migration_inventory, propose_migration, execute_migration, pair_migration, migration_status, cancel_migration, migration_candidates, preview_grok_configuration, preview_opencode_configuration, apply_client_configuration, replace_api_key, remove_account, local_proxy_status, start_local_proxy, stop_local_proxy, notifications::test_reset_notification, notifications::notification_settings, notifications::set_reset_notifications, notifications::check_reset_notifications, models, reauthorize_account, add_api_key, hops, history, snapshot, detection, accounts, privacy, set_privacy, activate_account, open_hosted, routing, set_routing, begin_device_login, poll_device_login, cancel_device_login, open_device_login])
+        .manage(spanreed::app::AppContext::new())
+        .invoke_handler(tauri::generate_handler![
+            commands::take_desktop_route,
+            commands::disconnect_usage_source,
+            commands::connect_usage_source,
+            commands::usage_report,
+            commands::usage_sources,
+            commands::save_usage_sources,
+            commands::preview_hosted_client,
+            commands::apply_hosted_client,
+            commands::codex_session_move,
+            commands::private_history,
+            commands::sync_settings,
+            commands::save_sync_settings,
+            commands::sync_status,
+            commands::sync_now,
+            commands::link_codex_source,
+            commands::publication_status,
+            commands::publish_metrics,
+            commands::set_publication_schedule,
+            commands::remote_open_authorization,
+            commands::remote_request,
+            commands::fabrials_status,
+            commands::fabrials_begin,
+            commands::fabrials_poll,
+            commands::fabrials_cancel,
+            commands::fabrials_disconnect,
+            commands::fabrials_open,
+            commands::forget_migration,
+            commands::begin_migration_authorization,
+            commands::migration_authorizations,
+            commands::preview_opencode_remove,
+            commands::preview_opencode_update,
+            commands::saved_migrations,
+            commands::begin_inactive_device_login,
+            commands::migration_inventory,
+            commands::propose_migration,
+            commands::execute_migration,
+            commands::pair_migration,
+            commands::migration_status,
+            commands::cancel_migration,
+            commands::migration_candidates,
+            commands::preview_grok_configuration,
+            commands::preview_opencode_configuration,
+            commands::apply_client_configuration,
+            commands::replace_api_key,
+            commands::remove_account,
+            commands::local_proxy_status,
+            commands::start_local_proxy,
+            commands::stop_local_proxy,
+            notifications::test_reset_notification,
+            notifications::notification_settings,
+            notifications::set_reset_notifications,
+            notifications::check_reset_notifications,
+            commands::models,
+            commands::reauthorize_account,
+            commands::add_api_key,
+            commands::hops,
+            commands::history,
+            commands::snapshot,
+            commands::detection,
+            commands::accounts,
+            commands::privacy,
+            commands::set_privacy,
+            commands::activate_account,
+            commands::open_hosted,
+            commands::routing,
+            commands::set_routing,
+            commands::begin_device_login,
+            commands::poll_device_login,
+            commands::cancel_device_login,
+            commands::open_device_login,
+        ])
         .setup(|app| {
-            spanreed::desktop_open::mark_running();
+            spanreed::app::window::mark_running();
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut applied = String::new();
                 loop {
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if let Some(href) = spanreed::desktop_open::peek() {
+                if let Some(href) = spanreed::app::window::peek() {
                     use tauri::Manager;
                     if let Some(window) = handle.get_webview_window("main") {
                         let _ = window.unminimize();
                         let _ = window.show();
                         let _ = window.set_focus();
                         if applied != href {
-                            if let Some(script) = spanreed::desktop_open::route_location_script(&href) {
+                            if let Some(script) = spanreed::app::window::route_location_script(&href) {
                                 if window.eval(&script).is_ok() {
                                     applied.clone_from(&href);
                                 }
@@ -410,7 +103,7 @@ fn main() {
                 } else {
                     applied.clear();
                 }
-                if let Some(alert) = spanreed::desktop_open::take_alert() {
+                if let Some(alert) = spanreed::app::window::take_alert() {
                     use tauri::plugin::PermissionState;
                     use tauri_plugin_notification::NotificationExt;
                     let permitted = handle
@@ -427,7 +120,7 @@ fn main() {
                             .show()
                             .is_ok();
                     if shown {
-                        spanreed::desktop_open::ack_alert(&alert.id);
+                        spanreed::app::window::ack_alert(&alert.id);
                     }
                 }
                 }));
@@ -450,7 +143,7 @@ fn main() {
                         }
                         _ => return,
                     };
-                    let _ = spanreed::desktop_open::request(page);
+                    let _ = spanreed::app::window::open(page);
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.unminimize();
                         let _ = window.show();
@@ -469,7 +162,7 @@ fn main() {
         .expect("could not start Spanreed desktop")
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {
-                spanreed::desktop_open::unmark_running();
+                spanreed::app::window::unmark_running();
             }
         });
 }

@@ -104,7 +104,7 @@ pub fn cmd(args: &[String]) -> ExitCode {
 
 fn run_setup(flags: SetupFlags) -> ExitCode {
     let det = detect::scan();
-    println!("{} setup\n", crate::app::APP_NAME);
+    println!("{} setup\n", crate::product::APP_NAME);
 
     let (
         do_install,
@@ -442,7 +442,7 @@ fn run_uninstall(flags: SetupFlags) -> ExitCode {
             "grok-usage.jsonl",
             "usage-history.jsonl",
         ] {
-            let ledger = crate::app::data_dir().join(name);
+            let ledger = crate::product::data_dir().join(name);
             if flags.dry_run {
                 println!("  Usage:    would remove {}", ledger.display());
             } else if ledger.exists()

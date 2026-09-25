@@ -19,7 +19,7 @@ use crate::creds;
 use crate::http;
 use crate::setup;
 
-const DEFAULT_REPO: &str = crate::app::GITHUB_REPO;
+const DEFAULT_REPO: &str = crate::product::GITHUB_REPO;
 
 #[derive(Debug, Clone)]
 pub struct CheckResult {
@@ -148,7 +148,7 @@ fn print_help() {
 }
 
 fn offline() -> bool {
-    crate::app::env_offline()
+    crate::product::env_offline()
 }
 
 fn repo() -> String {

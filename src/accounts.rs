@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::app;
+use crate::product;
 use crate::secret;
 
 const KEYRING_PREFIX: &str = "spanreed:account";
@@ -105,7 +105,7 @@ pub fn is_generic_alias(alias: &str) -> bool {
 }
 
 fn dir() -> PathBuf {
-    app::data_dir().join("accounts")
+    product::data_dir().join("accounts")
 }
 
 fn index_path() -> PathBuf {
@@ -700,9 +700,9 @@ fn rotation(
     alias: &str,
 ) -> Result<fabrials_runtime::credential_journal::Rotation, String> {
     fabrials_runtime::credential_journal::Rotation::acquire(
-        &app::data_dir().join("credential-recovery"),
+        &product::data_dir().join("credential-recovery"),
         fabrials_runtime::credential_journal::Scope {
-            environment: &app::data_dir().to_string_lossy(),
+            environment: &product::data_dir().to_string_lossy(),
             owner: "local",
             provider,
             alias,
@@ -716,7 +716,7 @@ fn file_secret_path(provider: &str, alias: &str) -> PathBuf {
 
 /// One-shot: lift `grok-accounts/` vault from the prototype into the host registry.
 fn migrate_legacy_grok_vault(vault: &Vault) -> Result<(), String> {
-    let legacy = app::data_dir().join("grok-accounts");
+    let legacy = product::data_dir().join("grok-accounts");
     let index = legacy.join("index.json");
     if !index.exists() || index_path().exists() {
         return Ok(());
@@ -920,7 +920,7 @@ mod tests {
         );
         assert!(crate::account_keys::add("unsupported", "other", "fixture").is_err());
         assert_eq!(routing_registry().unwrap().accounts.len(), 2);
-        assert!(crate::desktop::models("openai/does-not-exist").is_err());
+        assert!(crate::app::accounts::models("openai/does-not-exist").is_err());
         replace_authorization(
             &api_account,
             "fixture-reauth-generation",

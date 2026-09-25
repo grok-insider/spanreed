@@ -181,11 +181,11 @@ fn median_u64(v: &mut [u64]) -> u64 {
 }
 
 fn samples_path() -> PathBuf {
-    crate::app::data_dir().join("pct-samples.jsonl")
+    crate::product::data_dir().join("pct-samples.jsonl")
 }
 
 fn weeks_path() -> PathBuf {
-    crate::app::data_dir().join("cost-weeks.jsonl")
+    crate::product::data_dir().join("cost-weeks.jsonl")
 }
 
 /// Append sample and return median density for this week if computable.

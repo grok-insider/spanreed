@@ -11,7 +11,7 @@ use crate::creds;
 const FILE_NAME: &str = "client_id";
 
 fn path() -> PathBuf {
-    crate::app::config_dir().join(FILE_NAME)
+    crate::product::config_dir().join(FILE_NAME)
 }
 
 fn looks_like_uuid(s: &str) -> bool {

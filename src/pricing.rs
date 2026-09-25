@@ -83,13 +83,13 @@ impl Catalog {
 
 fn load_table() -> PricingMap {
     let remote = creds::read_file(&remote_cache_path());
-    let user = creds::read_file(&crate::app::config_dir().join("pricing.json"));
+    let user = creds::read_file(&crate::product::config_dir().join("pricing.json"));
     table_from(remote.as_deref(), user.as_deref())
 }
 
 fn load_limits() -> LimitsMap {
     let cached = creds::read_file(&limits_cache_path());
-    let user = creds::read_file(&crate::app::config_dir().join("limits.json"));
+    let user = creds::read_file(&crate::product::config_dir().join("limits.json"));
     build_limits("", cached.as_deref(), user.as_deref())
 }
 
@@ -103,11 +103,11 @@ pub fn hop_cost_usd(record: &fabrials_types::HopRecord, table: &PricingMap) -> O
 }
 
 fn remote_cache_path() -> PathBuf {
-    crate::app::cache_dir().join("pricing-remote.json")
+    crate::product::cache_dir().join("pricing-remote.json")
 }
 
 fn limits_cache_path() -> PathBuf {
-    crate::app::cache_dir().join("limits-remote.json")
+    crate::product::cache_dir().join("limits-remote.json")
 }
 
 /// Fetch one upstream document.
@@ -153,7 +153,7 @@ fn younger_than(path: &std::path::Path, ttl: Duration) -> bool {
 /// so an offline machine doesn't pay a connect timeout on every probe.
 /// No-op when `SPANREED_OFFLINE` is set. Returns whether new tables were written.
 pub fn ensure_fresh() -> bool {
-    if crate::app::env_offline() {
+    if crate::product::env_offline() {
         return false;
     }
     let prices = remote_cache_path();

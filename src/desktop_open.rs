@@ -11,7 +11,7 @@ const ALERT_ACK: &str = "desktop-alert-ack";
 /// Queue a local desktop page and make sure the window process is up.
 pub fn request(page: &str) -> Result<(), String> {
     let href = href(page)?;
-    let dir = crate::app::data_dir();
+    let dir = crate::product::data_dir();
     std::fs::create_dir_all(&dir).map_err(|error| format!("mkdir desktop route: {error}"))?;
     std::fs::write(dir.join(ROUTE), href)
         .map_err(|error| format!("write desktop route: {error}"))?;
@@ -24,14 +24,14 @@ pub fn request(page: &str) -> Result<(), String> {
 /// Read a queued route without clearing it. The desktop process uses this to
 /// show a hidden window before the page script can run.
 pub fn peek() -> Option<String> {
-    let text = std::fs::read_to_string(crate::app::data_dir().join(ROUTE)).ok()?;
+    let text = std::fs::read_to_string(crate::product::data_dir().join(ROUTE)).ok()?;
     let text = text.trim();
     text.starts_with("#/local/").then(|| text.to_string())
 }
 
 /// Read and clear a queued route. The desktop window applies it once.
 pub fn take() -> Option<String> {
-    let path = crate::app::data_dir().join(ROUTE);
+    let path = crate::product::data_dir().join(ROUTE);
     let text = std::fs::read_to_string(&path).ok()?;
     let _ = std::fs::remove_file(&path);
     let text = text.trim();
@@ -39,7 +39,7 @@ pub fn take() -> Option<String> {
 }
 
 pub fn mark_running() {
-    let dir = crate::app::data_dir();
+    let dir = crate::product::data_dir();
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(dir.join(LOCK), format!("{}\n", std::process::id()));
 }
@@ -60,7 +60,7 @@ pub fn hand_off_alert(title: &str, body: &str) -> bool {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos().to_string())
         .unwrap_or_else(|_| "0".into());
-    let dir = crate::app::data_dir();
+    let dir = crate::product::data_dir();
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::remove_file(dir.join(ALERT_ACK));
     let payload = format!("{id}\n{}\n{}", one_line(title), one_line(body));
@@ -80,7 +80,7 @@ pub fn hand_off_alert(title: &str, body: &str) -> bool {
 }
 
 pub fn take_alert() -> Option<PendingAlert> {
-    let path = crate::app::data_dir().join(ALERT);
+    let path = crate::product::data_dir().join(ALERT);
     let text = std::fs::read_to_string(&path).ok()?;
     let _ = std::fs::remove_file(&path);
     let mut lines = text.lines();
@@ -94,7 +94,7 @@ pub fn take_alert() -> Option<PendingAlert> {
 }
 
 pub fn ack_alert(id: &str) {
-    let dir = crate::app::data_dir();
+    let dir = crate::product::data_dir();
     let _ = std::fs::write(dir.join(ALERT_ACK), id);
 }
 
@@ -103,7 +103,7 @@ fn one_line(value: &str) -> String {
 }
 
 pub fn unmark_running() {
-    let path = crate::app::data_dir().join(LOCK);
+    let path = crate::product::data_dir().join(LOCK);
     if std::fs::read_to_string(&path)
         .ok()
         .is_some_and(|text| text.trim() == std::process::id().to_string())
@@ -133,7 +133,7 @@ fn href(page: &str) -> Result<String, String> {
 }
 
 fn desktop_alive() -> bool {
-    let path = crate::app::data_dir().join(LOCK);
+    let path = crate::product::data_dir().join(LOCK);
     let Ok(text) = std::fs::read_to_string(&path) else {
         return false;
     };
@@ -306,7 +306,7 @@ fn is_cli_binary(path: &std::path::Path) -> bool {
     let Some(name) = path.file_name() else {
         return false;
     };
-    if !name.eq_ignore_ascii_case(crate::app::bin_name()) {
+    if !name.eq_ignore_ascii_case(crate::product::bin_name()) {
         return false;
     }
     let Ok(exe) = std::env::current_exe() else {
@@ -490,13 +490,13 @@ mod tests {
             .parent()
             .and_then(|dir| dir.parent())
             .expect("target dir")
-            .join(crate::app::bin_name());
+            .join(crate::product::bin_name());
         if cli.is_file() {
             assert!(existing_desktop(&cli).is_none());
         }
         let name = exe.file_name().expect("exe name");
         assert!(
-            is_cli_binary(&exe) || !name.eq_ignore_ascii_case(crate::app::bin_name()),
+            is_cli_binary(&exe) || !name.eq_ignore_ascii_case(crate::product::bin_name()),
             "the test harness must not be treated as a packaged desktop"
         );
     }
@@ -581,7 +581,7 @@ mod tests {
     }
 
     fn write_lock(pid: u32) {
-        let dir = crate::app::data_dir();
+        let dir = crate::product::data_dir();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(LOCK), format!("{pid}\n")).unwrap();
     }

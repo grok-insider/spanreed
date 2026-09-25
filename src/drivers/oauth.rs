@@ -13,9 +13,9 @@ pub fn token(provider: &str, alias: &str) -> Result<String, String> {
         .ok_or("Provider account no longer exists")?
         .generation
         .unwrap_or_default();
-    let environment = crate::app::data_dir().to_string_lossy().into_owned();
+    let environment = crate::product::data_dir().to_string_lossy().into_owned();
     let journal = Rotation::acquire(
-        &crate::app::data_dir().join("credential-recovery"),
+        &crate::product::data_dir().join("credential-recovery"),
         Scope {
             environment: &environment,
             owner: "local",
@@ -31,7 +31,7 @@ pub fn token(provider: &str, alias: &str) -> Result<String, String> {
         .unwrap_or_else(|e| e.into_inner());
     let key = format!(
         "{}:{provider}/{alias}:{generation}",
-        crate::app::data_dir().display()
+        crate::product::data_dir().display()
     );
     if !queue.reserve(key.clone()) {
         return Err("Credential recovery capacity reached; retry later".into());

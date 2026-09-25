@@ -26,7 +26,7 @@ pub use fabrials_types::HopRecord;
 
 /// Shared local usage database. The legacy JSONL remains available for recovery.
 pub fn ledger_path() -> PathBuf {
-    crate::app::data_dir().join("runtime.sqlite3")
+    crate::product::data_dir().join("runtime.sqlite3")
 }
 
 fn store() -> Result<fabrials_runtime::hops::HopStore, String> {
@@ -34,7 +34,7 @@ fn store() -> Result<fabrials_runtime::hops::HopStore, String> {
     store.import_jsonl_once(
         "local",
         "grok-usage.jsonl.v1",
-        &crate::app::data_dir().join("grok-usage.jsonl"),
+        &crate::product::data_dir().join("grok-usage.jsonl"),
     )?;
     Ok(store)
 }
