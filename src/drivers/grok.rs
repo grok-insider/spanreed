@@ -13,7 +13,7 @@ const BILLING_CREDITS_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?fo
 const BILLING_LEGACY_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
 const SUBS_URL: &str = "https://grok.com/rest/subscriptions";
-const TOKEN_AUTH: &str = "xai-grok-cli";
+use fabrials_providers::grok_cli::{token_from_doc, TOKEN_AUTH};
 const AUTH_JSON_ENTRY: &str = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
 
 pub fn login_add(requested: Option<&str>) -> Result<String, String> {
@@ -385,16 +385,6 @@ fn persist_snap(id: &str, snap: QuotaSnap) {
     );
 }
 
-fn token_from_doc(doc: &serde_json::Value) -> Option<String> {
-    let obj = doc.as_object()?;
-    for entry in obj.values() {
-        let t = entry.get("key").and_then(|v| v.as_str())?.trim();
-        if !t.is_empty() {
-            return Some(t.to_string());
-        }
-    }
-    None
-}
 
 /// Map CCP `subscription_tier_display` to slug + autosteer rank.
 /// Official Grok Build names: SuperGrok Heavy/Plus/Lite, SuperGrok,
