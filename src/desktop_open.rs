@@ -168,16 +168,11 @@ fn command_is_desktop(command: &str) -> bool {
 fn process_command(pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
-        // A process that just exec'd can show an empty cmdline for a moment.
-        // Treating that as "not the desktop" makes the tray launch a second copy.
-        for _ in 0..20 {
-            let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-            if !bytes.is_empty() {
-                return Some(String::from_utf8_lossy(&bytes).into_owned());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+        let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        if bytes.is_empty() {
+            return None;
         }
-        None
+        Some(String::from_utf8_lossy(&bytes).into_owned())
     }
     #[cfg(target_os = "macos")]
     {
@@ -587,9 +582,17 @@ mod tests {
         std::fs::create_dir_all(&bin).unwrap();
         #[cfg(unix)]
         {
+            // Copying `sleep` and executing it under another name lets coreutils
+            // re-exec as `sleep`. The command line then no longer says
+            // spanreed-desktop, so the tray tries to launch a second copy.
             let stub = bin.join("spanreed-desktop");
-            copy_named_stub(&stub, "sleep");
-            Command::new(&stub).arg("30").spawn().expect("park desktop")
+            let shell = executable_on_path("sh").expect("sh");
+            std::fs::write(&stub, format!("#!{}\nsleep 30\n", shell.display())).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&stub).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&stub, permissions).unwrap();
+            Command::new(&stub).spawn().expect("park desktop")
         }
         #[cfg(windows)]
         {
@@ -607,6 +610,17 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn executable_on_path(name: &str) -> Option<std::path::PathBuf> {
+        std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path).find_map(|dir| {
+                let candidate = dir.join(name);
+                candidate.is_file().then_some(candidate)
+            })
+        })
+    }
+
+    #[cfg(windows)]
     fn copy_named_stub(destination: &std::path::Path, name: &str) {
         let from_path = std::env::var_os("PATH").and_then(|path| {
             std::env::split_paths(&path).find_map(|dir| {
