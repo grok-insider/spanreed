@@ -48,11 +48,19 @@ def next_version(version, bump):
             "minor": f"{major}.{minor + 1}.0", "major": f"{major + 1}.0.0"}[bump]
 
 
-def expected_assets(version):
+def binary_assets(version):
+    """Release binaries, one per builder; each ships with a `.sha256` file."""
     version_tuple(version)
-    names = [f"spanreed-{version}-x86_64-unknown-linux-musl.tar.gz",
-             f"spanreed-{version}-x86_64-pc-windows-msvc.zip",
-             f"Spanreed_{version}_amd64.deb", f"Spanreed_{version}_x64-setup.exe"]
+    return [f"spanreed-{version}-x86_64-unknown-linux-musl.tar.gz",
+            f"spanreed-{version}-x86_64-pc-windows-msvc.zip",
+            f"spanreed-{version}-aarch64-apple-darwin.tar.gz",
+            f"spanreed-{version}-x86_64-apple-darwin.tar.gz",
+            f"spanreed-{version}-universal-apple-darwin.tar.gz",
+            f"Spanreed_{version}_amd64.deb", f"Spanreed_{version}_x64-setup.exe"]
+
+
+def expected_assets(version):
+    names = binary_assets(version)
     return names + [name + ".sha256" for name in names]
 
 
@@ -163,8 +171,8 @@ def verify_assets(root, version, sha):
             raise ValueError(f"Expected exactly one regular artifact: {name}")
         files[name] = matches[0]
     manifests = list(root.rglob("release-provenance.json"))
-    if len(manifests) != 4:
-        raise ValueError("Expected provenance for all four builders")
+    if len(manifests) != len(binary_assets(version)):
+        raise ValueError("Expected provenance for every builder")
     claimed = []
     for path in manifests:
         manifest = json.loads(path.read_text())
@@ -203,7 +211,7 @@ def published_complete(sha, version):
     with tempfile.TemporaryDirectory() as directory:
         run("gh", "release", "download", "v" + version, "--repo", REPO, "--dir", directory)
         root = Path(directory)
-        for name in expected_assets(version)[:4]:
+        for name in binary_assets(version):
             digest = hashlib.sha256((root / name).read_bytes()).hexdigest()
             if (root / (name + ".sha256")).read_text().split() != [digest, name]:
                 raise ValueError("Published release checksum mismatch")
@@ -220,9 +228,11 @@ def publish(sha, run_id):
         raise ValueError("Recovery artifacts must come from a successful release run at the same SHA")
     if not current:
         jobs = api(f"actions/runs/{int(run_id)}/jobs?per_page=100")["jobs"]
-        builders = [j for j in jobs if j["name"].startswith(("cli / cli (", "desktop / desktop ("))]
-        if len(builders) != 4 or any(j["conclusion"] != "success" for j in builders):
-            raise ValueError("Recovery requires all four successful builder jobs")
+        builders = [j for j in jobs if j["name"].startswith(
+            ("cli / cli (", "cli / macos-universal", "desktop / desktop ("))]
+        if len(builders) != len(binary_assets(version)) \
+                or any(j["conclusion"] != "success" for j in builders):
+            raise ValueError("Recovery requires every builder job to succeed")
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         run("gh", "run", "download", str(run_id), "--repo", REPO, "--pattern", "spanreed-release-*", "--dir", str(root))

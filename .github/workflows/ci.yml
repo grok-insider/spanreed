@@ -15,10 +15,6 @@ on:
       expected_sha:
         description: Exact bot PR commit
         type: string
-      qualify_macos:
-        description: Opt in to deferred macOS qualification with a hardware contributor
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -95,14 +91,14 @@ jobs:
         env:
           SPANREED_OFFLINE: "1"
 
-  # Informational only — not a required branch-protection check.
+  # Windows and macOS run on every pull request.
   cross:
     name: cross (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.qualify_macos && '["windows-latest","macos-latest"]' || '["windows-latest"]') }}
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
