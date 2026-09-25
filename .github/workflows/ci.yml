@@ -29,6 +29,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  fabrials-libs:
+    name: fabrials-libs drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The in-tree copy must be exactly the recorded fabrials-libs revision.
+      - run: scripts/check-fabrials-libs.sh
+
   rust:
     name: fmt + clippy + test
     runs-on: ubuntu-latest
@@ -65,7 +73,7 @@ jobs:
       - run: cargo test --all
         env:
           SPANREED_OFFLINE: "1"
-      - run: cargo test --locked -p fabrials-core -p fabrials-providers -p fabrials-runtime
+      - run: cargo test --locked --workspace --manifest-path vendor/fabrials-libs/Cargo.toml
         env:
           SPANREED_OFFLINE: "1"
       # tray-icon on Linux needs GTK / AppIndicator. The wry popover also needs
@@ -116,7 +124,7 @@ jobs:
       - run: cargo test --all
         env:
           SPANREED_OFFLINE: "1"
-      - run: cargo test --locked -p fabrials-core -p fabrials-providers -p fabrials-runtime
+      - run: cargo test --locked --workspace --manifest-path vendor/fabrials-libs/Cargo.toml
         env:
           SPANREED_OFFLINE: "1"
       - run: cargo check --all-targets --features tray

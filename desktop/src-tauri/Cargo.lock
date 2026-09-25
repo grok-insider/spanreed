@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "fabrials-accounts"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1167,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "fabrials-metrics"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fabrials-model",
  "serde",
@@ -1176,7 +1176,7 @@ dependencies = [
 
 [[package]]
 name = "fabrials-model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fabrials-core",
  "serde",
@@ -1185,7 +1185,7 @@ dependencies = [
 
 [[package]]
 name = "fabrials-oauth-grok"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "serde_json",

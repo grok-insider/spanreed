@@ -164,7 +164,7 @@ Open an issue with:
 ## License
 
 By contributing you agree that your contributions are licensed under the
-project's [MIT License](LICENSE).
+project's [AGPL-3.0-or-later license](LICENSE).
 
 ## Branch policy
 

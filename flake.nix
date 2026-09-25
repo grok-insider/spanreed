@@ -109,7 +109,7 @@
             description = "Local AI accounts, usage and routing console";
             homepage = "https://fabrials.com";
             mainProgram = "spanreed-desktop";
-            license = lib.licenses.mit;
+            license = lib.licenses.agpl3Plus;
             platforms = systems;
           };
         };
@@ -190,7 +190,7 @@
             description = "Linux-native AI subscription usage tracker (daemon + CLI + Waybar + tray)";
             homepage = "https://github.com/grok-insider/spanreed";
             mainProgram = "spanreed";
-            license = lib.licenses.mit;
+            license = lib.licenses.agpl3Plus;
             platforms = systems;
           };
         };

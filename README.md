@@ -252,7 +252,7 @@ Pricing overrides: `~/.config/spanreed/pricing.json`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+AGPL-3.0-or-later — see [LICENSE](LICENSE). Releases up to v0.6.x were published under MIT.
 
 #### Private certificate authorities
 

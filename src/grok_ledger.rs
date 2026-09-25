@@ -682,7 +682,13 @@ data: [DONE]
                 ..Default::default()
             },
         ];
-        let lines = lines_from_records(&recs, fabrials_metrics::pricing::table(), Some(4_000), None, None);
+        let lines = lines_from_records(
+            &recs,
+            fabrials_metrics::pricing::table(),
+            Some(4_000),
+            None,
+            None,
+        );
         let since = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
                 Some(value.as_str())
@@ -729,7 +735,13 @@ data: [DONE]
                 ..Default::default()
             },
         ];
-        let lines = lines_from_records(&recs, fabrials_metrics::pricing::table(), Some(4_000), None, None);
+        let lines = lines_from_records(
+            &recs,
+            fabrials_metrics::pricing::table(),
+            Some(4_000),
+            None,
+            None,
+        );
         let since = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
                 Some(value.as_str())
@@ -756,16 +768,19 @@ data: [DONE]
             lines_from_records(&recs, table, None, None, None)
                 .into_iter()
                 .find_map(|l| match l {
-                    MetricLine::Text { label, value, .. } if label == "Last 30 Days" => {
-                        Some(value)
-                    }
+                    MetricLine::Text { label, value, .. } if label == "Last 30 Days" => Some(value),
                     _ => None,
                 })
                 .expect("last 30 line")
         };
         let embedded = crate::pricing::hop_table_from(None, None);
-        assert!(last30(&embedded).contains("$0.2000"), "{}", last30(&embedded));
-        let user = r#"{"grok-4.5": {"input_cost_per_token": 0.00001, "output_cost_per_token": 0.00002}}"#;
+        assert!(
+            last30(&embedded).contains("$0.2000"),
+            "{}",
+            last30(&embedded)
+        );
+        let user =
+            r#"{"grok-4.5": {"input_cost_per_token": 0.00001, "output_cost_per_token": 0.00002}}"#;
         let overridden = crate::pricing::hop_table_from(None, Some(user));
         assert!(
             last30(&overridden).contains("$1.0000"),

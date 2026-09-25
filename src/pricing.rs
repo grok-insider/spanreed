@@ -207,11 +207,7 @@ pub fn hop_table_from(
     remote: Option<&str>,
     user: Option<&str>,
 ) -> fabrials_metrics::pricing::PricingMap {
-    fabrials_metrics::pricing::build_table(
-        fabrials_metrics::pricing::embedded_json(),
-        remote,
-        user,
-    )
+    fabrials_metrics::pricing::build_table(fabrials_metrics::pricing::embedded_json(), remote, user)
 }
 
 /// List-price USD for a captured hop, priced with [`hop_table`].

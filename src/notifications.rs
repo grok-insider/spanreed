@@ -525,7 +525,10 @@ mod tests {
         let lines: Vec<&str> = args.lines().collect();
         assert_eq!(lines[0], "unix:path=/run/spanreed-test-bus");
         assert!(lines.contains(&"--app-name=Spanreed"));
-        assert_eq!(&lines[lines.len() - 2..], ["Capture proxy is DOWN", "Ensure capture."]);
+        assert_eq!(
+            &lines[lines.len() - 2..],
+            ["Capture proxy is DOWN", "Ensure capture."]
+        );
         assert_ne!(
             std::env::var_os("DBUS_SESSION_BUS_ADDRESS").as_deref(),
             Some(std::ffi::OsStr::new("unix:path=/run/spanreed-test-bus"))
