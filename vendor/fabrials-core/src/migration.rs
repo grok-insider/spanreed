@@ -175,6 +175,24 @@ pub fn review(
     })
 }
 
+
+
+/// Providers supported by both Fabrials account vaults for reviewed migration.
+pub fn destination_providers() -> Vec<ProviderDescriptor> {
+    ["grok", "codex", "nous", "openai"]
+        .into_iter()
+        .map(|id| ProviderDescriptor {
+            id: id.into(),
+            name: id.into(),
+            capabilities: crate::Capabilities {
+                api_key: id != "codex",
+                oauth: matches!(id, "grok" | "codex" | "nous"),
+                ..Default::default()
+            },
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,20 +321,4 @@ mod tests {
         )
         .is_err());
     }
-}
-
-/// Providers supported by both Fabrials account vaults for reviewed migration.
-pub fn destination_providers() -> Vec<ProviderDescriptor> {
-    ["grok", "codex", "nous", "openai"]
-        .into_iter()
-        .map(|id| ProviderDescriptor {
-            id: id.into(),
-            name: id.into(),
-            capabilities: crate::Capabilities {
-                api_key: id != "codex",
-                oauth: matches!(id, "grok" | "codex" | "nous"),
-                ..Default::default()
-            },
-        })
-        .collect()
 }

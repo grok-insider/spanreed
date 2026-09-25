@@ -842,13 +842,11 @@ mod tests {
         upstream.join().unwrap();
     }
 
+    type CapturedBodies = Arc<Mutex<Vec<Vec<u8>>>>;
+
     fn fake_upstream_bodies(
         responses: Vec<(u16, &'static str, String)>,
-    ) -> (
-        String,
-        Arc<Mutex<Vec<Vec<u8>>>>,
-        std::thread::JoinHandle<()>,
-    ) {
+    ) -> (String, CapturedBodies, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let seen = Arc::new(Mutex::new(Vec::new()));

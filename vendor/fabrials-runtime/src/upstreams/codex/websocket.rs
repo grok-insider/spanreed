@@ -249,6 +249,10 @@ mod tests {
         }
     }
     #[test]
+    #[allow(
+        clippy::result_large_err,
+        reason = "tungstenite fixes the handshake callback's error type"
+    )]
     fn each_websocket_creation_is_authorized_and_recorded_once() {
         use tokio_tungstenite::tungstenite;
         let origin = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -83,12 +83,12 @@ pub fn format_reset_in(hours: f64) -> String {
 
 /// Skip exhausted; prefer reset &lt; 12h, then higher rank, then higher used %.
 /// Cursor / grok-bot use this (higher plan tier first).
-pub fn pick_autosteer<'a, T: Steerable>(
-    accounts: &'a [T],
+pub fn pick_autosteer<T: Steerable>(
+    accounts: &[T],
     exhausted_pct: f64,
     now_ms: i64,
     rank: impl Fn(&T) -> u8,
-) -> Option<&'a T> {
+) -> Option<&T> {
     pick_by_score(accounts, exhausted_pct, |a| {
         plan_first_score(
             a.used_pct().unwrap_or(0.0),
@@ -99,12 +99,12 @@ pub fn pick_autosteer<'a, T: Steerable>(
 }
 
 /// Grok: soonest reset first, then smaller plan (`rank`), then higher used %.
-pub fn pick_deadline_autosteer<'a, T: Steerable>(
-    accounts: &'a [T],
+pub fn pick_deadline_autosteer<T: Steerable>(
+    accounts: &[T],
     exhausted_pct: f64,
     now_ms: i64,
     rank: impl Fn(&T) -> u8,
-) -> Option<&'a T> {
+) -> Option<&T> {
     pick_by_score(accounts, exhausted_pct, |a| {
         deadline_first_score(
             a.used_pct().unwrap_or(0.0),

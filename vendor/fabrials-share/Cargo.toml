@@ -9,6 +9,6 @@ repository = "https://github.com/grok-insider/fabrials-share"
 publish = true
 
 [dependencies]
-fabrials-model = "0.1.0"
-fabrials-metrics = "0.1.0"
+fabrials-model = "0.2"
+fabrials-metrics = "0.2"
 serde_json = "1"

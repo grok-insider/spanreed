@@ -3,6 +3,7 @@ name = "fabrials-core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/grok-insider/fabrials-core"
 description = "Portable account observations and provider capabilities for Fabrials"
 
 [dependencies]

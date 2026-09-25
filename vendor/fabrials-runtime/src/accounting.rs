@@ -310,6 +310,37 @@ fn video_duration_ms(request_body: &[u8], response_body: &[u8]) -> Option<u64> {
     None
 }
 
+
+
+#[allow(clippy::result_unit_err)]
+pub fn request_model(body: &[u8]) -> Result<Option<String>, ()> {
+    #[derive(serde::Deserialize)]
+    struct ModelEnvelope {
+        model: Option<String>,
+    }
+    let Ok(envelope) = serde_json::from_slice::<ModelEnvelope>(body) else {
+        // Non-JSON payloads are valid on multipart/binary media routes.
+        return if body
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace())
+            == Some(b'{')
+        {
+            Err(())
+        } else {
+            Ok(None)
+        };
+    };
+    let Some(model) = envelope.model else {
+        return Ok(None);
+    };
+    let model = model.trim();
+    if model.is_empty() || model.len() > 256 || model.chars().any(char::is_control) {
+        return Err(());
+    }
+    Ok(Some(model.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,33 +510,4 @@ mod tests {
         assert!(validated_model_from_query("/v1/realtime?model=a&model=b").is_err());
         assert!(validated_model_from_query("/v1/realtime?model=bad%0Amodel").is_err());
     }
-}
-
-#[allow(clippy::result_unit_err)]
-pub fn request_model(body: &[u8]) -> Result<Option<String>, ()> {
-    #[derive(serde::Deserialize)]
-    struct ModelEnvelope {
-        model: Option<String>,
-    }
-    let Ok(envelope) = serde_json::from_slice::<ModelEnvelope>(body) else {
-        // Non-JSON payloads are valid on multipart/binary media routes.
-        return if body
-            .iter()
-            .copied()
-            .find(|byte| !byte.is_ascii_whitespace())
-            == Some(b'{')
-        {
-            Err(())
-        } else {
-            Ok(None)
-        };
-    };
-    let Some(model) = envelope.model else {
-        return Ok(None);
-    };
-    let model = model.trim();
-    if model.is_empty() || model.len() > 256 || model.chars().any(char::is_control) {
-        return Err(());
-    }
-    Ok(Some(model.to_string()))
 }

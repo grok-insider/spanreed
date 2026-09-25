@@ -576,6 +576,7 @@ mod tests {
             vec![Arc::new(upstreams::grok::GrokAdapter {
                 cli_base: Some("http://127.0.0.1:1".into()),
                 xai_base: Some(format!("http://{upstream_address}")),
+                ..Default::default()
             })]
         } else {
             vec![Arc::new(upstreams::nous::NousAdapter {

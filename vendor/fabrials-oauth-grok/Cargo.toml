@@ -1,6 +1,6 @@
 [package]
 name = "fabrials-oauth-grok"
-version = "0.1.1"
+version = "0.1.2"
 description = "Grok/xAI CLI OAuth helpers: token extract and inject headers"
 edition = "2021"
 license = "MIT"

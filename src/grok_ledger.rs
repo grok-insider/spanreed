@@ -15,7 +15,8 @@ use std::path::PathBuf;
 use crate::model::{BarChartPoint, MetricKind, MetricLine};
 use crate::usage_stats::{self, CacheTotals, ModelCost};
 use crate::util;
-use fabrials_metrics::list_cost_usd;
+use fabrials_metrics::cost::list_cost_usd_with;
+use fabrials_metrics::pricing::PricingMap;
 
 /// Rolling window: today plus the previous 30 days.
 const WINDOW_DAYS: i64 = 31;
@@ -115,7 +116,13 @@ fn cost_lines_filtered(
         let hint = empty_capture_hint();
         return vec![MetricLine::text(MetricKind::Cost, "Last 30 Days", hint)];
     }
-    lines_from_records(&recs, weekly_start_ms, weekly_pct, week_end_ms)
+    lines_from_records(
+        &recs,
+        crate::pricing::hop_table(),
+        weekly_start_ms,
+        weekly_pct,
+        week_end_ms,
+    )
 }
 
 fn empty_capture_hint() -> String {
@@ -140,6 +147,7 @@ fn capture_ports_up() -> bool {
 
 fn lines_from_records(
     recs: &[UsageRecord],
+    table: &PricingMap,
     weekly_start_ms: Option<i64>,
     weekly_pct: Option<f64>,
     week_end_ms: Option<i64>,
@@ -159,7 +167,7 @@ fn lines_from_records(
         let tok = r.tokens_for_total();
         total_tokens = total_tokens.saturating_add(tok);
         // Public API list price (not SuperGrok subscription ticks).
-        let cost = match list_cost_usd(r) {
+        let cost = match list_cost_usd_with(r, table) {
             Some(c) => {
                 has_cost = true;
                 tokens_with_cost = tokens_with_cost.saturating_add(tok);
@@ -234,7 +242,7 @@ fn lines_from_records(
             }
             let tok = r.tokens_for_total();
             win_tokens = win_tokens.saturating_add(tok);
-            if let Some(c) = list_cost_usd(r) {
+            if let Some(c) = list_cost_usd_with(r, table) {
                 win_has_cost = true;
                 win_cost += c;
                 win_tokens_with_cost = win_tokens_with_cost.saturating_add(tok);
@@ -477,7 +485,7 @@ data: [DONE]
         let rec = u.into_record(1_000, Some("sess".into()), None, Some("grok".into()));
         assert!((rec.ticks_usd().unwrap() - 0.5).abs() < 1e-9);
         // Public list: 60 unc * $2/M + 40 cache * $0.30/M + 20 out * $6/M
-        let list = list_cost_usd(&rec).unwrap();
+        let list = fabrials_metrics::list_cost_usd(&rec).unwrap();
         let expected = 60.0 * 2e-6 + 40.0 * 3e-7 + 20.0 * 6e-6;
         assert!(
             (list - expected).abs() < 1e-12,
@@ -502,7 +510,7 @@ data: [DONE]
         };
         // All tokens at long rates: unc 100k * $4/M + cache 100k * $0.60/M + out 1k * $12/M
         let expected = 100_000.0 * 4e-6 + 100_000.0 * 6e-7 + 1_000.0 * 1.2e-5;
-        let got = list_cost_usd(&rec).unwrap();
+        let got = fabrials_metrics::list_cost_usd(&rec).unwrap();
         assert!(
             (got - expected).abs() < 1e-9,
             "got={got} expected={expected}"
@@ -558,7 +566,7 @@ data: [DONE]
                 ..Default::default()
             },
         ];
-        let lines = lines_from_records(&recs, None, None, None);
+        let lines = lines_from_records(&recs, fabrials_metrics::pricing::table(), None, None, None);
         let labels: Vec<&str> = lines
             .iter()
             .filter_map(|l| match l {
@@ -624,7 +632,7 @@ data: [DONE]
             request_id: Some("only".into()),
             ..Default::default()
         }];
-        let lines = lines_from_records(&recs, None, None, None);
+        let lines = lines_from_records(&recs, fabrials_metrics::pricing::table(), None, None, None);
         let last30 = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Last 30 Days" => {
                 Some(value.as_str())
@@ -674,7 +682,7 @@ data: [DONE]
                 ..Default::default()
             },
         ];
-        let lines = lines_from_records(&recs, Some(4_000), None, None);
+        let lines = lines_from_records(&recs, fabrials_metrics::pricing::table(), Some(4_000), None, None);
         let since = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
                 Some(value.as_str())
@@ -721,7 +729,7 @@ data: [DONE]
                 ..Default::default()
             },
         ];
-        let lines = lines_from_records(&recs, Some(4_000), None, None);
+        let lines = lines_from_records(&recs, fabrials_metrics::pricing::table(), Some(4_000), None, None);
         let since = lines.iter().find_map(|l| match l {
             MetricLine::Text { label, value, .. } if label == "Since weekly reset" => {
                 Some(value.as_str())
@@ -731,5 +739,38 @@ data: [DONE]
         let since = since.expect("since weekly line");
         assert!(since.contains("25 tokens"), "got {since}");
         assert!(!since.contains("100"), "pre-epoch tokens leaked: {since}");
+    }
+
+    #[test]
+    fn user_pricing_override_changes_the_grok_hop_cost() {
+        let recs = vec![UsageRecord {
+            ts_ms: util::now_ms(),
+            model: Some("grok-4.5".into()),
+            input_tokens: 100_000,
+            output_tokens: 0,
+            total_tokens: 100_000,
+            request_id: Some("override".into()),
+            ..Default::default()
+        }];
+        let last30 = |table: &PricingMap| {
+            lines_from_records(&recs, table, None, None, None)
+                .into_iter()
+                .find_map(|l| match l {
+                    MetricLine::Text { label, value, .. } if label == "Last 30 Days" => {
+                        Some(value)
+                    }
+                    _ => None,
+                })
+                .expect("last 30 line")
+        };
+        let embedded = crate::pricing::hop_table_from(None, None);
+        assert!(last30(&embedded).contains("$0.2000"), "{}", last30(&embedded));
+        let user = r#"{"grok-4.5": {"input_cost_per_token": 0.00001, "output_cost_per_token": 0.00002}}"#;
+        let overridden = crate::pricing::hop_table_from(None, Some(user));
+        assert!(
+            last30(&overridden).contains("$1.0000"),
+            "{}",
+            last30(&overridden)
+        );
     }
 }

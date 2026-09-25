@@ -5,7 +5,7 @@
 mod economics;
 
 pub use economics::{
-    economics_from_hops, scale_to_full_pool, scale_tokens_to_full, snapshot_from_hops, HopsWindow,
+    economics_from_hops, scale_to_full_pool, HopSnapshotInput, scale_tokens_to_full, snapshot_from_hops, HopsWindow,
     MIN_PCT_SCALE, MONTH_WEEK_FACTOR,
 };
 

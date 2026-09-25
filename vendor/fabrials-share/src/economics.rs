@@ -180,20 +180,36 @@ pub fn economics_from_hops(records: &[UsageRecord], w: &HopsWindow) -> Option<Pr
     })
 }
 
+/// Inputs for a one-provider snapshot built from quota and captured hops.
+pub struct HopSnapshotInput<'a> {
+    pub provider_id: &'a str,
+    pub plan: Option<String>,
+    pub pool_pct: Option<f64>,
+    pub pool_label: Option<&'a str>,
+    pub resets_at: Option<String>,
+    pub records: &'a [UsageRecord],
+    pub week_start_ms: Option<i64>,
+    pub now_ms: i64,
+    pub app: &'a str,
+    pub version: &'a str,
+    pub captured_at: &'a str,
+}
+
 /// One-provider snapshot (typically Grok) from quota + hops.
-pub fn snapshot_from_hops(
-    provider_id: &str,
-    plan: Option<String>,
-    pool_pct: Option<f64>,
-    pool_label: Option<&str>,
-    resets_at: Option<String>,
-    records: &[UsageRecord],
-    week_start_ms: Option<i64>,
-    now_ms: i64,
-    app: &str,
-    version: &str,
-    captured_at: &str,
-) -> ShareSnapshot {
+pub fn snapshot_from_hops(input: HopSnapshotInput<'_>) -> ShareSnapshot {
+    let HopSnapshotInput {
+        provider_id,
+        plan,
+        pool_pct,
+        pool_label,
+        resets_at,
+        records,
+        week_start_ms,
+        now_ms,
+        app,
+        version,
+        captured_at,
+    } = input;
     let mut lines = Vec::new();
     if let Some(pct) = pool_pct {
         lines.push(MetricLine::percent(
@@ -339,19 +355,19 @@ mod tests {
     fn snapshot_from_hops_is_v2_grok_no_secrets() {
         let now = 1_700_000_000_000;
         let hop = rec("grok-4.5", 10_000, 100, now, "a", Some(200));
-        let snap = snapshot_from_hops(
-            "grok",
-            Some("SuperGrok".into()),
-            Some(22.0),
-            Some("Weekly"),
-            None,
-            &[hop],
-            Some(now - DAY_MS),
-            now,
-            "ai-relay",
-            "0.1.0",
-            "2026-08-21T00:00:00Z",
-        );
+        let snap = snapshot_from_hops(HopSnapshotInput {
+            provider_id: "grok",
+            plan: Some("SuperGrok".into()),
+            pool_pct: Some(22.0),
+            pool_label: Some("Weekly"),
+            resets_at: None,
+            records: &[hop],
+            week_start_ms: Some(now - DAY_MS),
+            now_ms: now,
+            app: "ai-relay",
+            version: "0.1.0",
+            captured_at: "2026-08-21T00:00:00Z",
+        });
         assert_eq!(snap.source.app, "ai-relay");
         assert_eq!(snap.schema_version, 2);
         assert_eq!(snap.providers[0].id, "grok");

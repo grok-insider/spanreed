@@ -3,12 +3,50 @@ use crate::routes::parse_fabric_path;
 use crate::routes::{UPSTREAM_GROK_CLI, UPSTREAM_XAI_API};
 use fabrials_core::hop::HopClass;
 use fabrials_model::UsageRecord;
+/// Client identity headers sent to Grok upstreams. The host chooses the values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrokClientIdentity {
+    pub version: String,
+    pub identifier: String,
+}
+
+impl Default for GrokClientIdentity {
+    fn default() -> Self {
+        Self {
+            version: "0.2.84".into(),
+            identifier: "grok-cli".into(),
+        }
+    }
+}
+
+impl GrokClientIdentity {
+    pub fn headers(&self) -> Vec<(String, String)> {
+        vec![
+            ("x-grok-client-version".into(), self.version.clone()),
+            ("x-grok-client-identifier".into(), self.identifier.clone()),
+        ]
+    }
+
+    pub fn cli_headers(&self, token: &str) -> Vec<(String, String)> {
+        let mut h = fabrials_oauth_grok::inject_headers(token);
+        h.extend(self.headers());
+        h
+    }
+
+    pub fn xai_headers(&self, token: &str) -> Vec<(String, String)> {
+        let mut h = vec![("Authorization".into(), format!("Bearer {token}"))];
+        h.extend(self.headers());
+        h
+    }
+}
+
 #[derive(Default)]
 pub struct GrokAdapter {
     /// Override CLI upstream (tests / fake).
     pub cli_base: Option<String>,
     /// Override `api.x.ai` (tests / fake).
     pub xai_base: Option<String>,
+    pub identity: GrokClientIdentity,
 }
 
 impl Provider for GrokAdapter {
@@ -39,15 +77,15 @@ impl Provider for GrokAdapter {
     }
 
     fn inject(&self, token: &str) -> Vec<(String, String)> {
-        inject_cli_headers(token)
+        self.identity.cli_headers(token)
     }
 
     fn inject_for(&self, token: &str, hop: &Upstream) -> Vec<(String, String)> {
         // If it's a standard API key (e.g. xai-...) or calling xai API directly, send standard bearer
         if token.starts_with("xai-") || self.uses_xai_api(hop) {
-            inject_xai_headers(token)
+            self.identity.xai_headers(token)
         } else {
-            inject_cli_headers(token)
+            self.identity.cli_headers(token)
         }
     }
 
@@ -100,29 +138,13 @@ fn is_cli_chat_path(path: &str) -> bool {
     )
 }
 
+/// Headers with the default client identity.
 pub fn inject_cli_headers(token: &str) -> Vec<(String, String)> {
-    let mut h = fabrials_oauth_grok::inject_headers(token);
-    h.extend(client_identity_headers());
-    h
+    GrokClientIdentity::default().cli_headers(token)
 }
 
 pub fn inject_xai_headers(token: &str) -> Vec<(String, String)> {
-    let mut h = vec![("Authorization".into(), format!("Bearer {token}"))];
-    h.extend(client_identity_headers());
-    h
-}
-
-fn client_identity_headers() -> Vec<(String, String)> {
-    vec![
-        (
-            "x-grok-client-version".into(),
-            std::env::var("AI_RELAY_GROK_CLIENT_VERSION").unwrap_or_else(|_| "0.2.84".into()),
-        ),
-        (
-            "x-grok-client-identifier".into(),
-            std::env::var("AI_RELAY_GROK_CLIENT_IDENTIFIER").unwrap_or_else(|_| "grok-cli".into()),
-        ),
-    ]
+    GrokClientIdentity::default().xai_headers(token)
 }
 
 fn map_openai_audio_alias(path: &str) -> String {
@@ -152,6 +174,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
 
     #[test]
     fn grok_adapter_allows_cli_aux_and_denies_account_apis() {

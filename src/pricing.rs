@@ -192,6 +192,33 @@ pub fn table() -> &'static PricingMap {
     })
 }
 
+/// Hop pricing (Grok and relay hops) with the same layers as [`table`]: the
+/// shared embedded snapshot, the cached remote refresh and the user override.
+pub fn hop_table() -> &'static fabrials_metrics::pricing::PricingMap {
+    static TABLE: OnceLock<fabrials_metrics::pricing::PricingMap> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let remote = creds::read_file(&remote_cache_path());
+        let user = creds::read_file(&crate::app::config_dir().join("pricing.json"));
+        hop_table_from(remote.as_deref(), user.as_deref())
+    })
+}
+
+pub fn hop_table_from(
+    remote: Option<&str>,
+    user: Option<&str>,
+) -> fabrials_metrics::pricing::PricingMap {
+    fabrials_metrics::pricing::build_table(
+        fabrials_metrics::pricing::embedded_json(),
+        remote,
+        user,
+    )
+}
+
+/// List-price USD for a captured hop, priced with [`hop_table`].
+pub fn hop_cost_usd(record: &fabrials_model::UsageRecord) -> Option<f64> {
+    fabrials_metrics::cost::list_cost_usd_with(record, hop_table())
+}
+
 fn remote_cache_path() -> PathBuf {
     crate::app::cache_dir().join("pricing-remote.json")
 }

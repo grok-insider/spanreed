@@ -312,10 +312,9 @@ mod tests {
             interpret_consume(&json!({"code":"nothing_to_reset"})),
             Err("No rate-limit window can be reset right now")
         );
-        assert_eq!(
+        assert!(
             interpret_consume(&json!({"code":"reset","detail":"RateLimitResetCredit_secret"}))
-                .is_ok(),
-            true
+                .is_ok()
         );
         let rejected = interpret_consume(
             &json!({"code":"other","credit":{"id":"RateLimitResetCredit_secret"}}),

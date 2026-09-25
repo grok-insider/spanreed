@@ -298,7 +298,18 @@ pub(crate) fn osascript_dialog(title: &str, body: &str) -> String {
 
 #[cfg(target_os = "linux")]
 fn deliver_linux(title: &str, body: &str) -> std::io::Result<std::process::Output> {
+    deliver_linux_with(&[], title, body)
+}
+
+/// `env` is added to the helper processes only, so callers never mutate this process.
+#[cfg(target_os = "linux")]
+fn deliver_linux_with(
+    env: &[(&str, &std::ffi::OsStr)],
+    title: &str,
+    body: &str,
+) -> std::io::Result<std::process::Output> {
     let sent = std::process::Command::new("notify-send")
+        .envs(env.iter().copied())
         .args([
             "--app-name=Spanreed",
             "--icon=com.fabrials.spanreed",
@@ -312,6 +323,7 @@ fn deliver_linux(title: &str, body: &str) -> std::io::Result<std::process::Outpu
         return sent;
     }
     let bus = std::process::Command::new("gdbus")
+        .envs(env.iter().copied())
         .args([
             "call",
             "--session",
@@ -480,6 +492,49 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn linux_delivery_hands_the_alert_and_bus_to_notify_send() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "spanreed-notify-send-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("args.txt");
+        let fake = dir.join("notify-send");
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$DBUS_SESSION_BUS_ADDRESS\" \"$@\" > '{}'\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = [
+            ("PATH", dir.as_os_str()),
+            (
+                "DBUS_SESSION_BUS_ADDRESS",
+                std::ffi::OsStr::new("unix:path=/run/spanreed-test-bus"),
+            ),
+        ];
+        let output = deliver_linux_with(&env, "Capture proxy is DOWN", "Ensure capture.").unwrap();
+        assert!(output.status.success());
+        let args = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = args.lines().collect();
+        assert_eq!(lines[0], "unix:path=/run/spanreed-test-bus");
+        assert!(lines.contains(&"--app-name=Spanreed"));
+        assert_eq!(&lines[lines.len() - 2..], ["Capture proxy is DOWN", "Ensure capture."]);
+        assert_ne!(
+            std::env::var_os("DBUS_SESSION_BUS_ADDRESS").as_deref(),
+            Some(std::ffi::OsStr::new("unix:path=/run/spanreed-test-bus"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn capture_alert_reaches_a_linux_notification_service() {
         use std::io::{BufRead, BufReader};
         use std::sync::Mutex;
@@ -547,6 +602,19 @@ loop.run()
         } else {
             std::path::Path::new("python3")
         };
+        let has_bindings = std::process::Command::new(python)
+            .args(["-c", "import dbus, gi"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !has_bindings {
+            eprintln!("skipped: python3 lacks the dbus/gi bindings for the fake service");
+            let _ = daemon.kill();
+            let _ = daemon.wait();
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
         let stderr = std::fs::File::create(&stderr_log).unwrap();
         let mut service = match std::process::Command::new(python)
             .arg(&script)
@@ -571,11 +639,17 @@ loop.run()
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        let previous = std::env::var_os("DBUS_SESSION_BUS_ADDRESS");
-        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
+        let bus_env = [(
+            "DBUS_SESSION_BUS_ADDRESS",
+            std::ffi::OsStr::new(address.as_str()),
+        )];
         let mut text = String::new();
         for _ in 0..40 {
-            let _ = deliver_os("Capture proxy is DOWN", "Ensure capture before new hops.");
+            let _ = deliver_linux_with(
+                &bus_env,
+                "Capture proxy is DOWN",
+                "Ensure capture before new hops.",
+            );
             if let Ok(body) = std::fs::read_to_string(&log) {
                 text = body;
                 if text.contains("Capture proxy is DOWN") {
@@ -588,10 +662,6 @@ loop.run()
         let _ = service.wait();
         let _ = daemon.kill();
         let _ = daemon.wait();
-        match previous {
-            Some(value) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", value),
-            None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
-        }
         let service_err = std::fs::read_to_string(&stderr_log).unwrap_or_default();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(

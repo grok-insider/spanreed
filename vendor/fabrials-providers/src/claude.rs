@@ -38,33 +38,44 @@ pub const MODELS_PATH: &str = "/v1/models";
 /// Refresh asks only for what the relay uses; the CLI asks for more.
 pub const SCOPES: &str = "user:inference user:profile";
 pub const REFRESH_BUFFER_MS: i64 = 300_000;
-const AUTHORIZE_URL_ENV: &str = "AI_RELAY_CLAUDE_AUTHORIZE_URL";
-const TOKEN_URL_ENV: &str = "AI_RELAY_CLAUDE_TOKEN_URL";
-const API_BASE_ENV: &str = "AI_RELAY_CLAUDE_API_BASE";
 
 const MAX_TOKEN: usize = 16 * 1024;
 const MAX_LABEL: usize = 120;
 const MAX_CODE: usize = 4096;
 
-fn env_origin(name: &str, default: &str) -> String {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| value.starts_with("http://") || value.starts_with("https://"))
-        .unwrap_or_else(|| default.trim_end_matches('/').to_string())
+/// Endpoints the client talks to. The host decides them (fixtures, proxies);
+/// the crate never reads the process environment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Origins {
+    pub api_base: String,
+    pub token_url: String,
+    pub authorize_url: String,
 }
 
-/// Pinned origins, overridable the same way the Grok adapter is for fixtures.
-pub fn api_base() -> String {
-    env_origin(API_BASE_ENV, API_BASE)
+impl Default for Origins {
+    fn default() -> Self {
+        Self {
+            api_base: API_BASE.to_string(),
+            token_url: TOKEN_URL.to_string(),
+            authorize_url: AUTHORIZE_URL.to_string(),
+        }
+    }
 }
 
-pub fn token_url() -> String {
-    env_origin(TOKEN_URL_ENV, TOKEN_URL)
-}
-
-pub fn authorize_url_base() -> String {
-    env_origin(AUTHORIZE_URL_ENV, AUTHORIZE_URL)
+impl Origins {
+    /// Keep only absolute http(s) origins; anything else falls back to the pinned one.
+    pub fn with_overrides(
+        api_base: Option<&str>,
+        token_url: Option<&str>,
+        authorize_url: Option<&str>,
+    ) -> Self {
+        let pinned = Self::default();
+        Self {
+            api_base: crate::origin_or(api_base, &pinned.api_base),
+            token_url: crate::origin_or(token_url, &pinned.token_url),
+            authorize_url: crate::origin_or(authorize_url, &pinned.authorize_url),
+        }
+    }
 }
 
 /// RFC 3986 unreserved characters only, so a redirect URI survives as one query value.
@@ -84,7 +95,11 @@ fn encode_component(value: &str) -> String {
 /// Authorization URL for the relay's own session. The PKCE verifier stays on the
 /// host; only `state` and the challenge travel.
 pub fn authorize_url(state: &str, code_challenge: &str) -> String {
-    let mut url = authorize_url_base();
+    authorize_url_at(&Origins::default(), state, code_challenge)
+}
+
+pub fn authorize_url_at(origins: &Origins, state: &str, code_challenge: &str) -> String {
+    let mut url = origins.authorize_url.trim_end_matches('/').to_string();
     let query = [
         ("response_type", "code"),
         ("client_id", CLIENT_ID),
@@ -374,22 +389,31 @@ pub fn document_from_credentials(value: &Value, now: i64) -> Result<Value, Strin
 
 pub struct Client {
     http: reqwest::blocking::Client,
+    origins: Origins,
 }
 
 impl Client {
     pub fn new() -> Result<Self, String> {
+        Self::with_origins(Origins::default())
+    }
+
+    pub fn with_origins(origins: Origins) -> Result<Self, String> {
         reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map(|http| Self { http })
+            .map(|http| Self { http, origins })
             .map_err(|_| "Claude client unavailable".into())
+    }
+
+    pub fn origins(&self) -> &Origins {
+        &self.origins
     }
 
     fn get(&self, path: &str, token: &str) -> Result<Value, String> {
         let mut request = self
             .http
-            .get(format!("{}{path}", api_base()))
+            .get(format!("{}{path}", self.origins.api_base))
             .header("Accept", "application/json");
         for (name, value) in headers(token) {
             request = request.header(name, value);
@@ -433,7 +457,7 @@ impl Client {
         }
         let response = self
             .http
-            .post(token_url())
+            .post(&self.origins.token_url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .json(&exchange_body(code.trim(), state, code_verifier))
@@ -464,7 +488,7 @@ impl Client {
         });
         let response = self
             .http
-            .post(token_url())
+            .post(&self.origins.token_url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .json(&payload)
@@ -822,6 +846,21 @@ fn iso_utc(value: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn host_supplied_origins_replace_the_pinned_ones() {
+        let origins = Origins::with_overrides(
+            Some("http://127.0.0.1:4000/"),
+            Some("not-a-url"),
+            Some("https://example.test/authorize"),
+        );
+        assert_eq!(origins.api_base, "http://127.0.0.1:4000");
+        assert_eq!(origins.token_url, TOKEN_URL);
+        let client = Client::with_origins(origins.clone()).unwrap();
+        assert_eq!(client.origins(), &origins);
+        assert!(authorize_url_at(&origins, "s", "c").starts_with("https://example.test/authorize?"));
+    }
+
     use super::*;
     use fabrials_model::{MetricLine, ProgressFormat};
 
@@ -951,10 +990,7 @@ mod tests {
         assert!(progress(&output.lines, "Cowork").is_none());
         let (spent, cap, _) = progress(&output.lines, "Extra usage spent").unwrap();
         assert_eq!((spent, cap), (5.0, 100.0));
-        assert!(matches!(
-            output.lines.iter().find(|line| matches!(line, MetricLine::Progress { label, format: ProgressFormat::Dollars, .. } if label == "Extra usage spent")),
-            Some(_)
-        ));
+        assert!(output.lines.iter().any(|line| matches!(line, MetricLine::Progress { label, format: ProgressFormat::Dollars, .. } if label == "Extra usage spent")));
         assert!(output.lines.iter().any(|line| matches!(
             line,
             MetricLine::Text { label, value, .. }

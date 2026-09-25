@@ -23,27 +23,34 @@ pub const USAGE_PATH: &str = "/v1/usages";
 pub const MODELS_PATH: &str = "/v1/models";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const REFRESH_BUFFER_MS: i64 = 300_000;
-const API_BASE_ENV: &str = "AI_RELAY_KIMI_API_BASE";
-const TOKEN_URL_ENV: &str = "AI_RELAY_KIMI_TOKEN_URL";
 
 const MAX_TOKEN: usize = 16 * 1024;
 const MAX_LABEL: usize = 120;
 
-fn env_origin(name: &str, default: &str) -> String {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| value.starts_with("http://") || value.starts_with("https://"))
-        .unwrap_or_else(|| default.trim_end_matches('/').to_string())
+/// Endpoints the client talks to, chosen by the host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Origins {
+    pub api_base: String,
+    pub token_url: String,
 }
 
-/// Pinned origins, overridable the same way the Grok adapter is for fixtures.
-pub fn api_base() -> String {
-    env_origin(API_BASE_ENV, API_BASE)
+impl Default for Origins {
+    fn default() -> Self {
+        Self {
+            api_base: API_BASE.to_string(),
+            token_url: TOKEN_URL.to_string(),
+        }
+    }
 }
 
-pub fn token_url() -> String {
-    env_origin(TOKEN_URL_ENV, TOKEN_URL)
+impl Origins {
+    pub fn with_overrides(api_base: Option<&str>, token_url: Option<&str>) -> Self {
+        let pinned = Self::default();
+        Self {
+            api_base: crate::origin_or(api_base, &pinned.api_base),
+            token_url: crate::origin_or(token_url, &pinned.token_url),
+        }
+    }
 }
 
 fn graphic(value: &Value, max: usize) -> Option<String> {
@@ -191,22 +198,31 @@ pub fn refresh_rejection(status: u16) -> String {
 
 pub struct Client {
     http: reqwest::blocking::Client,
+    origins: Origins,
 }
 
 impl Client {
     pub fn new() -> Result<Self, String> {
+        Self::with_origins(Origins::default())
+    }
+
+    pub fn with_origins(origins: Origins) -> Result<Self, String> {
         reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map(|http| Self { http })
+            .map(|http| Self { http, origins })
             .map_err(|_| "Kimi client unavailable".into())
+    }
+
+    pub fn origins(&self) -> &Origins {
+        &self.origins
     }
 
     fn get(&self, path: &str, token: &str) -> Result<Value, String> {
         let mut request = self
             .http
-            .get(format!("{}{path}", api_base()))
+            .get(format!("{}{path}", self.origins.api_base))
             .header("Accept", "application/json");
         for (name, value) in headers(token) {
             request = request.header(name, value);
@@ -238,7 +254,7 @@ impl Client {
         let refresh = refresh_token(document).ok_or("Kimi refresh token missing")?;
         let response = self
             .http
-            .post(token_url())
+            .post(&self.origins.token_url)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
             .body(refresh_body(&refresh))
@@ -355,6 +371,7 @@ fn membership_level(usage: &Value) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use fabrials_model::MetricLine;
 

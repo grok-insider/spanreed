@@ -23,13 +23,13 @@ tray = ["dep:tray-icon", "dep:tao", "dep:image", "dep:wry", "dep:gtk"]
 
 [dependencies]
 ts-rs = { version = "12.0.1", optional = true }
-fabrials-runtime = "0.1.0"
-fabrials-providers = "0.1.0"
-fabrials-core = "0.1.0"
-fabrials-model = "0.1.0"
-fabrials-metrics = "0.1.0"
-fabrials-accounts = "0.1.1"
-fabrials-oauth-grok = "0.1.1"
+fabrials-runtime = "0.1"
+fabrials-providers = "0.1"
+fabrials-core = "0.1"
+fabrials-model = "0.2"
+fabrials-metrics = "0.2"
+fabrials-accounts = "0.2"
+fabrials-oauth-grok = "0.1.2"
 fabrials-share = "0.2.0"
 reqwest = { version = "0.12", features = ["blocking", "json", "socks", "rustls-tls"], default-features = false }
 rusqlite = { version = "0.32", features = ["bundled"] }
