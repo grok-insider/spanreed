@@ -2,11 +2,11 @@
 name = "fabrials-oauth-grok"
 version = "0.1.2"
 description = "Grok/xAI CLI OAuth helpers: token extract and inject headers"
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-authors.workspace = true
-publish.workspace = true
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/grok-insider/fabrials-libs"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+publish = false
 
 [dependencies]
 serde_json = "1"

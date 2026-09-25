@@ -2,13 +2,13 @@
 name = "fabrials-share"
 version = "0.2.0"
 description = "Community usage snapshot builder for Fabrials (Spanreed and ai-relay)"
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-authors.workspace = true
-publish.workspace = true
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/grok-insider/fabrials-libs"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+publish = false
 
 [dependencies]
-fabrials-model.workspace = true
-fabrials-metrics.workspace = true
+fabrials-model = { path = "../fabrials-model" }
+fabrials-metrics = { path = "../fabrials-metrics" }
 serde_json = "1"
