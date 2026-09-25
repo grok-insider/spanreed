@@ -250,9 +250,19 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
         {
             let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
-            let stale =
-                tray_format::status_expired(guard.status_at, guard.reset_in_flight, Instant::now());
-            if stale {
+            let now = Instant::now();
+            if tray_format::reset_hung(guard.status_at, guard.reset_in_flight, now) {
+                let mut in_flight = guard.reset_in_flight;
+                let mut status = guard.status_note.clone();
+                let before = status.clone();
+                tray_format::abandon_reset(&mut in_flight, &mut status);
+                guard.reset_in_flight = in_flight;
+                guard.status_note = status;
+                if guard.status_note != before {
+                    guard.status_at = Some(now);
+                    guard.dirty = true;
+                }
+            } else if tray_format::status_expired(guard.status_at, guard.reset_in_flight, now) {
                 guard.status_note = None;
                 guard.status_at = None;
                 guard.dirty = true;

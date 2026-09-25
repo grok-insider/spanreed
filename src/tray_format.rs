@@ -19,6 +19,12 @@ pub fn status_expired(status_at: Option<Instant>, reset_in_flight: bool, now: In
         && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(8))
 }
 
+/// A reset that is still marked running after a minute has stopped reporting.
+pub fn reset_hung(status_at: Option<Instant>, reset_in_flight: bool, now: Instant) -> bool {
+    reset_in_flight
+        && status_at.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_secs(60))
+}
+
 /// A reset that never reports back must not leave "Using reset…" on the card.
 pub fn abandon_reset(reset_in_flight: &mut bool, status: &mut Option<String>) {
     if !*reset_in_flight {
@@ -223,6 +229,10 @@ mod tests {
         assert!(status_expired(Some(earlier), false, now));
         assert!(!status_expired(Some(earlier), true, now));
         assert!(!status_expired(None, false, now));
+        let hung = now.checked_sub(Duration::from_secs(61)).expect("instant");
+        assert!(!reset_hung(Some(now), true, now));
+        assert!(reset_hung(Some(hung), true, now));
+        assert!(!reset_hung(Some(hung), false, now));
     }
 
     #[test]
