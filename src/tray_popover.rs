@@ -78,6 +78,27 @@ impl Popover {
         self.webview.load_html(&html).ok();
     }
 
+    /// Update the status line in the open document. A full reload can finish
+    /// after the line was already cleared, which left it on screen.
+    pub fn sync_status(&self, status: Option<&str>) {
+        let text = serde_json::to_string(status.unwrap_or("")).unwrap_or_else(|_| "\"\"".into());
+        let script = format!(
+            r#"(function() {{
+              var text = {text};
+              var node = document.querySelector("p.status");
+              if (!text) {{ if (node) node.remove(); return; }}
+              if (!node) {{
+                node = document.createElement("p");
+                node.className = "status";
+                var card = document.querySelector("main.card");
+                if (card) card.insertBefore(node, card.firstChild);
+              }}
+              node.textContent = text;
+            }})()"#
+        );
+        self.webview.evaluate_script(&script).ok();
+    }
+
     pub fn poll(&self) -> Option<String> {
         self.rx.try_recv().ok()
     }

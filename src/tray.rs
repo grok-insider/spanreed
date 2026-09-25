@@ -510,6 +510,13 @@ fn run_tray(interval_secs: u64) -> Result<(), String> {
                 popover.load(usage_card(&state));
             }
         }
+        if popover.visible() {
+            let status = state
+                .lock()
+                .ok()
+                .and_then(|guard| guard.status_note.clone());
+            popover.sync_status(status.as_deref());
+        }
     });
 }
 
