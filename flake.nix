@@ -100,7 +100,7 @@
           postFixup = ''
             wrapProgram "$out/bin/spanreed-desktop" \
               --set-default WEBKIT_DISABLE_DMABUF_RENDERER 1 \
-              --prefix PATH : "${lib.makeBinPath [ pkgs.libsecret pkgs.xdg-utils pkgs.libnotify ]}" \
+              --prefix PATH : "${lib.makeBinPath [ pkgs.libsecret pkgs.xdg-utils pkgs.libnotify pkgs.glib ]}" \
               --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath [ pkgs.libayatana-appindicator pkgs.gtk3 ]}" \
               "''${gappsWrapperArgs[@]}"
           '';
@@ -131,6 +131,7 @@
             pkgs.libsecret
             pkgs.xdg-utils
             pkgs.libnotify
+            pkgs.glib
           ];
           # tray-icon dlopens Ayatana at runtime (not a link-time NEEDED).
           trayLibPath = lib.makeLibraryPath (
@@ -455,6 +456,7 @@
               pkgs.libayatana-appindicator
               pkgs.xdotool
               pkgs.libnotify
+              pkgs.glib
               pkgs.xdg-utils
             ];
           };
