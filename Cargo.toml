@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+license = "AGPL-3.0-or-later"
+authors = ["Grok Insider <admin@grokinsider.net>"]
+repository = "https://github.com/grok-insider/fabrials-libs"
+publish = false
+
+[workspace.dependencies]
+fabrials-core = { path = "crates/fabrials-core" }
+fabrials-model = { path = "crates/fabrials-model" }
+fabrials-metrics = { path = "crates/fabrials-metrics" }
+fabrials-share = { path = "crates/fabrials-share" }
+fabrials-accounts = { path = "crates/fabrials-accounts" }
+fabrials-oauth-grok = { path = "crates/fabrials-oauth-grok" }
+fabrials-runtime = { path = "crates/fabrials-runtime" }
+fabrials-providers = { path = "crates/fabrials-providers" }

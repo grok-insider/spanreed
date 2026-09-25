@@ -1,0 +1,479 @@
+[
+  {
+    "id": "opencode",
+    "name": "OpenCode",
+    "root": "XdgData",
+    "environment": null,
+    "fallback": null,
+    "relative": "opencode/storage/message",
+    "pattern": "*.json"
+  },
+  {
+    "id": "claude",
+    "name": "Claude Code",
+    "root": "EnvVar",
+    "environment": "CLAUDE_CONFIG_DIR",
+    "fallback": ".claude",
+    "relative": "projects",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "codex",
+    "name": "Codex CLI",
+    "root": "EnvVar",
+    "environment": "CODEX_HOME",
+    "fallback": ".codex",
+    "relative": "sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "cursor",
+    "name": "Cursor IDE",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".config/tokscale/cursor-cache",
+    "pattern": "usage*.json|usage*.csv"
+  },
+  {
+    "id": "gemini",
+    "name": "Gemini CLI",
+    "root": "EnvVar",
+    "environment": "GEMINI_CLI_HOME",
+    "fallback": ".gemini",
+    "relative": "tmp",
+    "pattern": "*.json|*.jsonl"
+  },
+  {
+    "id": "amp",
+    "name": "Amp",
+    "root": "XdgData",
+    "environment": null,
+    "fallback": null,
+    "relative": "amp/threads",
+    "pattern": "T-*.json"
+  },
+  {
+    "id": "droid",
+    "name": "Droid",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".factory/sessions",
+    "pattern": "*.settings.json"
+  },
+  {
+    "id": "openclaw",
+    "name": "OpenClaw",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".openclaw/agents",
+    "pattern": "*.jsonl*"
+  },
+  {
+    "id": "pi",
+    "name": "Pi",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".pi/agent/sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi CLI",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".kimi/sessions",
+    "pattern": "wire.jsonl"
+  },
+  {
+    "id": "qwen",
+    "name": "Qwen CLI",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".qwen/projects",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "roocode",
+    "name": "Roo Code",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+    "pattern": "ui_messages.json"
+  },
+  {
+    "id": "kilocode",
+    "name": "Kilo Code",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".config/Code/User/globalStorage/kilocode.kilo-code/tasks",
+    "pattern": "ui_messages.json"
+  },
+  {
+    "id": "mux",
+    "name": "Mux",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".mux/sessions",
+    "pattern": "session-usage.json"
+  },
+  {
+    "id": "kilo",
+    "name": "Kilo CLI",
+    "root": "XdgData",
+    "environment": null,
+    "fallback": null,
+    "relative": "kilo/kilo.db",
+    "pattern": "kilo.db"
+  },
+  {
+    "id": "crush",
+    "name": "Crush",
+    "root": "XdgData",
+    "environment": null,
+    "fallback": null,
+    "relative": "crush/projects.json",
+    "pattern": "projects.json"
+  },
+  {
+    "id": "hermes",
+    "name": "Hermes Agent",
+    "root": "EnvVar",
+    "environment": "HERMES_HOME",
+    "fallback": ".hermes",
+    "relative": "state.db",
+    "pattern": "state.db"
+  },
+  {
+    "id": "copilot",
+    "name": "Copilot CLI",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".copilot/otel",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "goose",
+    "name": "Goose",
+    "root": "XdgData",
+    "environment": null,
+    "fallback": null,
+    "relative": "goose/sessions/sessions.db",
+    "pattern": "sessions.db"
+  },
+  {
+    "id": "codebuff",
+    "name": "Codebuff",
+    "root": "EnvVar",
+    "environment": "CODEBUFF_DATA_DIR",
+    "fallback": ".config/manicode",
+    "relative": "projects",
+    "pattern": "chat-messages.json"
+  },
+  {
+    "id": "antigravity",
+    "name": "Antigravity",
+    "root": "Config",
+    "environment": null,
+    "fallback": null,
+    "relative": "antigravity-cache/sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "zed",
+    "name": "Zed Agent",
+    "root": "XdgData",
+    "environment": null,
+    "fallback": null,
+    "relative": "zed/threads/threads.db",
+    "pattern": "threads.db"
+  },
+  {
+    "id": "kiro",
+    "name": "Kiro",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".kiro/sessions/cli",
+    "pattern": "*.json"
+  },
+  {
+    "id": "trae",
+    "name": "Trae",
+    "root": "Config",
+    "environment": null,
+    "fallback": null,
+    "relative": "trae-cache/sessions",
+    "pattern": "*.json"
+  },
+  {
+    "id": "warp",
+    "name": "Warp",
+    "root": "Config",
+    "environment": null,
+    "fallback": null,
+    "relative": "warp-cache",
+    "pattern": "usage*.json"
+  },
+  {
+    "id": "cline",
+    "name": "Cline",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks",
+    "pattern": "ui_messages.json"
+  },
+  {
+    "id": "gjc",
+    "name": "Gajae-Code",
+    "root": "EnvVar",
+    "environment": "GJC_CODING_AGENT_DIR",
+    "fallback": ".gjc/agent",
+    "relative": "sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "grok",
+    "name": "Grok Build",
+    "root": "EnvVar",
+    "environment": "GROK_HOME",
+    "fallback": ".grok",
+    "relative": "sessions",
+    "pattern": "updates.jsonl"
+  },
+  {
+    "id": "jcode",
+    "name": "Jcode",
+    "root": "EnvVar",
+    "environment": "JCODE_HOME",
+    "fallback": ".jcode",
+    "relative": "sessions",
+    "pattern": "session_*.json"
+  },
+  {
+    "id": "commandcode",
+    "name": "Command Code",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".commandcode/projects",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "micode",
+    "name": "MiMo Code",
+    "root": "XdgData",
+    "environment": null,
+    "fallback": null,
+    "relative": "mimocode",
+    "pattern": "*.db"
+  },
+  {
+    "id": "antigravity-cli",
+    "name": "Antigravity CLI",
+    "root": "EnvVar",
+    "environment": "GEMINI_CLI_HOME",
+    "fallback": ".gemini",
+    "relative": "antigravity-cli/conversations",
+    "pattern": "*.db"
+  },
+  {
+    "id": "junie",
+    "name": "Junie",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".junie/sessions",
+    "pattern": "events.jsonl"
+  },
+  {
+    "id": "zcode",
+    "name": "ZCode",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".zcode/projects",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "opencodereview",
+    "name": "OpenCodeReview",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".opencodereview/sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "codebuddy",
+    "name": "CodeBuddy",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".codebuddy/projects",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "workbuddy",
+    "name": "WorkBuddy",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".workbuddy",
+    "pattern": "workbuddy.db"
+  },
+  {
+    "id": "devin-cli",
+    "name": "Devin CLI",
+    "root": "XdgData",
+    "environment": null,
+    "fallback": null,
+    "relative": "devin/cli/sessions.db",
+    "pattern": "sessions.db"
+  },
+  {
+    "id": "devin-desktop",
+    "name": "Devin Desktop",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": "Library/Application Support/Devin/User/acp-events",
+    "pattern": "*.ndjson"
+  },
+  {
+    "id": "senpi",
+    "name": "Senpi (OmO Native)",
+    "root": "EnvVar",
+    "environment": "SENPI_CODING_AGENT_DIR",
+    "fallback": ".senpi/agent",
+    "relative": "sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "augment",
+    "name": "Augment Code",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".augment/sessions",
+    "pattern": "*.json"
+  },
+  {
+    "id": "kimchi",
+    "name": "Kimchi",
+    "root": "EnvVar",
+    "environment": "KIMCHI_CODING_AGENT_DIR",
+    "fallback": ".config/kimchi/harness",
+    "relative": "sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "reasonix",
+    "name": "Reasonix",
+    "root": "ReasonixHome",
+    "environment": null,
+    "fallback": null,
+    "relative": "stats",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "prime-agent",
+    "name": "Prime Agent",
+    "root": "EnvVar",
+    "environment": "PRIME_AGENT_CODING_AGENT_DIR",
+    "fallback": ".prime/agent",
+    "relative": "sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "freebuff",
+    "name": "Freebuff",
+    "root": "EnvVar",
+    "environment": "FREEBUFF_DATA_DIR",
+    "fallback": ".config/manicode",
+    "relative": "projects",
+    "pattern": "chat-messages.json"
+  },
+  {
+    "id": "cherrystudio",
+    "name": "Cherry Studio",
+    "root": "AppData",
+    "environment": null,
+    "fallback": null,
+    "relative": "CherryStudio/.claude/projects",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "dsh",
+    "name": "DeepSeek Harness",
+    "root": "EnvVar",
+    "environment": "DSH_HOME",
+    "fallback": ".dsh",
+    "relative": "sessions",
+    "pattern": "dsh-session-log"
+  },
+  {
+    "id": "mcode",
+    "name": "MiniMax Code",
+    "root": "Config",
+    "environment": null,
+    "fallback": null,
+    "relative": "headless/mcode",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "fx",
+    "name": "Fx",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".fx/sessions",
+    "pattern": "usage-v2.json"
+  },
+  {
+    "id": "omp",
+    "name": "Oh My Pi",
+    "root": "Home",
+    "environment": null,
+    "fallback": null,
+    "relative": ".omp/agent/sessions",
+    "pattern": "*.jsonl"
+  },
+  {
+    "id": "lmstudio",
+    "name": "LM Studio",
+    "root": "EnvVar",
+    "environment": "LM_STUDIO_HOME",
+    "fallback": ".lmstudio",
+    "relative": "server-logs",
+    "pattern": "*.log"
+  },
+  {
+    "id": "unsloth",
+    "name": "Unsloth",
+    "root": "EnvVar",
+    "environment": "UNSLOTH_STUDIO_HOME",
+    "fallback": ".unsloth/studio",
+    "relative": "studio.db",
+    "pattern": "studio.db"
+  },
+  {
+    "id": "hindsight",
+    "name": "Hindsight",
+    "root": "EnvVar",
+    "environment": "HINDSIGHT_HOME",
+    "fallback": ".hindsight",
+    "relative": "usage",
+    "pattern": "*.jsonl"
+  }
+]

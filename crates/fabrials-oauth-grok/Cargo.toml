@@ -1,0 +1,13 @@
+[package]
+name = "fabrials-oauth-grok"
+version = "0.1.2"
+description = "Grok/xAI CLI OAuth helpers: token extract and inject headers"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json = "1"
+base64 = "0.22"
