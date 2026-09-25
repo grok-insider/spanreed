@@ -373,13 +373,9 @@ fn main() {
                 if spanreed::desktop_open::peek().is_some() {
                     use tauri::Manager;
                     if let Some(window) = handle.get_webview_window("main") {
-                        let hidden = window.is_visible().ok() != Some(true)
-                            || window.is_minimized().ok() == Some(true);
-                        if hidden {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
                     }
                 }
                 if let Some(alert) = spanreed::desktop_open::take_alert() {
