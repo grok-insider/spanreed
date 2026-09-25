@@ -1,6 +1,6 @@
 [package]
 name = "spanreed"
-version = "0.6.1"
+version = "0.6.2"
 description = "Linux-native AI coding subscription usage tracker (daemon + CLI + Waybar)"
 edition = "2024"
 license = "AGPL-3.0-or-later"
@@ -54,7 +54,7 @@ exclude = ["desktop/src-tauri", "vendor/fabrials-libs"]
 resolver = "2"
 
 [workspace.package]
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 authors = ["Grok Insider <admin@grokinsider.net>"]
