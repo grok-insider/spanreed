@@ -83,6 +83,7 @@ pub mod service {
         std::env::var_os("HOME").map(PathBuf::from)
     }
 
+    #[cfg(unix)]
     pub fn plist_path(home: &Path) -> PathBuf {
         home.join("Library/LaunchAgents")
             .join(format!("{LABEL}.plist"))
@@ -245,6 +246,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_launch_agent_keeps_the_host_serving() {
         let plist = service::launch_agent_plist(
