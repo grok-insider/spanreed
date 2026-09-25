@@ -1072,12 +1072,12 @@ fn user_notify(title: &str, body: &str, modal: bool) {
     let title = title.to_string();
     let body = body.to_string();
     thread::spawn(move || {
-        let _handed_to_desktop = crate::desktop_open::hand_off_alert(&title, &body);
-        // A desktop show can report success and then drop the alert. Every
-        // platform still delivers through its own notification path.
+        // Deliver before asking the desktop. The desktop handshake waits, and a
+        // successful plugin show can still drop the banner.
         if let Err(error) = crate::notifications::deliver_user_visible(&title, &body) {
             log::warn!("tray notify failed: {error}");
         }
+        let _handed_to_desktop = crate::desktop_open::hand_off_alert(&title, &body);
     });
 }
 
