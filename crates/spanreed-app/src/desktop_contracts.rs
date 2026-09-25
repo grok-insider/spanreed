@@ -32,6 +32,7 @@ pub fn typescript() -> String {
         crate::app::accounts::ModelCatalog::decl(&config),
         crate::app::proxy::ProxyState::decl(&config),
         crate::app::proxy::Status::decl(&config),
+        crate::app::agent::AgentStatus::decl(&config),
         crate::app::clients::ConfigurationClient::decl(&config),
         crate::app::clients::Operation::decl(&config),
         crate::app::clients::Preview::decl(&config),

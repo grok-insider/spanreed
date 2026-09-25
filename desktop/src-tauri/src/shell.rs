@@ -1,6 +1,6 @@
 //! Window routing requested by other front ends, alert hand-off, and the
 //! desktop tray icon.
-use spanreed::app::{AppContext, window};
+use spanreed::app::{AppContext, agent, notifications, window};
 use tauri::Manager;
 use tauri::plugin::PermissionState;
 use tauri_plugin_notification::NotificationExt;
@@ -63,8 +63,16 @@ fn deliver_alert(ctx: &AppContext, handle: &tauri::AppHandle) {
 pub fn build_tray(ctx: AppContext, app: &tauri::App) -> tauri::Result<()> {
     let show = tauri::menu::MenuItem::with_id(app, "show", "Open dashboard", true, None::<&str>)?;
     let settings = tauri::menu::MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let agent = tauri::menu::MenuItem::with_id(
+        app,
+        "agent",
+        agent_label(agent::running(&ctx)),
+        true,
+        None::<&str>,
+    )?;
     let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit Spanreed", true, None::<&str>)?;
-    let menu = tauri::menu::Menu::with_items(app, &[&show, &settings, &quit])?;
+    let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
+    let menu = tauri::menu::Menu::with_items(app, &[&show, &settings, &separator, &agent, &quit])?;
     tauri::tray::TrayIconBuilder::new()
         .menu(&menu)
         .tooltip("Spanreed")
@@ -77,6 +85,10 @@ pub fn build_tray(ctx: AppContext, app: &tauri::App) -> tauri::Result<()> {
             let page = match event.id.as_ref() {
                 "show" => "overview",
                 "settings" => "settings",
+                "agent" => {
+                    toggle_agent(ctx.clone(), agent.clone());
+                    return;
+                }
                 "quit" => {
                     app.exit(0);
                     return;
@@ -92,4 +104,35 @@ pub fn build_tray(ctx: AppContext, app: &tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+fn agent_label(running: bool) -> &'static str {
+    if running {
+        "Stop agent host"
+    } else {
+        "Start agent host"
+    }
+}
+
+/// Start `spanreed agent serve` in this process on its own port, or stop
+/// it, off the menu thread; the entry then shows the next action.
+fn toggle_agent<R: tauri::Runtime>(ctx: AppContext, item: tauri::menu::MenuItem<R>) {
+    std::thread::spawn(move || {
+        let running = agent::running(&ctx);
+        let _ = item.set_enabled(false);
+        let result = if running {
+            agent::stop(&ctx)
+        } else {
+            agent::start(&ctx)
+        };
+        if let Err(error) = result {
+            let _ = notifications::deliver_user_visible(
+                &ctx,
+                "Spanreed agent host",
+                &format!("Agent host: {error}"),
+            );
+        }
+        let _ = item.set_text(agent_label(agent::running(&ctx)));
+        let _ = item.set_enabled(true);
+    });
 }

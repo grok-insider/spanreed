@@ -9,6 +9,7 @@ pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The command users type to reach the agent host.
 pub const COMMAND: &str = "spanreed agent";
 
+#[cfg_attr(feature = "contracts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStatus {

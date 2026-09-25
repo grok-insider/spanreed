@@ -55,7 +55,7 @@ must stay empty.
 | `crates/spanreed-adapters/src/services.rs` | One implementation per port and `standard()`, the production `Services`. |
 | `crates/spanreed-adapters/src/*` | The adapters: the rest of this table. |
 | `crates/spanreed-tray` | `spanreed tray` (feature `tray`; empty without it, so workspace builds need no GTK): `menu`, `state`, `actions`, `visual`, `popover`, `platform`. Nix package builds this; musl GH zips do not. |
-| `desktop/` | Tauri + React local console (`src-tauri/src/{main,commands,notifications,shell}.rs`); shared styles/components from `@fabrials/ui`. |
+| `desktop/` | Tauri + React local console (`src-tauri/src/{main,commands,notifications,shell}.rs`); `main.rs` composes the `AppContext`; commands include `agent_status`/`agent_start`/`agent_stop` (`AgentStatus` in `src/contracts.ts`) and the app tray menu has a Start/Stop agent host entry. Shared styles/components from `@fabrials/ui`. |
 | `privacy.rs` | Independent, default-off metrics publication and history synchronization consent. |
 | `history.rs` | Quota observations in `runtime.sqlite3` through shared `fabrials-store-sqlite` (`SqliteHistoryStore`; reset/duplicate rules in `fabrials_fabric::history`); one-time import preserves `usage-history.jsonl`. CLI and desktop read the same store. |
 | `local_tokens.rs` | Grok refresh through shared durable rotation journal and scoped advisory locks; journal is separate from usage data. Nous uses the same journal from its driver. |
