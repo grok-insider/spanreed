@@ -194,7 +194,7 @@ fn spawn_desktop() -> Result<(), String> {
         };
         match Command::new(&path).spawn() {
             Ok(_) => return Ok(()),
-            Err(error) => last = error.to_string(),
+            Err(error) => last = format!("{}: {error}", path.display()),
         }
     }
     Err(format!("Could not open Spanreed Desktop: {last}"))
@@ -230,7 +230,17 @@ fn is_cli_binary(path: &std::path::Path) -> bool {
     };
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let exe = exe.canonicalize().unwrap_or(exe);
-    path == exe || path.parent() == exe.parent().and_then(|dir| dir.parent())
+    if path == exe || path.parent() == exe.parent().and_then(|dir| dir.parent()) {
+        return true;
+    }
+    // `cargo test` builds spanreed.exe under target/{debug,release} and deps.
+    // That file is the CLI, including when Windows matches Spanreed.exe.
+    matches!(
+        path.parent()
+            .and_then(|dir| dir.file_name())
+            .and_then(|name| name.to_str()),
+        Some("debug" | "release" | "deps")
+    )
 }
 
 fn process_alive(pid: u32) -> bool {
@@ -265,6 +275,37 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    struct EnvRestore {
+        path: Option<std::ffi::OsString>,
+        desktop: Option<std::ffi::OsString>,
+        #[cfg(windows)]
+        local: Option<std::ffi::OsString>,
+        #[cfg(windows)]
+        program: Option<std::ffi::OsString>,
+        #[cfg(windows)]
+        program_x86: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            restore_var("PATH", self.path.take());
+            restore_var("SPANREED_DESKTOP", self.desktop.take());
+            #[cfg(windows)]
+            {
+                restore_var("LOCALAPPDATA", self.local.take());
+                restore_var("ProgramFiles", self.program.take());
+                restore_var("ProgramFiles(x86)", self.program_x86.take());
+            }
+        }
+    }
+
+    fn restore_var(name: &str, value: Option<std::ffi::OsString>) {
+        match value {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        }
+    }
+
     fn with_data_home(f: impl FnOnce(&std::path::Path)) {
         static LOCK: Mutex<()> = Mutex::new(());
         let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
@@ -291,7 +332,34 @@ mod tests {
     #[test]
     fn request_queues_a_local_overview_route() {
         with_data_home(|dir| {
-            let error = request("overview").unwrap_err();
+            let previous_path = std::env::var_os("PATH");
+            let previous_desktop = std::env::var_os("SPANREED_DESKTOP");
+            #[cfg(windows)]
+            let previous_local = std::env::var_os("LOCALAPPDATA");
+            #[cfg(windows)]
+            let previous_program = std::env::var_os("ProgramFiles");
+            #[cfg(windows)]
+            let previous_program_x86 = std::env::var_os("ProgramFiles(x86)");
+            let _restore = EnvRestore {
+                path: previous_path.clone(),
+                desktop: previous_desktop.clone(),
+                #[cfg(windows)]
+                local: previous_local.clone(),
+                #[cfg(windows)]
+                program: previous_program.clone(),
+                #[cfg(windows)]
+                program_x86: previous_program_x86.clone(),
+            };
+            std::env::remove_var("SPANREED_DESKTOP");
+            std::env::set_var("PATH", dir);
+            #[cfg(windows)]
+            {
+                std::env::set_var("LOCALAPPDATA", dir);
+                std::env::set_var("ProgramFiles", dir);
+                std::env::set_var("ProgramFiles(x86)", dir);
+            }
+            let error =
+                request("overview").expect_err("no desktop binary is installed for this test");
             assert!(error.contains("Spanreed Desktop") || error.contains("spanreed-desktop"));
             let queued = std::fs::read_to_string(dir.join("spanreed").join(ROUTE)).unwrap();
             assert_eq!(queued, "#/local/overview");

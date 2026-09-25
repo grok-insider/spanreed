@@ -278,10 +278,13 @@ try {
   $nodes.Item(0).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_TITLE)) > $null
   $nodes.Item(1).AppendChild($document.CreateTextNode($env:SPANREED_NOTIFICATION_BODY)) > $null
   $toast = [Windows.UI.Notifications.ToastNotification]::new($document)
+  $script:toastFailed = $false
+  $toast.add_Failed({ $script:toastFailed = $true })
   # PowerShell's own AppUserModelID is registered on Windows. An unregistered
   # id such as com.fabrials.spanreed accepts Show and then drops the toast.
   [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)
-  $toastShown = $true
+  Start-Sleep -Milliseconds 500
+  if (-not $script:toastFailed) { $toastShown = $true }
 } catch {}
 try {
   Show-SpanreedBalloon
@@ -379,6 +382,8 @@ mod tests {
         ));
         assert!(WINDOWS_NOTIFY.contains("Show-SpanreedBalloon"));
         assert!(WINDOWS_NOTIFY.contains("Show($toast)"));
+        assert!(WINDOWS_NOTIFY.contains("add_Failed"));
+        assert!(WINDOWS_NOTIFY.contains("if (-not $script:toastFailed) { $toastShown = $true }"));
         assert!(WINDOWS_NOTIFY.contains("if (-not $toastShown) { throw }"));
         assert!(WINDOWS_NOTIFY.contains("Start-Sleep -Seconds 2"));
         assert!(!WINDOWS_NOTIFY.contains("CreateToastNotifier('com.fabrials.spanreed')"));
