@@ -4,6 +4,11 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-09-26
+
+- ci(nix): let manual dispatches publish to cache.fabrials.com
+- ci: publish Nix closures to cache.fabrials.com (#45)
+
 ## [0.7.0] - 2026-09-25
 
 - fix: macOS test qualification - hermetic keyring test, full ps command, bounded cross job

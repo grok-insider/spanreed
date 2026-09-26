@@ -10,11 +10,11 @@
   # will prompt, or add them to nix.settings on NixOS).
   nixConfig = {
     extra-substituters = [
-      "https://grok-insider.cachix.org"
+      "https://cache.fabrials.com/fabrials"
       "https://nix-community.cachix.org"
     ];
     extra-trusted-public-keys = [
-      "grok-insider.cachix.org-1:8i89e8J7hJHfIBwZivzxY9Kt9fk89ywhAqW+ml7TOB4="
+      "fabrials:vpcHFnI0zvmDmw7Hetdbew29BbS9JObpVNkzClA8Q3k="
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
     ];
   };

@@ -2,7 +2,7 @@ name: CI
 
 # Status checks (fmt/clippy/test) run on pull requests only — not on bare
 # pushes to master/dev. Optional cross-platform check is informational.
-# Nix flake build + Cachix: .github/workflows/nix.yml (master / v* / PRs).
+# Nix flake build + cache.fabrials.com: .github/workflows/nix.yml (master / v* / PRs).
 
 on:
   pull_request:
