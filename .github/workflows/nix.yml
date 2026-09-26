@@ -1,7 +1,7 @@
 name: Nix
 
 # Keep `github:grok-insider/spanreed` buildable. Push the gnu+tray closure to
-# Cachix on master / tags when CACHIX_AUTH_TOKEN is set.
+# cache.fabrials.com on master / tags when ATTIC_TOKEN is set.
 
 on:
   pull_request:
@@ -49,11 +49,16 @@ jobs:
         with:
           extra_nix_config: |
             accept-flake-config = true
-      - uses: cachix/cachix-action@v16
-        with:
-          name: grok-insider
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
       - run: nix flake show --all-systems
       - run: nix build .#default .#spanreed-desktop --no-link --print-build-logs
       - run: nix run . -- --help
+      - name: Push to cache.fabrials.com
+        if: github.event_name == 'push'
+        env:
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+        run: |
+          if [ -z "$ATTIC_TOKEN" ]; then echo "::warning::ATTIC_TOKEN not set; skipping push"; exit 0; fi
+          nix profile install --inputs-from . nixpkgs#attic-client
+          attic login fabrials https://push.cache.fabrials.com "$ATTIC_TOKEN"
+          mapfile -t paths < <(nix build .#default .#spanreed-desktop --no-link --print-out-paths)
+          attic push fabrials "${paths[@]}"

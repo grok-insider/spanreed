@@ -75,8 +75,8 @@ nix run github:grok-insider/spanreed/dev -- probe
 Do **not** use `github:grok-insider/spanreed` without a tag: that follows
 `master`, which can sit ahead of the last release.
 
-First `nix run`/`nix profile` may ask to trust `nixConfig` (Cachix
-`grok-insider.cachix.org`). Accept it, or add the substituter in your NixOS
+First `nix run`/`nix profile` may ask to trust `nixConfig` (Fabrials binary cache
+`cache.fabrials.com/fabrials`). Accept it, or add the substituter in your NixOS
 `nix.settings`.
 
 Flake input + Home Manager:
