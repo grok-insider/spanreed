@@ -22,6 +22,17 @@ pub trait HopObserver {
         alias: Option<&str>,
         expected: Option<&serde_json::Value>,
     ) -> Result<(), String>;
+    /// Whether the credential captured when a tunnel opened is still the
+    /// account's current one. `false` ends the tunnel so the client reconnects
+    /// with the current credential; metadata-only changes must stay `true`.
+    fn credential_current(
+        &self,
+        _provider: &str,
+        _alias: Option<&str>,
+        _expected: Option<&serde_json::Value>,
+    ) -> bool {
+        true
+    }
     fn response_headers(&self, _status: u16, _headers: &reqwest::header::HeaderMap) {}
     fn models_response(&self, body: Vec<u8>) -> Vec<u8> {
         body
@@ -241,9 +252,13 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
 
     // Chat-only upstreams receive a Chat Completions body. A structured-output
     // retry may replace it; a credential retry repeats the body that is current.
+    // The body moves into one shared buffer: every attempt sends a
+    // reference-counted view of it instead of a fresh copy.
     let shaped = prov.shape_request(&routed, inject.as_deref(), &body);
-    let mut outbound =
-        crate::wire_compat::adapt_upstream_body(&routed.path, shaped.as_deref().unwrap_or(&body));
+    let mut outbound = bytes::Bytes::from(crate::wire_compat::adapt_upstream_body_owned(
+        &routed.path,
+        shaped.unwrap_or(body),
+    ));
     let mut format_retried = false;
     let mut inject = inject;
     let mut secret = secret;
@@ -315,7 +330,7 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
                 crate::wire_compat::downgrade_after_rejection(status.as_u16(), &rejected, &outbound)
             {
                 format_retried = true;
-                outbound = next;
+                outbound = bytes::Bytes::from(next);
                 continue;
             }
         }
@@ -398,7 +413,7 @@ fn build_upstream_request(
     method: &str,
     upstream_url: reqwest::Url,
     headers: &HashMap<String, String>,
-    body: &[u8],
+    body: &bytes::Bytes,
     prov: &dyn Provider,
     routed: &Upstream,
     token: Option<&str>,
@@ -459,7 +474,7 @@ fn build_upstream_request(
         req = req.header("Host", host.split('/').next().unwrap_or(host));
     }
     if !body.is_empty() {
-        req = req.body(body.to_vec());
+        req = req.body(body.clone());
     }
     Ok(req)
 }

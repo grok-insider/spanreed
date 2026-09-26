@@ -35,7 +35,13 @@ const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(100);
 const USAGE_REPLAY_INTERVAL: Duration = Duration::from_secs(30);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 pub const MIB: usize = 1024 * 1024;
-pub const DEFAULT_BODY_MEMORY_LIMIT_MIB: usize = 128;
+/// Admits four chunked inference requests at the JSON limit (three times the
+/// body each, see `http::MAX_INFERENCE_JSON_BODY_BYTES`) or about a dozen
+/// typical image-heavy agent turns with an exact `Content-Length`.
+pub const DEFAULT_BODY_MEMORY_LIMIT_MIB: usize = 384;
+const _: () = assert!(
+    DEFAULT_BODY_MEMORY_LIMIT_MIB * MIB >= 4 * 3 * crate::http::MAX_INFERENCE_JSON_BODY_BYTES
+);
 pub const MIN_BODY_MEMORY_LIMIT_MIB: usize = 64;
 pub const MAX_BODY_MEMORY_LIMIT_MIB: usize = 1024;
 

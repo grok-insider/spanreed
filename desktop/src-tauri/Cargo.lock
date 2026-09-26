@@ -1197,6 +1197,7 @@ dependencies = [
 name = "fabrials-fabric"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "fabrials-accounts",
  "fabrials-pricing",
  "fabrials-types",

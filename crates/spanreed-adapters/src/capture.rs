@@ -16,7 +16,7 @@ pub fn serve(options: &Options) -> Result<(), String> {
         hosts,
         Arc::new(AtomicBool::new(false)),
         64,
-        128 * 1024 * 1024,
+        crate::local_relay::BODY_MEMORY_LIMIT_BYTES,
     )
 }
 

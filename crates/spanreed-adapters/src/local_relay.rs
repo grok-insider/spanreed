@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 /// Health and control endpoints live under `/__spanreed` (the engine default).
 const CONTROL_PATH: &str = "/__spanreed/";
+pub(crate) const BODY_MEMORY_LIMIT_BYTES: usize =
+    listener::DEFAULT_BODY_MEMORY_LIMIT_MIB * listener::MIB;
 
 fn control() -> routes::ControlPrefix {
     routes::ControlPrefix::new(CONTROL_PATH.trim_end_matches('/')).unwrap_or_default()
@@ -53,7 +55,7 @@ impl LocalRelay {
     }
 
     pub fn serve(self, stop: Arc<AtomicBool>) -> Result<(), String> {
-        listener::serve(Arc::new(self), stop, 64, 128 * 1024 * 1024)
+        listener::serve(Arc::new(self), stop, 64, BODY_MEMORY_LIMIT_BYTES)
     }
 
     pub fn with_xai_compat(mut self) -> Self {
@@ -374,7 +376,7 @@ fn body_limit(path: &str) -> usize {
     if path.starts_with("/v1/audio/") || path.starts_with("/v1/stt") {
         http::MAX_BODY_BYTES
     } else {
-        8 * 1024 * 1024
+        http::MAX_INFERENCE_JSON_BODY_BYTES
     }
 }
 
@@ -549,6 +551,19 @@ mod tests {
         ) -> Result<(), String> {
             Err("not authorized in tests".into())
         }
+    }
+
+    #[test]
+    fn inference_bodies_use_the_shared_limit() {
+        assert_eq!(
+            body_limit("/v1/responses"),
+            http::MAX_INFERENCE_JSON_BODY_BYTES
+        );
+        assert_eq!(
+            body_limit("/v1/messages"),
+            http::MAX_INFERENCE_JSON_BODY_BYTES
+        );
+        assert_eq!(body_limit("/v1/audio/transcriptions"), http::MAX_BODY_BYTES);
     }
 
     #[test]
