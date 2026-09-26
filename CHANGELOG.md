@@ -4,6 +4,12 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-09-26
+
+- fix(relay): accept 30 MB inference bodies like ai-relay
+- chore: record fabrials-libs 64cd914a26e4
+- Squashed 'vendor/fabrials-libs/' changes from 8606b3a..64cd914
+
 ## [0.7.1] - 2026-09-26
 
 - ci(nix): let manual dispatches publish to cache.fabrials.com

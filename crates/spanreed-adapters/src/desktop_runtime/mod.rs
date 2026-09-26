@@ -84,7 +84,7 @@ impl Controller {
                     Arc::new(host),
                     worker_stop,
                     64,
-                    128 * 1024 * 1024,
+                    crate::local_relay::BODY_MEMORY_LIMIT_BYTES,
                 );
                 if let Err(error) = &result {
                     let _ = ready_tx.try_send(Err(error.clone()));
