@@ -59,6 +59,7 @@ impl Router for ClaudeAdapter {
     fn allows_request(&self, method: &str, hop: &Upstream, upgrade: bool) -> bool {
         let _ = upgrade;
         by_id(ID).is_some_and(|spec| spec.allows(method, &hop.path))
+            || is_count_tokens(method, &hop.path)
     }
 }
 
@@ -66,6 +67,31 @@ impl CredentialInjector for ClaudeAdapter {
     fn inject(&self, token: &str) -> Vec<(String, String)> {
         inject_headers(token)
     }
+
+    /// Claude Code sends the betas its body relies on (`context_management`,
+    /// for example); dropping them for the OAuth beta makes Anthropic answer
+    /// 400, so both lists travel together.
+    fn merge_client_header(&self, name: &str, client: &str, injected: &str) -> Option<String> {
+        name.eq_ignore_ascii_case("anthropic-beta")
+            .then(|| merge_betas(injected, client))
+    }
+}
+
+fn is_count_tokens(method: &str, path: &str) -> bool {
+    method.eq_ignore_ascii_case("POST")
+        && path.split('?').next().unwrap_or(path).trim_end_matches('/')
+            == "/v1/messages/count_tokens"
+}
+
+/// Comma-separated union of beta flags, `first` flags leading, duplicates dropped.
+pub fn merge_betas(first: &str, second: &str) -> String {
+    let mut betas: Vec<&str> = Vec::new();
+    for beta in first.split(',').chain(second.split(',')).map(str::trim) {
+        if !beta.is_empty() && !betas.contains(&beta) {
+            betas.push(beta);
+        }
+    }
+    betas.join(",")
 }
 
 impl UsageExtractor for ClaudeAdapter {
@@ -183,7 +209,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabrials_fabric::provider::{CredentialInjector, Router};
+    use fabrials_fabric::provider::{CredentialInjector, Router, UsageExtractor};
 
     fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         headers
@@ -206,6 +232,11 @@ mod tests {
         assert!(adapter.allows_request("GET", &models, false));
         let chat = adapter.resolve("/claude/v1/chat/completions").unwrap();
         assert!(!adapter.allows_request("POST", &chat, false));
+        let count = adapter.resolve("/claude/v1/messages/count_tokens").unwrap();
+        assert!(adapter.allows_request("POST", &count, false));
+        assert!(!adapter.allows_request("GET", &count, false));
+        let batches = adapter.resolve("/claude/v1/messages/batches").unwrap();
+        assert!(!adapter.allows_request("POST", &batches, false));
         assert!(adapter.resolve("/other/v1/messages").is_none());
     }
 
@@ -311,6 +342,39 @@ mod tests {
         assert_eq!(header(&key, "x-api-key"), Some("sk-ant-api03-key"));
         assert_eq!(header(&key, "anthropic-version"), Some(ANTHROPIC_VERSION));
         assert!(header(&key, "Authorization").is_none());
+    }
+
+    #[test]
+    fn client_betas_join_the_oauth_beta() {
+        let adapter = ClaudeAdapter::default();
+        assert_eq!(
+            adapter
+                .merge_client_header(
+                    "Anthropic-Beta",
+                    " context-management-2025-06-27 , oauth-2025-04-20,,interleaved-thinking-2025-05-14",
+                    OAUTH_BETA,
+                )
+                .as_deref(),
+            Some("oauth-2025-04-20,context-management-2025-06-27,interleaved-thinking-2025-05-14")
+        );
+        assert_eq!(
+            adapter
+                .merge_client_header("anthropic-beta", "", OAUTH_BETA)
+                .as_deref(),
+            Some(OAUTH_BETA)
+        );
+        assert!(adapter
+            .merge_client_header("anthropic-version", "2024-01-01", ANTHROPIC_VERSION)
+            .is_none());
+        assert!(adapter
+            .merge_client_header("authorization", "Bearer relay-key", "Bearer sk-ant-oat01-x")
+            .is_none());
+    }
+
+    #[test]
+    fn a_count_tokens_answer_is_not_usage() {
+        let adapter = ClaudeAdapter::default();
+        assert!(adapter.parse_usage(br#"{"input_tokens":42}"#).is_none());
     }
 
     fn adapter_headers(token: &str) -> Vec<(String, String)> {

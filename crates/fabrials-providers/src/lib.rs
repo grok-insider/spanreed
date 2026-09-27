@@ -10,6 +10,7 @@ pub mod device_flow;
 
 pub mod http;
 
+pub mod billing;
 pub mod catalog;
 
 pub mod oauth;

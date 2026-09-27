@@ -7,6 +7,8 @@ pub const TOKEN_URL: &str = "https://portal.nousresearch.com/api/oauth/token";
 pub const ACCOUNT_URL: &str = "https://portal.nousresearch.com/api/oauth/account";
 pub const CLIENT_ID: &str = "hermes-cli";
 pub const SCOPE: &str = "inference:invoke";
+/// A refresh that never got an answer: the token may or may not have rotated.
+pub const REFRESH_UNANSWERED: &str = "Nous token refresh unavailable";
 
 pub use crate::oauth::{ensure_access, valid_access};
 
@@ -37,6 +39,39 @@ pub fn parse_balance(value: &Value) -> Option<CreditBalance> {
             .and_then(Value::as_bool),
     };
     (balance != CreditBalance::default()).then_some(balance)
+}
+
+/// What the portal account endpoint says about a sign-in: its plan name, email,
+/// and whether paid models are usable (credits or a paid plan).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AccountSummary {
+    pub plan: Option<String>,
+    pub email: Option<String>,
+    pub paid_access: Option<bool>,
+}
+
+pub fn account_summary(value: &Value) -> AccountSummary {
+    let text = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && text.len() <= 254)
+            .map(str::to_owned)
+    };
+    AccountSummary {
+        plan: text(value.get("subscription").and_then(|s| s.get("plan"))),
+        email: text(value.get("user").and_then(|u| u.get("email")))
+            .filter(|email| email.contains('@')),
+        paid_access: value
+            .get("paid_service_access")
+            .and_then(|access| access.get("allowed"))
+            .and_then(Value::as_bool),
+    }
+}
+
+/// Zero-priced models in a Nous `/v1/models` listing.
+pub fn free_model_ids(models: &Value) -> Vec<String> {
+    crate::catalog::free_model_ids(models)
 }
 
 pub use crate::device_flow::{DeviceAuthorization, DeviceView, PollResult};
@@ -157,7 +192,7 @@ impl Client {
         let response = self
             .http
             .post_form(TOKEN_URL, &[], &form)
-            .map_err(|_| "Nous token refresh unavailable")?;
+            .map_err(|_| REFRESH_UNANSWERED)?;
         let value = read_response(response)?;
         let mut replacement = self.token_document(value, now_ms)?;
         if replacement
@@ -213,6 +248,14 @@ impl Client {
 
 fn read_response(response: crate::http::HttpResponse) -> Result<Value, String> {
     if !response.is_success() {
+        let oauth_error = serde_json::from_slice::<Value>(&response.body)
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
+        if response.status == 400 && oauth_error.as_deref() == Some("invalid_grant") {
+            return Err(
+                "Nous ended this sign-in (the refresh token was revoked or already used). Authorize the account again.".into(),
+            );
+        }
         return Err(match response.status {
             401 => "Nous rejected this credential (HTTP 401). Reconnect with a new API key or authorize the account again.".into(),
             403 => "Nous denied access (HTTP 403). Check this account's permissions and authorization.".into(),
@@ -232,6 +275,49 @@ fn read_json(response: crate::http::HttpResponse) -> Result<Value, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_free_account_reports_its_plan_and_no_paid_access() {
+        let account = json!({
+            "user": {"email": "owner@example.test"},
+            "subscription": {"plan": "Free", "monthly_credits": 0, "credits_remaining": 0},
+            "purchased_credits_remaining": 0,
+            "paid_service_access": {"allowed": false, "total_usable_credits": 0}
+        });
+        assert_eq!(
+            account_summary(&account),
+            AccountSummary {
+                plan: Some("Free".into()),
+                email: Some("owner@example.test".into()),
+                paid_access: Some(false),
+            }
+        );
+        assert_eq!(account_summary(&json!({})), AccountSummary::default());
+    }
+
+    #[test]
+    fn only_zero_priced_models_count_as_free() {
+        let models = json!({"data": [
+            {"id": "stepfun/step-3.7-flash:free", "pricing": {"prompt": "0", "completion": "0"}},
+            {"id": "google/gemini-3.8-flash", "pricing": {"prompt": "0.00000075", "completion": "0.00000375"}},
+            {"id": "half/free", "pricing": {"prompt": "0", "completion": "0.1"}},
+            {"id": "unpriced"}
+        ]});
+        assert_eq!(free_model_ids(&models), vec!["stepfun/step-3.7-flash:free"]);
+    }
+
+    #[test]
+    fn a_revoked_refresh_token_asks_for_a_new_authorization() {
+        let http = std::sync::Arc::new(crate::http::testing::ScriptedHttp::new(vec![(
+            400,
+            json!({"error":"invalid_grant","error_description":"Refresh token reuse detected; please re-authenticate"}),
+        )]));
+        let client = Client::with_http(http, None);
+        let error = client
+            .refresh(&json!({"refresh_token":"old","client_id":"hermes-cli"}), 0)
+            .unwrap_err();
+        assert!(error.contains("Authorize the account again"), "{error}");
+    }
 
     #[test]
     fn access_validation_and_refresh_failure_never_serve_expired_tokens() {
