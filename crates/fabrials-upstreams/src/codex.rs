@@ -131,6 +131,45 @@ impl Translator for CodexAdapter {
 
 impl BodyShaper for CodexAdapter {}
 
+const CLIENT_ROUTING_HEADERS: &[&str] = &[
+    "session-id",
+    "session_id",
+    "thread-id",
+    "x-client-request-id",
+    "x-codex-window-id",
+    "x-codex-turn-state",
+    "x-codex-turn-metadata",
+    "x-codex-beta-features",
+    "x-codex-parent-thread-id",
+    "x-openai-subagent",
+];
+
+pub(crate) const UPSTREAM_REPLY_HEADERS: &[&str] =
+    &["x-codex-turn-state", "x-reasoning-included", "openai-model"];
+
+const MAX_ROUTING_HEADER_BYTES: usize = 4096;
+
+pub(crate) fn routing_header_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_ROUTING_HEADER_BYTES
+        && value.bytes().all(|b| (0x20..0x7f).contains(&b))
+}
+
+pub(crate) fn client_routing_headers(
+    headers: &std::collections::HashMap<String, String>,
+) -> Vec<(&'static str, &str)> {
+    CLIENT_ROUTING_HEADERS
+        .iter()
+        .filter_map(|name| {
+            headers
+                .get(*name)
+                .map(String::as_str)
+                .filter(|value| routing_header_value(value))
+                .map(|value| (*name, value))
+        })
+        .collect()
+}
+
 fn codex_api_path(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
 }
@@ -189,5 +228,28 @@ mod tests {
             )
             .unwrap();
         assert!(headers.contains(&("ChatGPT-Account-Id".into(), "host-account".into())));
+    }
+
+    #[test]
+    fn only_bounded_codex_routing_headers_are_forwarded() {
+        let client: std::collections::HashMap<String, String> = [
+            ("session-id", "s-1"),
+            ("x-codex-turn-state", "t-1"),
+            ("x-client-request-id", ""),
+            ("x-codex-window-id", "bad\u{7f}value"),
+            ("authorization", "Bearer client"),
+            ("cookie", "c=1"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let mut forwarded = client_routing_headers(&client);
+        forwarded.sort();
+        assert_eq!(
+            forwarded,
+            vec![("session-id", "s-1"), ("x-codex-turn-state", "t-1")]
+        );
+        let long = "a".repeat(MAX_ROUTING_HEADER_BYTES + 1);
+        assert!(!routing_header_value(&long));
     }
 }

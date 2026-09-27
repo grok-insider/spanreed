@@ -61,6 +61,14 @@ pub const MAX_HEADER_LINE_BYTES: usize = 16 * 1024;
 pub const MAX_HEADER_BYTES: usize = 64 * 1024;
 pub const MAX_HEADER_COUNT: usize = 100;
 pub const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// Buffered JSON body of an inference request (chat, responses, messages).
+/// Inline base64 images dominate these bodies. Anthropic Messages accepts
+/// 32 MB; Grok Build defaults its image budget to 30 MB for Messages and
+/// never budgets below 12 MiB, so relays must accept more than that and
+/// should advertise this value to clients as `maxRequestBytes`.
+pub const MAX_INFERENCE_JSON_BODY_BYTES: usize = 30_000_000;
+const _: () = assert!(MAX_INFERENCE_JSON_BODY_BYTES > 12 * 1024 * 1024);
+const _: () = assert!(MAX_INFERENCE_JSON_BODY_BYTES <= MAX_BODY_BYTES);
 /// Rolling response tail retained for usage parsing and bounded model-list
 /// rewriting. Two MiB comfortably contains a terminal SSE event and the
 /// validated model catalog while keeping concurrent captures predictable.
