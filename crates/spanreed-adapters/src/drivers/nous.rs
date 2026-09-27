@@ -7,6 +7,20 @@ pub fn login_add(name: Option<&str>) -> Result<String, String> {
         .unwrap_or_else(|| accounts::unique_alias("nous", "portal"));
     let logins = crate::account_login::Logins::default();
     let login = logins.begin_nous(alias)?;
+    wait(&logins, login)
+}
+
+/// Authorize an existing Nous account again, keeping its id.
+pub fn login_refresh(id: &str) -> Result<String, String> {
+    let logins = crate::account_login::Logins::default();
+    let login = logins.reauthorize(id)?;
+    wait(&logins, login)
+}
+
+fn wait(
+    logins: &crate::account_login::Logins,
+    login: crate::account_login::LoginView,
+) -> Result<String, String> {
     eprintln!(
         "Open {}\nAuthorization code: {}",
         login.device.verification_uri, login.device.user_code

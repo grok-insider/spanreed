@@ -22,14 +22,26 @@ pub trait HopObserver {
         alias: Option<&str>,
         expected: Option<&serde_json::Value>,
     ) -> Result<(), String>;
+    /// Whether the credential captured when a tunnel opened is still the
+    /// account's current one. `false` ends the tunnel so the client reconnects
+    /// with the current credential; metadata-only changes must stay `true`.
+    fn credential_current(
+        &self,
+        _provider: &str,
+        _alias: Option<&str>,
+        _expected: Option<&serde_json::Value>,
+    ) -> bool {
+        true
+    }
     fn response_headers(&self, _status: u16, _headers: &reqwest::header::HeaderMap) {}
     fn models_response(&self, body: Vec<u8>) -> Vec<u8> {
         body
     }
-    /// Upstream answered with a non-2xx status. `body` is the buffered rejection
-    /// body for HTTP hops (bounded, possibly truncated) and empty for tunneled
-    /// ones. Hosts classify it here for quota state, logging, and accounting.
-    fn upstream_error(&self, _status: u16, _body: &[u8]) {}
+    /// Upstream answered with a non-2xx status. `headers` and `body` are the
+    /// rejection's headers and buffered body (bounded, possibly truncated) for
+    /// HTTP hops; both are empty for tunneled ones. Hosts classify it here for
+    /// quota state, logging, and accounting. Runs before [`Self::retry_credentials`].
+    fn upstream_error(&self, _status: u16, _headers: &reqwest::header::HeaderMap, _body: &[u8]) {}
     /// Host may return another credential for the same provider after a
     /// rejection, which makes the runtime repeat the exact request once before
     /// anything reaches the client. `None` forwards the rejection unchanged.
@@ -173,7 +185,7 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
         // A tunneled handshake carries no body; hosts classify the status alone.
         if let Err(error) = &tunneled {
             if let Some(status) = error.status.filter(|status| *status >= 400) {
-                observer.upstream_error(status, &[]);
+                observer.upstream_error(status, &reqwest::header::HeaderMap::new(), &[]);
             }
         }
         return match tunneled {
@@ -241,9 +253,13 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
 
     // Chat-only upstreams receive a Chat Completions body. A structured-output
     // retry may replace it; a credential retry repeats the body that is current.
+    // The body moves into one shared buffer: every attempt sends a
+    // reference-counted view of it instead of a fresh copy.
     let shaped = prov.shape_request(&routed, inject.as_deref(), &body);
-    let mut outbound =
-        crate::wire_compat::adapt_upstream_body(&routed.path, shaped.as_deref().unwrap_or(&body));
+    let mut outbound = bytes::Bytes::from(crate::wire_compat::adapt_upstream_body_owned(
+        &routed.path,
+        shaped.unwrap_or(body),
+    ));
     let mut format_retried = false;
     let mut inject = inject;
     let mut secret = secret;
@@ -309,13 +325,13 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
             break HopAttempt::Live(upstream);
         }
         let rejected = read_rejection_body(&mut upstream);
-        observer.upstream_error(status.as_u16(), &rejected);
+        observer.upstream_error(status.as_u16(), upstream.headers(), &rejected);
         if !format_retried {
             if let Some(next) =
                 crate::wire_compat::downgrade_after_rejection(status.as_u16(), &rejected, &outbound)
             {
                 format_retried = true;
-                outbound = next;
+                outbound = bytes::Bytes::from(next);
                 continue;
             }
         }
@@ -398,7 +414,7 @@ fn build_upstream_request(
     method: &str,
     upstream_url: reqwest::Url,
     headers: &HashMap<String, String>,
-    body: &[u8],
+    body: &bytes::Bytes,
     prov: &dyn Provider,
     routed: &Upstream,
     token: Option<&str>,
@@ -409,7 +425,7 @@ fn build_upstream_request(
         method.parse().map_err(|_| format!("bad method {method}"))?,
         upstream_url,
     );
-    let provider_headers = token
+    let mut provider_headers = token
         .map(|token| prov.credential_headers(token, routed, secret))
         .transpose()?
         .unwrap_or_default();
@@ -434,10 +450,13 @@ fn build_upstream_request(
         {
             continue;
         }
-        if provider_headers
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case(k))
+        if let Some((name, injected)) = provider_headers
+            .iter_mut()
+            .find(|(name, _)| name.eq_ignore_ascii_case(k))
         {
+            if let Some(merged) = prov.merge_client_header(name, v, injected) {
+                *injected = merged;
+            }
             continue;
         }
         req = req.header(k.as_str(), v.as_str());
@@ -459,7 +478,7 @@ fn build_upstream_request(
         req = req.header("Host", host.split('/').next().unwrap_or(host));
     }
     if !body.is_empty() {
-        req = req.body(body.to_vec());
+        req = req.body(body.clone());
     }
     Ok(req)
 }
@@ -655,7 +674,7 @@ mod tests {
         ) -> Result<(), String> {
             Err("not authorized in tests".into())
         }
-        fn upstream_error(&self, status: u16, body: &[u8]) {
+        fn upstream_error(&self, status: u16, _headers: &reqwest::header::HeaderMap, body: &[u8]) {
             self.errors
                 .lock()
                 .unwrap()
@@ -769,6 +788,91 @@ mod tests {
             },
             observer,
         )
+    }
+
+    struct MergingProvider;
+
+    impl Router for MergingProvider {
+        fn id(&self) -> &'static str {
+            "merging"
+        }
+        fn resolve(&self, _raw_path: &str) -> Option<Upstream> {
+            None
+        }
+    }
+    impl CredentialInjector for MergingProvider {
+        fn inject(&self, token: &str) -> Vec<(String, String)> {
+            vec![
+                ("authorization".into(), format!("Bearer {token}")),
+                ("x-flags".into(), "injected".into()),
+            ]
+        }
+        fn merge_client_header(&self, name: &str, client: &str, injected: &str) -> Option<String> {
+            (name == "x-flags").then(|| format!("{injected},{client}"))
+        }
+    }
+    impl Translator for MergingProvider {}
+    impl BodyShaper for MergingProvider {}
+    impl UsageExtractor for MergingProvider {
+        fn parse_usage(&self, _response_body: &[u8]) -> Option<HopRecord> {
+            None
+        }
+    }
+
+    fn outbound_headers(
+        prov: &dyn Provider,
+        client: &[(&str, &str)],
+    ) -> reqwest::header::HeaderMap {
+        let headers: HashMap<String, String> = client
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        let routed = Upstream {
+            base: "http://127.0.0.1:9".into(),
+            path: "/v1/messages".into(),
+            account_alias: None,
+            route: "merging",
+        };
+        build_upstream_request(
+            &reqwest::blocking::Client::new(),
+            "POST",
+            "http://127.0.0.1:9/v1/messages".parse().unwrap(),
+            &headers,
+            &bytes::Bytes::new(),
+            prov,
+            &routed,
+            Some("upstream-token"),
+            None,
+            false,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+        .headers()
+        .clone()
+    }
+
+    #[test]
+    fn a_colliding_client_header_is_merged_when_the_provider_asks() {
+        let headers = outbound_headers(
+            &MergingProvider,
+            &[("X-Flags", "client"), ("authorization", "Bearer relay-key")],
+        );
+        let flags: Vec<_> = headers.get_all("x-flags").iter().collect();
+        assert_eq!(flags, vec!["injected,client"]);
+        let auth: Vec<_> = headers.get_all("authorization").iter().collect();
+        assert_eq!(auth, vec!["Bearer upstream-token"]);
+    }
+
+    #[test]
+    fn a_colliding_client_header_is_replaced_by_default() {
+        let headers = outbound_headers(
+            &FakeProvider,
+            &[("authorization", "Bearer relay-key"), ("x-flags", "client")],
+        );
+        let auth: Vec<_> = headers.get_all("authorization").iter().collect();
+        assert_eq!(auth, vec!["Bearer upstream-token"]);
+        assert_eq!(headers.get("x-flags").unwrap(), "client");
     }
 
     #[test]

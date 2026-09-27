@@ -59,7 +59,13 @@ pub fn dispatch_account(args: &[String]) -> Result<String, String> {
             let id = args
                 .get(1)
                 .ok_or("usage: spanreed account login <provider/alias>")?;
-            grok::login_refresh(id)
+            let acc =
+                crate::accounts::resolve(id).ok_or_else(|| format!("unknown account {id}"))?;
+            match acc.provider.as_str() {
+                "grok" => grok::login_refresh(&acc.id),
+                "nous" => nous::login_refresh(&acc.id),
+                other => Err(format!("no identity driver for {other}")),
+            }
         }
         "rm" | "remove" => {
             let id = args
@@ -230,7 +236,7 @@ pub fn account_help() -> &'static str {
      \tspanreed account autosteer on|off|status   Fail over /v1 when a pool is 100%\n\
      \tspanreed account ls\n\
      \tspanreed account use grok/ALIAS            Default route on the fabric\n\
-     \tspanreed account login grok/ALIAS          Re-auth when refresh dies\n\
+     \tspanreed account login grok/ALIAS          Re-auth when refresh dies (grok or nous)\n\
      \tspanreed account rm grok/ALIAS\n\n\
      Grok Build stays on http://127.0.0.1:18736 ; parallel sessions use\n\
      GROK_CLI_CHAT_PROXY_BASE_URL=http://127.0.0.1:18736/acct/ALIAS/v1"
