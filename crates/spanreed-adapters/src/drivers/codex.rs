@@ -38,6 +38,7 @@ fn probe(account: &accounts::Account) -> Result<ProviderOutput, String> {
             .err()
             .map(|_| "Could not refresh reset inventory".into()),
     });
-    accounts::apply_codex_snapshot(account, &document, &output, now)?;
+    let billing = client.billing(&document).map(accounts::PlanBilling::from);
+    accounts::apply_codex_snapshot(account, &document, &output, billing, now)?;
     Ok(output)
 }
