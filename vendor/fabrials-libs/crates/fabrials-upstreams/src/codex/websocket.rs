@@ -60,6 +60,11 @@ pub fn forward(adapter: &CodexAdapter, mut hop: WebSocketHop<'_>) -> Result<(), 
             beta.parse().map_err(|_| "Invalid beta header")?,
         );
     }
+    for (name, value) in super::client_routing_headers(hop.headers) {
+        if let Ok(value) = value.parse() {
+            request.headers_mut().insert(name, value);
+        }
+    }
     let accept =
         tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.unwrap().as_bytes());
     let result = match tokio::runtime::Handle::try_current() {
@@ -120,7 +125,7 @@ async fn run(
         tokio_tungstenite::connect_async_with_config(request, Some(config), true),
     )
     .await;
-    let (mut upstream, _) = match connected {
+    let (mut upstream, reply) = match connected {
         Ok(Ok(value)) => value,
         _ => {
             return fabrials_fabric::http::write_status(
@@ -130,7 +135,18 @@ async fn run(
             )
         }
     };
-    write!(hop.client,"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").map_err(|_|"Client disconnected")?;
+    let mut relayed = String::new();
+    for name in super::UPSTREAM_REPLY_HEADERS {
+        if let Some(value) = reply
+            .headers()
+            .get(*name)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| super::routing_header_value(value))
+        {
+            relayed.push_str(&format!("{name}: {value}\r\n"));
+        }
+    }
+    write!(hop.client,"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n{relayed}\r\n").map_err(|_|"Client disconnected")?;
     hop.client
         .set_nonblocking(true)
         .map_err(|_| "WebSocket socket unavailable")?;
@@ -165,11 +181,17 @@ async fn run(
                 let Some(Ok(message))=message else {return Ok(());};
                 match message {
                     Message::Text(text)=>{
-                        let mut event:Value=match serde_json::from_str(&text){Ok(value)=>value,Err(_)=>{client.send(error("invalid_json")).await.map_err(|_|"Client disconnected")?;continue;}};
-                        if event["type"]!="response.create" {client.send(error("unsupported_event_type")).await.map_err(|_|"Client disconnected")?;continue;}
-                        if active.record.is_some() {client.send(error("response_in_progress")).await.map_err(|_|"Client disconnected")?;continue;}
-                        let Some(model)=event["model"].as_str().filter(|model|!model.is_empty() && model.len()<=256 && model.bytes().all(|b|b.is_ascii_graphic())) else {client.send(error("invalid_model")).await.map_err(|_|"Client disconnected")?;continue;};
-                        if tokio::task::block_in_place(|| hop.observer.authorize_response(model,"codex",hop.alias,hop.secret)).is_err(){client.send(error("request_not_authorized")).await.map_err(|_|"Client disconnected")?;continue;}
+                        let mut event:Value=match serde_json::from_str(&text){Ok(value)=>value,Err(_)=>{client.send(error("invalid_json",400)).await.map_err(|_|"Client disconnected")?;continue;}};
+                        if event["type"]!="response.create" {client.send(error("unsupported_event_type",400)).await.map_err(|_|"Client disconnected")?;continue;}
+                        if active.record.is_some() {client.send(error("response_in_progress",409)).await.map_err(|_|"Client disconnected")?;continue;}
+                        if !tokio::task::block_in_place(|| hop.observer.credential_current("codex",hop.alias,hop.secret)) {
+                            hop.observer.log("Codex account authorization changed; closing tunnel");
+                            let _=client.send(credential_changed()).await;
+                            let _=upstream.close(None).await;
+                            return Ok(());
+                        }
+                        let Some(model)=event["model"].as_str().filter(|model|!model.is_empty() && model.len()<=256 && model.bytes().all(|b|b.is_ascii_graphic())) else {client.send(error("invalid_model",400)).await.map_err(|_|"Client disconnected")?;continue;};
+                        if tokio::task::block_in_place(|| hop.observer.authorize_response(model,"codex",hop.alias,hop.secret)).is_err(){client.send(error("request_not_authorized",403)).await.map_err(|_|"Client disconnected")?;continue;}
                         let model=model.to_owned();
                         event["store"]=json!(false);
                         active.bytes=0;active.started=std::time::Instant::now();
@@ -178,7 +200,7 @@ async fn run(
                     },
                     Message::Ping(_)|Message::Pong(_)=>{client.flush().await.map_err(|_|"Client disconnected")?;},
                     Message::Close(_)=>{let _=upstream.close(None).await;return Ok(());},
-                    _=>{client.send(error("text_messages_required")).await.map_err(|_|"Client disconnected")?;},
+                    _=>{client.send(error("text_messages_required",400)).await.map_err(|_|"Client disconnected")?;},
                 }
             },
             message=upstream.next()=>{
@@ -202,12 +224,19 @@ async fn run(
         }
     }
 }
-fn error(code: &str) -> Message {
+fn error(code: &str, status: u16) -> Message {
     Message::Text(
-        json!({"type":"error","error":{"type":"invalid_request_error","code":code,"message":code}})
+        json!({"type":"error","status":status,"error":{"type":"invalid_request_error","code":code,"message":code}})
             .to_string()
             .into(),
     )
+}
+
+fn credential_changed() -> Message {
+    Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+        code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Restart,
+        reason: "credential_changed".into(),
+    }))
 }
 
 #[cfg(test)]
@@ -273,6 +302,13 @@ mod tests {
                  response: tungstenite::handshake::server::Response| {
                     assert_eq!(request.headers()["chatgpt-account-id"], "fixture-account");
                     assert_eq!(request.headers()["authorization"], "Bearer fixture-token");
+                    assert_eq!(request.headers()["session-id"], "fixture-session");
+                    assert_eq!(request.headers()["x-codex-window-id"], "fixture-session:0");
+                    assert!(request.headers().get("x-unlisted").is_none());
+                    let mut response = response;
+                    response
+                        .headers_mut()
+                        .insert("x-codex-turn-state", "fixture-turn".parse().unwrap());
                     Ok(response)
                 },
             )
@@ -293,8 +329,18 @@ mod tests {
             socket
                 .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                 .unwrap();
-            let (mut client, _) =
-                tungstenite::client(format!("ws://{address}/codex/v1/responses"), socket).unwrap();
+            let mut handshake = format!("ws://{address}/codex/v1/responses")
+                .into_client_request()
+                .unwrap();
+            for (name, value) in [
+                ("session-id", "fixture-session"),
+                ("x-codex-window-id", "fixture-session:0"),
+                ("x-unlisted", "dropped"),
+            ] {
+                handshake.headers_mut().insert(name, value.parse().unwrap());
+            }
+            let (mut client, reply) = tungstenite::client(handshake, socket).unwrap();
+            assert_eq!(reply.headers()["x-codex-turn-state"], "fixture-turn");
             client
                 .send(Message::Text(
                     json!({"type":"response.create","model":"denied","input":[]})
@@ -305,6 +351,7 @@ mod tests {
             let denied: Value =
                 serde_json::from_str(client.read().unwrap().to_text().unwrap()).unwrap();
             assert_eq!(denied["error"]["code"], "request_not_authorized");
+            assert_eq!(denied["status"], 403);
             for _ in 0..2 {
                 client
                     .send(Message::Text(
@@ -327,6 +374,7 @@ mod tests {
             let revoked: Value =
                 serde_json::from_str(client.read().unwrap().to_text().unwrap()).unwrap();
             assert_eq!(revoked["error"]["code"], "request_not_authorized");
+            assert_eq!(revoked["status"], 403);
             let _ = client.close(None);
         });
         let (mut socket, _) = listener.accept().unwrap();
@@ -374,5 +422,143 @@ mod tests {
             assert_eq!(record.status, Some(200));
             assert_eq!(record.total_tokens, 10);
         }
+    }
+
+    #[test]
+    fn every_relay_error_frame_carries_a_numeric_status() {
+        for (code, status) in [
+            ("invalid_json", 400),
+            ("unsupported_event_type", 400),
+            ("response_in_progress", 409),
+            ("invalid_model", 400),
+            ("request_not_authorized", 403),
+            ("text_messages_required", 400),
+        ] {
+            let Message::Text(text) = error(code, status) else {
+                panic!("error frames are text");
+            };
+            let frame: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(frame["type"], "error");
+            assert_eq!(frame["status"].as_u64(), Some(u64::from(status)));
+            assert_eq!(frame["error"]["code"], code);
+        }
+    }
+
+    struct Rotating {
+        records: Mutex<Vec<HopRecord>>,
+        current: std::sync::atomic::AtomicBool,
+    }
+    impl HopObserver for Rotating {
+        fn record(&self, record: HopRecord) {
+            self.records.lock().unwrap().push(record);
+            self.current
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn log(&self, _: &str) {}
+        fn authorize_response(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&Value>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        fn credential_current(&self, _: &str, _: Option<&str>, _: Option<&Value>) -> bool {
+            self.current.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::result_large_err,
+        reason = "tungstenite fixes the handshake callback's error type"
+    )]
+    fn a_changed_credential_closes_the_tunnel_instead_of_answering_with_an_error() {
+        use tokio_tungstenite::tungstenite;
+        let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", origin.local_addr().unwrap());
+        let upstream = std::thread::spawn(move || {
+            let (socket, _) = origin.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut ws = tungstenite::accept(socket).unwrap();
+            let request: Value =
+                serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(request["model"], "allowed");
+            ws.send(Message::Text(json!({"type":"response.completed","response":{"id":"response-0","status":"completed","model":"allowed","output":[],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}).to_string().into())).unwrap();
+            loop {
+                match ws.read() {
+                    Ok(Message::Text(text)) => panic!("stale credential reached upstream: {text}"),
+                    Ok(Message::Close(_)) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let caller = std::thread::spawn(move || {
+            let socket = std::net::TcpStream::connect(address).unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let (mut client, _) =
+                tungstenite::client(format!("ws://{address}/codex/v1/responses"), socket).unwrap();
+            let create = json!({"type":"response.create","model":"allowed","input":[]}).to_string();
+            client.send(Message::Text(create.clone().into())).unwrap();
+            let event: Value =
+                serde_json::from_str(client.read().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(event["type"], "response.completed");
+            client.send(Message::Text(create.into())).unwrap();
+            match client.read().unwrap() {
+                Message::Close(Some(frame)) => {
+                    assert_eq!(u16::from(frame.code), 1012);
+                    assert_eq!(frame.reason, "credential_changed");
+                }
+                other => panic!("expected the tunnel to close, got {other:?}"),
+            }
+        });
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = BufReader::new(socket.try_clone().unwrap());
+        let mut headers = HashMap::new();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            let (name, value) = line.split_once(':').unwrap();
+            headers.insert(name.to_lowercase(), value.trim().to_string());
+        }
+        let observer = Rotating {
+            records: Mutex::new(Vec::new()),
+            current: std::sync::atomic::AtomicBool::new(true),
+        };
+        let adapter = CodexAdapter { base: Some(base) };
+        let routed = adapter.resolve("/codex/v1/responses").unwrap();
+        forward(
+            &adapter,
+            WebSocketHop {
+                client: &mut socket,
+                headers: &headers,
+                prefetched: Vec::new(),
+                token: Some("fixture-token"),
+                secret: Some(&json!({"account_id":"fixture-account"})),
+                upstream: &routed,
+                observer: &observer,
+                alias: Some("work"),
+                key_hash: Some("fixture-hash"),
+            },
+        )
+        .unwrap();
+        caller.join().unwrap();
+        upstream.join().unwrap();
+        assert_eq!(observer.records.lock().unwrap().len(), 1);
     }
 }
