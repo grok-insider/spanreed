@@ -122,7 +122,12 @@ fn token_with_recovery(
             _ => return Err("Unsupported OAuth provider".into()),
         } {
             Ok(refreshed) => refreshed,
-            Err(error) => return valid_access(&document, now).map_err(|_| error),
+            Err(error) => {
+                if provider_answered(&error) {
+                    journal.complete()?;
+                }
+                return valid_access(&document, now).map_err(|_| error);
+            }
         };
         let mut replacement = document.clone();
         replacement
@@ -170,6 +175,15 @@ fn token_with_recovery(
     valid_access(&document, util::now_ms())
 }
 
+/// The provider refused the refresh, so the stored grant did not rotate and the
+/// recovery marker must not outlive the attempt. A request that never got an
+/// answer, or a server error, may have rotated the grant and keeps the marker.
+fn provider_answered(error: &str) -> bool {
+    error != fabrials_providers::nous::REFRESH_UNANSWERED
+        && error != fabrials_providers::codex::auth::Client::REFRESH_UNANSWERED
+        && !error.contains("HTTP 5")
+}
+
 fn valid_access(document: &serde_json::Value, now: i64) -> Result<String, String> {
     fabrials_providers::oauth::valid_access(document, now)
         .ok_or("Provider authorization unavailable or expired; sign in again".into())
@@ -178,6 +192,21 @@ fn valid_access(document: &serde_json::Value, now: i64) -> Result<String, String
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_an_unanswered_refresh_keeps_the_recovery_marker() {
+        assert!(!provider_answered(
+            fabrials_providers::nous::REFRESH_UNANSWERED
+        ));
+        assert!(!provider_answered(
+            fabrials_providers::codex::auth::Client::REFRESH_UNANSWERED
+        ));
+        assert!(provider_answered(
+            "Nous ended this sign-in (the refresh token was revoked or already used). Authorize the account again."
+        ));
+        assert!(provider_answered("Nous HTTP 400"));
+        assert!(!provider_answered("Nous HTTP 502"));
+    }
+
     #[test]
     fn expired_pending_access_is_never_served() {
         let grant = serde_json::json!({"access_token":"fixture","refresh_token":"next-generation","expires_at_ms":100});
