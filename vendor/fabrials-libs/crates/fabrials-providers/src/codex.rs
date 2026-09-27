@@ -75,6 +75,32 @@ pub fn quota_output(usage: &Value, source: &str, now_ms: i64) -> fabrials_types:
     output
 }
 
+/// Display name for a ChatGPT `plan_type`. Personal Pro comes in three tiers:
+/// `prolite` is "Standard" (about $100), `pro` is "More" (about $200) and
+/// `promax` is the tier above it, as ChatGPT's pricing configuration names them.
+pub fn plan_label(plan_type: &str) -> Option<String> {
+    let plan = plan_type.trim().to_ascii_lowercase();
+    let label = match plan.as_str() {
+        "" => return None,
+        "prolite" => "Pro Standard",
+        "pro" => "Pro More",
+        "promax" => "Pro Max",
+        "plus" => "Plus",
+        "go" => "Go",
+        "free" => "Free",
+        "team" => "Team",
+        "business" => "Business",
+        "enterprise" => "Enterprise",
+        "edu" => "Edu",
+        other => {
+            let mut chars = other.chars();
+            let first = chars.next()?.to_uppercase().collect::<String>();
+            return Some(first + chars.as_str());
+        }
+    };
+    Some(label.into())
+}
+
 pub const RESET_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 
 pub fn reset_count(usage: &Value) -> Option<u32> {
@@ -175,6 +201,22 @@ pub fn model_ids(value: &serde_json::Value) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pro_tiers_get_their_pricing_names() {
+        assert_eq!(
+            super::plan_label("prolite").as_deref(),
+            Some("Pro Standard")
+        );
+        assert_eq!(super::plan_label("pro").as_deref(), Some("Pro More"));
+        assert_eq!(super::plan_label("promax").as_deref(), Some("Pro Max"));
+        assert_eq!(super::plan_label("plus").as_deref(), Some("Plus"));
+        assert_eq!(
+            super::plan_label("custom_tier").as_deref(),
+            Some("Custom_tier")
+        );
+        assert_eq!(super::plan_label(" "), None);
+    }
+
     use super::*;
     #[test]
     fn string_expiries_and_plan_support_match_current_api_shape() {

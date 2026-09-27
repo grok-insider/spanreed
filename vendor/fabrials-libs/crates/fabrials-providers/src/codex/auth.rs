@@ -141,6 +141,9 @@ impl Client {
         )?;
         Ok(PollResult::Authorized(token_document(value, now, None)?))
     }
+    /// A refresh that never got an answer: the token may or may not have rotated.
+    pub const REFRESH_UNANSWERED: &'static str = "Codex token refresh unavailable";
+
     pub fn refresh(&self, document: &Value, now: i64) -> Result<Value, String> {
         let form = crate::http::form_body(&[
             ("grant_type", "refresh_token"),
@@ -150,7 +153,7 @@ impl Client {
         let value = read(
             self.http
                 .post_form(&format!("{ISSUER}/oauth/token"), &[USER_AGENT], &form)
-                .map_err(|_| "Codex token refresh unavailable")?,
+                .map_err(|_| Self::REFRESH_UNANSWERED)?,
         )?;
         token_document(value, now, Some(document))
     }

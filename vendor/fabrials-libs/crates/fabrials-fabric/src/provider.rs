@@ -56,6 +56,12 @@ pub trait CredentialInjector: Send + Sync {
         let _ = secret;
         Ok(self.inject_for(token, hop))
     }
+    /// Value sent when the client already carries an injected header name.
+    /// Default `None`: the injected value replaces the client's.
+    fn merge_client_header(&self, name: &str, client: &str, injected: &str) -> Option<String> {
+        let _ = (name, client, injected);
+        None
+    }
 }
 
 /// Official usage out of a captured response body.
@@ -175,6 +181,9 @@ impl CredentialInjector for ProviderParts {
         secret: Option<&Value>,
     ) -> Result<Vec<(String, String)>, String> {
         self.credentials.credential_headers(token, hop, secret)
+    }
+    fn merge_client_header(&self, name: &str, client: &str, injected: &str) -> Option<String> {
+        self.credentials.merge_client_header(name, client, injected)
     }
 }
 

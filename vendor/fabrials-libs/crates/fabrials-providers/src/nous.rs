@@ -7,6 +7,8 @@ pub const TOKEN_URL: &str = "https://portal.nousresearch.com/api/oauth/token";
 pub const ACCOUNT_URL: &str = "https://portal.nousresearch.com/api/oauth/account";
 pub const CLIENT_ID: &str = "hermes-cli";
 pub const SCOPE: &str = "inference:invoke";
+/// A refresh that never got an answer: the token may or may not have rotated.
+pub const REFRESH_UNANSWERED: &str = "Nous token refresh unavailable";
 
 pub use crate::oauth::{ensure_access, valid_access};
 
@@ -157,7 +159,7 @@ impl Client {
         let response = self
             .http
             .post_form(TOKEN_URL, &[], &form)
-            .map_err(|_| "Nous token refresh unavailable")?;
+            .map_err(|_| REFRESH_UNANSWERED)?;
         let value = read_response(response)?;
         let mut replacement = self.token_document(value, now_ms)?;
         if replacement
@@ -213,6 +215,14 @@ impl Client {
 
 fn read_response(response: crate::http::HttpResponse) -> Result<Value, String> {
     if !response.is_success() {
+        let oauth_error = serde_json::from_slice::<Value>(&response.body)
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
+        if response.status == 400 && oauth_error.as_deref() == Some("invalid_grant") {
+            return Err(
+                "Nous ended this sign-in (the refresh token was revoked or already used). Authorize the account again.".into(),
+            );
+        }
         return Err(match response.status {
             401 => "Nous rejected this credential (HTTP 401). Reconnect with a new API key or authorize the account again.".into(),
             403 => "Nous denied access (HTTP 403). Check this account's permissions and authorization.".into(),
@@ -232,6 +242,19 @@ fn read_json(response: crate::http::HttpResponse) -> Result<Value, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_revoked_refresh_token_asks_for_a_new_authorization() {
+        let http = std::sync::Arc::new(crate::http::testing::ScriptedHttp::new(vec![(
+            400,
+            json!({"error":"invalid_grant","error_description":"Refresh token reuse detected; please re-authenticate"}),
+        )]));
+        let client = Client::with_http(http, None);
+        let error = client
+            .refresh(&json!({"refresh_token":"old","client_id":"hermes-cli"}), 0)
+            .unwrap_err();
+        assert!(error.contains("Authorize the account again"), "{error}");
+    }
 
     #[test]
     fn access_validation_and_refresh_failure_never_serve_expired_tokens() {
