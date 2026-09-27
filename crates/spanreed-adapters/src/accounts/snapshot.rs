@@ -6,6 +6,7 @@ pub(crate) fn apply_codex_snapshot(
     account: &Account,
     expected: &serde_json::Value,
     output: &crate::model::ProviderOutput,
+    billing: Option<PlanBilling>,
     now: i64,
 ) -> Result<(), String> {
     let vault = lock_vault()?;
@@ -36,6 +37,12 @@ pub(crate) fn apply_codex_snapshot(
     existing.plan_slug = output.plan.clone();
     existing.plan_label = output.plan.clone();
     existing.quota_at = Some(now);
+    if let Some(billing) = billing {
+        existing.billing_interval = billing.interval;
+        existing.renews_at = billing.renews_at;
+        existing.cancel_at_period_end = billing.cancel_at_period_end;
+        existing.billing_checked = true;
+    }
     vault.commit(&registry, Vec::new())
 }
 
@@ -91,6 +98,20 @@ pub fn apply_snapshot(id: &str, snapshot: QuotaSnapshot) -> Result<Account, Stri
 #[derive(Debug, Clone, Default)]
 pub struct PlanBilling {
     pub interval: Option<String>,
+    /// End of the paid period: the next charge, or the last day when auto-renew is off.
     pub renews_at: Option<String>,
     pub cancel_at_period_end: Option<bool>,
+}
+
+impl From<fabrials_providers::billing::PlanBilling> for PlanBilling {
+    fn from(billing: fabrials_providers::billing::PlanBilling) -> Self {
+        Self {
+            interval: billing.interval,
+            renews_at: billing
+                .renews_at
+                .or(billing.ends_at)
+                .or(billing.paid_through),
+            cancel_at_period_end: billing.auto_renew.map(|renews| !renews),
+        }
+    }
 }

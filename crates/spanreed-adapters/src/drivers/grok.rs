@@ -430,58 +430,9 @@ fn fetch_plan_billing(token: &str) -> accounts::PlanBilling {
     parse_plan_billing(&root).unwrap_or_default()
 }
 
-/// Next charge date + month/year from grok.com subscriptions (not weekly usage).
+/// Next charge (or last day) and month/year from grok.com subscriptions.
 pub fn parse_plan_billing(root: &serde_json::Value) -> Option<accounts::PlanBilling> {
-    let arr = root
-        .get("subscriptions")
-        .and_then(|v| v.as_array())
-        .or_else(|| root.as_array())?;
-    let mut best: Option<(i32, accounts::PlanBilling)> = None;
-    for sub in arr {
-        let status = sub.get("status").and_then(|v| v.as_str()).unwrap_or("");
-        let active = status.ends_with("_ACTIVE") || status.eq_ignore_ascii_case("ACTIVE");
-        if !active {
-            continue;
-        }
-        let period_end = sub
-            .get("billingPeriodEnd")
-            .or_else(|| sub.get("currentPeriodEnd"))
-            .and_then(util::to_iso);
-        let tier = sub.get("tier").and_then(|v| v.as_str()).unwrap_or("");
-        let score = if tier.contains("SUPER_GROK") {
-            100
-        } else if tier.contains("GROK") {
-            50
-        } else if tier.contains("PREMIUM") {
-            20
-        } else {
-            10
-        };
-        let interval_raw = sub
-            .get("billingInterval")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let interval = if interval_raw.contains("YEAR") {
-            Some("year".into())
-        } else if interval_raw.contains("MONTH") || interval_raw.eq_ignore_ascii_case("month") {
-            Some("month".into())
-        } else if !interval_raw.is_empty() {
-            Some(interval_raw.to_ascii_lowercase())
-        } else {
-            None
-        };
-        let cancel = sub.get("cancelAtPeriodEnd").and_then(|v| v.as_bool());
-        let row = accounts::PlanBilling {
-            interval,
-            renews_at: period_end,
-            cancel_at_period_end: cancel,
-        };
-        match &best {
-            Some((s, _)) if *s >= score => {}
-            _ => best = Some((score, row)),
-        }
-    }
-    best.map(|(_, p)| p)
+    fabrials_providers::billing::grok_subscriptions(root).map(accounts::PlanBilling::from)
 }
 
 fn credits_pct_reset(config: &serde_json::Value) -> (Option<f64>, Option<String>) {
@@ -624,6 +575,40 @@ mod tests {
         assert_eq!(b.interval.as_deref(), Some("month"));
         assert!(b.renews_at.unwrap().starts_with("2026-09-16"));
         assert_eq!(b.cancel_at_period_end, Some(false));
+    }
+
+    #[test]
+    fn parse_cancelled_plan_keeps_its_last_day() {
+        let root = serde_json::json!({
+            "subscriptions": [
+                {
+                    "status": "SUBSCRIPTION_STATUS_ACTIVE",
+                    "tier": "SUBSCRIPTION_TIER_X_PREMIUM_PLUS"
+                },
+                {
+                    "status": "SUBSCRIPTION_STATUS_ACTIVE",
+                    "tier": "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+                    "billingInterval": "BILLING_INTERVAL_YEARLY",
+                    "billingPeriodEnd": "2027-08-16T12:00:00Z",
+                    "cancelAtPeriodEnd": true
+                }
+            ]
+        });
+        let b = parse_plan_billing(&root).unwrap();
+        assert_eq!(b.interval.as_deref(), Some("year"));
+        assert!(b.renews_at.unwrap().starts_with("2027-08-16"));
+        assert_eq!(b.cancel_at_period_end, Some(true));
+    }
+
+    #[test]
+    fn codex_paid_through_has_no_renewal_flag() {
+        let shared = fabrials_providers::billing::PlanBilling {
+            paid_through: Some("2026-10-06T11:04:15Z".into()),
+            ..Default::default()
+        };
+        let b = accounts::PlanBilling::from(shared);
+        assert_eq!(b.renews_at.as_deref(), Some("2026-10-06T11:04:15Z"));
+        assert_eq!(b.cancel_at_period_end, None);
     }
 
     #[test]
