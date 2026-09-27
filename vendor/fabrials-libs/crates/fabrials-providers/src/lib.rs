@@ -5,6 +5,7 @@ pub mod grok;
 pub mod grok_cli;
 pub mod kimi;
 pub mod nous;
+pub mod opencode;
 
 pub mod device_flow;
 

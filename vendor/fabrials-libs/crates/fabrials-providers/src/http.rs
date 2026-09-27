@@ -90,15 +90,24 @@ impl ReqwestHttp {
             .map_err(|_| "HTTP client unavailable".to_string())
     }
 
+    /// Caller headers replace the builder's, so a caller `Content-Type` is never
+    /// sent twice (Anthropic rejects a duplicated one with 400).
     fn send(
         &self,
-        mut request: reqwest::blocking::RequestBuilder,
+        request: reqwest::blocking::RequestBuilder,
         headers: &[(&str, &str)],
     ) -> Result<HttpResponse, String> {
         use std::io::Read;
+        let (client, request) = request.build_split();
+        let mut request = request.map_err(|_| "HTTP request failed".to_string())?;
         for (name, value) in headers {
-            request = request.header(*name, *value);
+            let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| "HTTP request failed".to_string())?;
+            let value = reqwest::header::HeaderValue::from_str(value)
+                .map_err(|_| "HTTP request failed".to_string())?;
+            request.headers_mut().insert(name, value);
         }
+        let request = reqwest::blocking::RequestBuilder::from_parts(client, request);
         let response = request
             .send()
             .map_err(|_| "HTTP request failed".to_string())?;
@@ -301,5 +310,37 @@ mod tests {
         let calls = port.calls.lock().unwrap();
         assert_eq!(calls[0].0, "POST form");
         assert!(calls[0].3.contains("device_code=device-code"));
+    }
+
+    #[cfg(feature = "reqwest")]
+    #[test]
+    fn a_caller_content_type_is_sent_once() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/claim", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut buf).unwrap();
+                raw.extend_from_slice(&buf[..n]);
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
+                .unwrap();
+            String::from_utf8_lossy(&raw).to_ascii_lowercase()
+        });
+        let http = ReqwestHttp::new(std::time::Duration::from_secs(5)).unwrap();
+        let response = http
+            .post_json(
+                &url,
+                &[("Content-Type", "application/json")],
+                &serde_json::json!({"a": 1}),
+            )
+            .unwrap();
+        assert_eq!(response.status, 200);
+        let request = server.join().unwrap();
+        assert_eq!(request.matches("content-type:").count(), 1, "{request}");
     }
 }

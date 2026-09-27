@@ -658,7 +658,6 @@ impl Client {
         let owned = headers(token);
         let mut pairs: Vec<(&str, &str)> = vec![
             ("Accept", "application/json"),
-            ("Content-Type", "application/json"),
             ("User-Agent", RESET_USER_AGENT),
         ];
         pairs.extend(owned.iter().map(|(k, v)| (k.as_str(), v.as_str())));
@@ -1284,6 +1283,9 @@ mod tests {
         );
         assert!(headers.contains(&("User-Agent".into(), RESET_USER_AGENT.into())));
         assert!(headers.contains(&("Authorization".into(), "Bearer sk-ant-oat01-session".into())));
+        assert!(!headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-type")));
         let body: Value = serde_json::from_str(body).unwrap();
         assert_eq!(body["program"], "cedar_ember");
         assert_eq!(body["grant_id"], "opus55-launch-promax-20260921");
