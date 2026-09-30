@@ -31,7 +31,11 @@ pub fn list_cost_usd_with(record: &HopRecord, table: &pricing::PricingMap) -> Op
     let cached = record.cached_input_tokens.min(record.input_tokens);
     let uncached = record.input_tokens.saturating_sub(cached);
     const TIER: u64 = 200_000;
-    let long = record.input_tokens >= TIER;
+    let long = p
+        .long_context_threshold_tokens
+        .map_or(record.input_tokens >= TIER, |threshold| {
+            record.input_tokens > threshold
+        });
     let (rin, rcache, rout) = if long {
         (
             p.input_above_200k.unwrap_or(p.input),

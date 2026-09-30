@@ -141,6 +141,9 @@ impl Client {
         )?;
         Ok(PollResult::Authorized(token_document(value, now, None)?))
     }
+    /// A refresh that never got an answer: the token may or may not have rotated.
+    pub const REFRESH_UNANSWERED: &'static str = "Codex token refresh unavailable";
+
     pub fn refresh(&self, document: &Value, now: i64) -> Result<Value, String> {
         let form = crate::http::form_body(&[
             ("grant_type", "refresh_token"),
@@ -150,7 +153,7 @@ impl Client {
         let value = read(
             self.http
                 .post_form(&format!("{ISSUER}/oauth/token"), &[USER_AGENT], &form)
-                .map_err(|_| "Codex token refresh unavailable")?,
+                .map_err(|_| Self::REFRESH_UNANSWERED)?,
         )?;
         token_document(value, now, Some(document))
     }
@@ -176,6 +179,39 @@ impl Client {
                 )
                 .map_err(|_| "Codex metadata unavailable")?,
         )
+    }
+
+    /// Plan billing for the signed-in ChatGPT account: renewal and end dates from
+    /// `/backend-api/subscriptions`, or the paid-through date in the `id_token`
+    /// when that endpoint is unreachable.
+    pub fn billing(&self, document: &Value) -> Option<crate::billing::PlanBilling> {
+        let from_endpoint = (|| {
+            let bearer = format!("Bearer {}", required(document, "access_token").ok()?);
+            let account = account_id(document)?;
+            let response = self
+                .http
+                .get(
+                    &format!("https://chatgpt.com/backend-api/subscriptions?account_id={account}"),
+                    &[
+                        USER_AGENT,
+                        ("Authorization", &bearer),
+                        ("ChatGPT-Account-Id", account),
+                        ("originator", "codex_cli_rs"),
+                        ("Accept", "application/json"),
+                    ],
+                )
+                .ok()?;
+            let value = read(response).ok()?;
+            crate::billing::codex_subscriptions(&value)
+        })();
+        from_endpoint.or_else(|| {
+            document
+                .get("id_token")
+                .and_then(Value::as_str)
+                .and_then(claims)
+                .as_ref()
+                .and_then(crate::billing::codex_id_token)
+        })
     }
 
     /// Spend one banked Codex limit-reset credit. `redeem_request_id` is the

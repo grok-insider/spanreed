@@ -4,6 +4,7 @@ use crate::routes::{UPSTREAM_GROK_CLI, UPSTREAM_XAI_API};
 use fabrials_fabric::provider::{
     BodyShaper, CredentialInjector, Router, Translator, Upstream, UsageExtractor,
 };
+use fabrials_fabric::reasoning::{self, Issuer, Keep};
 use fabrials_types::hop::HopClass;
 use fabrials_types::HopRecord;
 /// Client identity headers sent to Grok upstreams. The host chooses the values.
@@ -16,7 +17,7 @@ pub struct GrokClientIdentity {
 impl Default for GrokClientIdentity {
     fn default() -> Self {
         Self {
-            version: "0.2.84".into(),
+            version: "1.0.45".into(),
             identifier: "grok-cli".into(),
         }
     }
@@ -104,6 +105,16 @@ impl CredentialInjector for GrokAdapter {
         }
     }
 
+    /// A real Grok client announces its own version; send that one when it is
+    /// not older than the host's, so the relay never falls behind the client.
+    fn merge_client_header(&self, name: &str, client: &str, injected: &str) -> Option<String> {
+        if !name.eq_ignore_ascii_case("x-grok-client-version") {
+            return None;
+        }
+        let (client_v, injected_v) = (parse_version(client)?, parse_version(injected)?);
+        (client_v > injected_v).then(|| client.trim().to_string())
+    }
+
     fn bind_credential(&self, hop: &mut Upstream, token: &str) {
         if hop.route != "xai" || token.starts_with("xai-") || !is_cli_chat_path(&hop.path) {
             return;
@@ -136,7 +147,36 @@ impl Translator for GrokAdapter {
     }
 }
 
-impl BodyShaper for GrokAdapter {}
+impl BodyShaper for GrokAdapter {
+    /// Replayed `encrypted_content` xAI did not issue is dropped.
+    fn shape_request(&self, hop: &Upstream, _token: Option<&str>, body: &[u8]) -> Option<Vec<u8>> {
+        is_cli_chat_path(&hop.path)
+            .then(|| reasoning::strip_body(Issuer::Xai, body, Keep::Unknown))
+            .flatten()
+    }
+
+    fn reshape_after_rejection(
+        &self,
+        hop: &Upstream,
+        status: u16,
+        rejected: &[u8],
+        body: &[u8],
+    ) -> Option<Vec<u8>> {
+        is_cli_chat_path(&hop.path)
+            .then(|| reasoning::retry_after_rejection(Issuer::Xai, status, rejected, body))
+            .flatten()
+    }
+
+    fn observe_exchange(&self, hop: &Upstream, accepted: bool, request: &[u8], response: &[u8]) {
+        if !is_cli_chat_path(&hop.path) {
+            return;
+        }
+        reasoning::observe_response(Issuer::Xai, response);
+        if accepted {
+            reasoning::observe_accepted_request(Issuer::Xai, request);
+        }
+    }
+}
 
 impl GrokAdapter {
     fn cli_origin(&self) -> String {
@@ -154,6 +194,18 @@ impl GrokAdapter {
                 .as_deref()
                 .is_some_and(|b| hop.base == b.trim_end_matches('/'))
     }
+}
+
+/// `major.minor.patch` with an optional pre-release/build suffix on the patch.
+fn parse_version(raw: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = raw.trim().splitn(3, '.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?;
+    let digits = patch
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(patch.len());
+    Some((major, minor, patch[..digits].parse().ok()?))
 }
 
 fn is_cli_chat_path(path: &str) -> bool {
@@ -282,5 +334,37 @@ mod tests {
         let (base, headers) = bind_inject(&overridden, "/xai/v1/responses", "cli-oauth-token");
         assert_eq!(base, "http://127.0.0.1:9");
         assert_cli_inject(&headers, "cli-oauth-token");
+    }
+}
+
+#[cfg(test)]
+mod client_version_tests {
+    use super::*;
+
+    fn merged(client: &str) -> Option<String> {
+        GrokAdapter::default().merge_client_header("x-grok-client-version", client, "1.0.45")
+    }
+
+    #[test]
+    fn newer_client_version_is_forwarded() {
+        assert_eq!(merged("1.0.50").as_deref(), Some("1.0.50"));
+        assert_eq!(merged("1.1.0-beta.2").as_deref(), Some("1.1.0-beta.2"));
+    }
+
+    #[test]
+    fn older_or_invalid_client_version_keeps_the_host_value() {
+        assert_eq!(merged("0.2.84"), None);
+        assert_eq!(merged("1.0.45"), None);
+        assert_eq!(merged("latest"), None);
+        assert_eq!(merged(""), None);
+    }
+
+    #[test]
+    fn other_headers_are_not_merged() {
+        let a = GrokAdapter::default();
+        assert_eq!(
+            a.merge_client_header("x-grok-client-identifier", "x", "grok-cli"),
+            None
+        );
     }
 }

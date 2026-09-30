@@ -17,7 +17,7 @@ fn relay_variables_do_not_change_the_grok_identity() {
     let adapter = GrokAdapter::default();
     let hop = adapter.resolve("/grok/v1/chat/completions").unwrap();
     let headers = adapter.inject_for("cli-oauth-token", &hop);
-    assert_eq!(header(&headers, "x-grok-client-version"), Some("0.2.84"));
+    assert_eq!(header(&headers, "x-grok-client-version"), Some("1.0.45"));
     assert_eq!(
         header(&headers, "x-grok-client-identifier"),
         Some("grok-cli")
