@@ -27,6 +27,32 @@ pub fn model_ids(value: &Value) -> Result<Vec<String>, String> {
     Ok(ids)
 }
 
+/// Ids of listed models that cost nothing: an OpenAI-style `pricing` with zero
+/// prompt and completion prices (OpenRouter, Nous and compatible listings). An
+/// entry without prices is not assumed free.
+pub fn free_model_ids(value: &Value) -> Vec<String> {
+    let zero = |value: Option<&Value>| {
+        value
+            .and_then(|v| v.as_f64().or_else(|| v.as_str()?.trim().parse().ok()))
+            .is_some_and(|price: f64| price == 0.0)
+    };
+    value
+        .get("data")
+        .or_else(|| value.get("items"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|model| {
+            let pricing = model.get("pricing");
+            zero(pricing.and_then(|p| p.get("prompt")))
+                && zero(pricing.and_then(|p| p.get("completion")))
+        })
+        .filter_map(|model| model.get("id")?.as_str().map(|id| id.trim().to_owned()))
+        .filter(|id| !id.is_empty() && id.len() <= 256)
+        .take(2048)
+        .collect()
+}
+
 /// Validate an already materialized catalog without silently dropping entries.
 pub fn validate_ids(models: &[String]) -> Result<(), String> {
     if models.len() > 2048 {

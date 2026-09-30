@@ -193,6 +193,7 @@ async fn run(
                         let Some(model)=event["model"].as_str().filter(|model|!model.is_empty() && model.len()<=256 && model.bytes().all(|b|b.is_ascii_graphic())) else {client.send(error("invalid_model",400)).await.map_err(|_|"Client disconnected")?;continue;};
                         if tokio::task::block_in_place(|| hop.observer.authorize_response(model,"codex",hop.alias,hop.secret)).is_err(){client.send(error("request_not_authorized",403)).await.map_err(|_|"Client disconnected")?;continue;}
                         let model=model.to_owned();
+                        super::translation::strip_unsupported_parameters(&mut event);
                         event["store"]=json!(false);
                         active.bytes=0;active.started=std::time::Instant::now();
                         active.record=Some(HopRecord {ts_ms:super::translation::now_ms(),request_id:Some(fabrials_fabric::accounting::new_request_id()),provider:Some("codex".into()),route:Some("codex".into()),kind:Some("chat".into()),model:Some(model),account_id:hop.alias.map(|alias|format!("codex/{alias}")),key_hash:hop.key_hash.map(str::to_owned),..Default::default()});
@@ -318,6 +319,7 @@ mod tests {
                     serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
                 assert_eq!(request["model"], "allowed");
                 assert_eq!(request["store"], false);
+                assert!(request.get("temperature").is_none());
                 ws.send(Message::Text(json!({"type":"response.completed","response":{"id":format!("response-{index}"),"status":"completed","model":"allowed","output":[],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}).to_string().into())).unwrap();
             }
             let _ = ws.read();
@@ -355,7 +357,7 @@ mod tests {
             for _ in 0..2 {
                 client
                     .send(Message::Text(
-                        json!({"type":"response.create","model":"allowed","input":[]})
+                        json!({"type":"response.create","model":"allowed","input":[],"temperature":1.0})
                             .to_string()
                             .into(),
                     ))
@@ -366,7 +368,7 @@ mod tests {
             }
             client
                 .send(Message::Text(
-                    json!({"type":"response.create","model":"allowed","input":[]})
+                    json!({"type":"response.create","model":"allowed","input":[],"temperature":1.0})
                         .to_string()
                         .into(),
                 ))
@@ -505,7 +507,9 @@ mod tests {
                 .unwrap();
             let (mut client, _) =
                 tungstenite::client(format!("ws://{address}/codex/v1/responses"), socket).unwrap();
-            let create = json!({"type":"response.create","model":"allowed","input":[]}).to_string();
+            let create =
+                json!({"type":"response.create","model":"allowed","input":[],"temperature":1.0})
+                    .to_string();
             client.send(Message::Text(create.clone().into())).unwrap();
             let event: Value =
                 serde_json::from_str(client.read().unwrap().to_text().unwrap()).unwrap();

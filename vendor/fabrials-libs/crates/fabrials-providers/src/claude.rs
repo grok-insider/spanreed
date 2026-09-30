@@ -35,6 +35,12 @@ pub const OAUTH_TOKEN_PREFIX: &str = "sk-ant-oat";
 pub const USAGE_PATH: &str = "/api/oauth/usage";
 pub const PROFILE_PATH: &str = "/api/oauth/profile";
 pub const MODELS_PATH: &str = "/v1/models";
+/// Usage plus the limit-reset grants (`cedar_ember`), as Claude Code reads them.
+pub const USAGE_WITH_RESETS_PATH: &str = "/api/oauth/usage?cedar_ember=1";
+pub const RESET_PROGRAM: &str = "cedar_ember";
+/// Anthropic grants limit resets per client surface: without the Claude Code user
+/// agent the status answers `ineligible_reason: "surface"` (verified 2026-09-27).
+pub const RESET_USER_AGENT: &str = "claude-cli/2.1.283 (external, cli)";
 /// Refresh asks only for what the relay uses; the CLI asks for more.
 pub const SCOPES: &str = "user:inference user:profile";
 pub const REFRESH_BUFFER_MS: i64 = 300_000;
@@ -387,6 +393,183 @@ pub fn document_from_credentials(value: &Value, now: i64) -> Result<Value, Strin
     Ok(document)
 }
 
+/// The organization a reset is claimed for: the stored session field, when present.
+pub fn organization_uuid(document: &Value) -> Option<String> {
+    field(document, "organization_uuid").filter(|value| valid_organization_uuid(value))
+}
+
+pub fn organization_uuid_from_profile(profile: &Value) -> Option<String> {
+    field(profile.get("organization")?, "uuid").filter(|value| valid_organization_uuid(value))
+}
+
+pub fn valid_organization_uuid(value: &str) -> bool {
+    let mut parts = value.split('-');
+    for width in [8, 4, 4, 4, 12] {
+        let Some(part) = parts.next() else {
+            return false;
+        };
+        if part.len() != width || !part.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    parts.next().is_none()
+}
+
+/// Same shapes Claude Code accepts before it sends a claim.
+pub fn valid_grant_id(value: &str) -> bool {
+    (1..=40).contains(&value.len())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+        })
+}
+
+pub fn valid_reset_request_id(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn reset_status(usage: &Value) -> Option<&serde_json::Map<String, Value>> {
+    usage.get(RESET_PROGRAM)?.as_object()
+}
+
+fn grant_ms(grant: &Value, key: &str) -> Option<i64> {
+    let text = grant.get(key)?.as_str()?;
+    let parsed = OffsetDateTime::parse(text, &Rfc3339).ok()?;
+    i64::try_from(parsed.unix_timestamp_nanos() / 1_000_000).ok()
+}
+
+/// Remaining limit resets from a usage document read with [`USAGE_WITH_RESETS_PATH`].
+/// `None` when the answer carries no reset status at all.
+pub fn parse_resets(usage: &Value, now_ms: i64) -> Option<fabrials_types::ResetInventory> {
+    use fabrials_types::{ResetCredit, ResetInventory};
+    let status = reset_status(usage)?;
+    let mut credits = Vec::new();
+    let mut available: u32 = 0;
+    if status.get("eligible").and_then(Value::as_bool) == Some(true) {
+        let grants = status.get("grants").and_then(Value::as_array);
+        for grant in grants.into_iter().flatten().take(64) {
+            if grant.get("paused").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
+            let left = grant
+                .get("resets_left")
+                .and_then(Value::as_u64)
+                .map_or(0, |left| left.min(64) as u32);
+            let expires_at_ms = grant_ms(grant, "ends_at");
+            if left == 0 || expires_at_ms.is_some_and(|expiry| expiry <= now_ms) {
+                continue;
+            }
+            available = available.saturating_add(left);
+            let valid_from_ms = grant_ms(grant, "starts_at");
+            for _ in 0..left {
+                credits.push(ResetCredit {
+                    valid_from_ms,
+                    expires_at_ms,
+                });
+            }
+        }
+    }
+    credits.sort_by_key(|credit| credit.expires_at_ms.unwrap_or(i64::MAX));
+    let complete = credits.len() <= 64;
+    credits.truncate(64);
+    Some(ResetInventory {
+        available,
+        credits,
+        details_complete: complete,
+    })
+}
+
+/// The grant Claude would spend now, chosen the way claude.ai and Claude Code choose
+/// it: the advertised next grant, outside any cooldown, usable now, and when it only
+/// works at a limit, one of the windows it clears must be exhausted.
+pub fn next_reset_grant(usage: &Value) -> Option<String> {
+    let status = reset_status(usage)?;
+    if status.get("eligible").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    if status
+        .get("cooldown_until")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return None;
+    }
+    let next = status.get("next_grant_id")?.as_str()?;
+    if !valid_grant_id(next) {
+        return None;
+    }
+    let exhausted: Vec<&str> = if status.get("at_limit").and_then(Value::as_bool) == Some(true) {
+        status
+            .get("exhausted")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let grant = status
+        .get("grants")?
+        .as_array()?
+        .iter()
+        .find(|grant| grant.get("id").and_then(Value::as_str) == Some(next))?;
+    let usable = grant.get("usable_now").and_then(Value::as_bool) == Some(true)
+        && grant.get("paused").and_then(Value::as_bool) != Some(true)
+        && grant
+            .get("resets_left")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0;
+    let needs_limit = grant.get("use_requires_limit").and_then(Value::as_bool) == Some(true);
+    let clears_exhausted = grant
+        .get("clears")
+        .and_then(Value::as_array)
+        .is_some_and(|clears| {
+            clears
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|window| exhausted.contains(&window))
+        });
+    (usable && (!needs_limit || clears_exhausted)).then(|| next.to_string())
+}
+
+/// A confirmed claim: how many resets the grant still holds and which windows cleared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResetClaim {
+    pub resets_left: Option<u32>,
+    pub cleared: Vec<String>,
+}
+
+pub fn interpret_claim(value: &Value) -> Result<ResetClaim, &'static str> {
+    match value.get("result").and_then(Value::as_str) {
+        Some("reset") => Ok(ResetClaim {
+            resets_left: value
+                .get("resets_left")
+                .and_then(Value::as_u64)
+                .and_then(|left| u32::try_from(left).ok()),
+            cleared: value
+                .get("cleared")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .take(16)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }),
+        Some("already_used") => Err("This Claude limit reset was already used"),
+        Some("not_limited") => Err("No Claude usage window can be reset right now"),
+        Some("cooldown") => Err("Claude limit resets are cooling down; try again later"),
+        Some("ineligible") => Err("This Claude account cannot use limit resets"),
+        Some("unavailable") => Err("Claude limit resets are unavailable right now"),
+        _ => Err("Claude did not confirm the reset"),
+    }
+}
+
 pub struct Client {
     http: std::sync::Arc<dyn crate::http::HttpPort>,
     origins: Origins,
@@ -414,9 +597,14 @@ impl Client {
     }
 
     fn get(&self, path: &str, token: &str) -> Result<Value, String> {
+        self.get_with(path, token, &[])
+    }
+
+    fn get_with(&self, path: &str, token: &str, extra: &[(&str, &str)]) -> Result<Value, String> {
         let owned = headers(token);
         let mut pairs: Vec<(&str, &str)> = vec![("Accept", "application/json")];
         pairs.extend(owned.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        pairs.extend_from_slice(extra);
         let response = self
             .http
             .get(&format!("{}{path}", self.origins.api_base), &pairs)
@@ -439,6 +627,66 @@ impl Client {
 
     pub fn profile(&self, token: &str) -> Result<Value, String> {
         self.get(PROFILE_PATH, token)
+    }
+
+    /// The usage document with its `cedar_ember` reset status.
+    pub fn usage_with_resets(&self, token: &str) -> Result<Value, String> {
+        self.get_with(
+            USAGE_WITH_RESETS_PATH,
+            token,
+            &[("User-Agent", RESET_USER_AGENT)],
+        )
+    }
+
+    /// Spend one limit reset from `grant_id`. `request_id` makes a retry idempotent.
+    pub fn claim_reset(
+        &self,
+        token: &str,
+        organization_uuid: &str,
+        grant_id: &str,
+        request_id: &str,
+    ) -> Result<ResetClaim, &'static str> {
+        if !is_oauth(token) {
+            return Err("Limit resets need a Claude subscription session");
+        }
+        if !valid_organization_uuid(organization_uuid)
+            || !valid_grant_id(grant_id)
+            || !valid_reset_request_id(request_id)
+        {
+            return Err("invalid reset request");
+        }
+        let owned = headers(token);
+        let mut pairs: Vec<(&str, &str)> = vec![
+            ("Accept", "application/json"),
+            ("User-Agent", RESET_USER_AGENT),
+        ];
+        pairs.extend(owned.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        let url = format!(
+            "{}/api/organizations/{organization_uuid}/reset_rate_limits",
+            self.origins.api_base
+        );
+        let response = self
+            .http
+            .post_json(
+                &url,
+                &pairs,
+                &json!({
+                    "program": RESET_PROGRAM,
+                    "grant_id": grant_id,
+                    "request_id": request_id,
+                }),
+            )
+            .map_err(|_| "Claude reset unavailable")?;
+        match response.status {
+            200..=299 => {}
+            401 | 403 => return Err("Claude rejected the credential"),
+            429 => return Err("Claude is rate limiting reset requests; try again in a minute"),
+            _ => return Err("Claude reset unavailable"),
+        }
+        let value = response
+            .json()
+            .map_err(|_| "Claude did not confirm the reset")?;
+        interpret_claim(&value)
     }
 
     pub fn models(&self, token: &str) -> Result<Vec<String>, String> {
@@ -840,6 +1088,34 @@ fn window_label(suffix: &str) -> String {
     }
 }
 
+/// UTC RFC 3339 for epoch seconds, the unit of Anthropic's rate-limit headers.
+pub fn rfc3339_from_unix(seconds: i64) -> Option<String> {
+    OffsetDateTime::from_unix_timestamp(seconds)
+        .ok()?
+        .format(&Rfc3339)
+        .ok()
+}
+
+/// The busier plan window in a response's `anthropic-ratelimit-unified-5h-*` and
+/// `-7d-*` headers: its percent (utilization is a fraction) and its renewal.
+pub fn header_usage(header: &dyn Fn(&str) -> Option<String>) -> Option<(f64, Option<String>)> {
+    let window = |name: &str| {
+        let used = header(&format!("anthropic-ratelimit-unified-{name}-utilization"))?
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|fraction| fraction.is_finite() && *fraction >= 0.0)?;
+        let reset = header(&format!("anthropic-ratelimit-unified-{name}-reset"))
+            .and_then(|seconds| seconds.trim().parse::<i64>().ok())
+            .and_then(rfc3339_from_unix);
+        Some(((used * 100.0).min(100.0), reset))
+    };
+    [window("5h"), window("7d")]
+        .into_iter()
+        .flatten()
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+}
+
 fn iso_utc(value: &Value) -> Option<String> {
     let text = value.as_str()?.trim();
     let parsed = OffsetDateTime::parse(text, &Rfc3339).ok()?;
@@ -884,6 +1160,176 @@ mod tests {
 
     use super::*;
     use fabrials_types::{MetricLine, ProgressFormat};
+
+    fn reset_usage(eligible: bool, at_limit: bool, requires_limit: bool) -> Value {
+        json!({
+            "five_hour": {"utilization": 100.0, "resets_at": "2026-09-27T01:59:59.748547+00:00"},
+            "cedar_ember": {
+                "eligible": eligible,
+                "ineligible_reason": if eligible { Value::Null } else { json!("surface") },
+                "at_limit": at_limit,
+                "exhausted": if at_limit { json!(["five_hour"]) } else { json!([]) },
+                "grants": if eligible { json!([{
+                    "id": "opus55-launch-promax-20260921",
+                    "label": "Claude Opus 5.5 launch: one usage-limit reset for Pro and Max",
+                    "resets_total": 1,
+                    "resets_left": 1,
+                    "starts_at": "2026-09-22T16:00:00+00:00",
+                    "ends_at": "2026-10-22T16:00:00+00:00",
+                    "clears": ["five_hour", "seven_day", "seven_day_overage_included"],
+                    "paused": false,
+                    "usable_now": true,
+                    "use_requires_limit": requires_limit,
+                    "percent_used": {"five_hour": 100, "seven_day": 27},
+                    "blocking": [],
+                    "arm": null
+                }]) } else { json!([]) },
+                "next_grant_id": if eligible { json!("opus55-launch-promax-20260921") } else { Value::Null },
+                "weekly_resets_at": "2026-10-01T13:00:00+00:00",
+                "cooldown_until": null
+            }
+        })
+    }
+
+    const SEPT_27: i64 = 1_790_467_200_000;
+
+    #[test]
+    fn response_headers_report_the_busier_window() {
+        let pairs = [
+            ("anthropic-ratelimit-unified-5h-utilization", "0.21"),
+            ("anthropic-ratelimit-unified-5h-reset", "1790506800"),
+            ("anthropic-ratelimit-unified-7d-utilization", "0.86"),
+            ("anthropic-ratelimit-unified-7d-reset", "1790798400"),
+        ];
+        let header = |name: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.to_string())
+        };
+        let (used, reset) = header_usage(&header).unwrap();
+        assert!((used - 86.0).abs() < 1e-9);
+        assert_eq!(reset.as_deref(), Some("2026-09-30T20:00:00Z"));
+        let full = |name: &str| {
+            (name == "anthropic-ratelimit-unified-5h-utilization").then(|| "1.02".to_string())
+        };
+        assert_eq!(header_usage(&full), Some((100.0, None)));
+        assert!(header_usage(&|_: &str| None).is_none());
+        assert_eq!(
+            rfc3339_from_unix(1_790_467_291).as_deref(),
+            Some("2026-09-27T00:01:31Z")
+        );
+    }
+
+    #[test]
+    fn reset_inventory_counts_the_open_grants() {
+        let inventory = parse_resets(&reset_usage(true, true, false), SEPT_27).unwrap();
+        assert_eq!(inventory.available, 1);
+        assert_eq!(inventory.credits.len(), 1);
+        assert_eq!(inventory.credits[0].expires_at_ms, Some(1_792_684_800_000));
+        assert_eq!(inventory.credits[0].valid_from_ms, Some(1_790_092_800_000));
+        let after_expiry = parse_resets(&reset_usage(true, true, false), 1_792_684_800_001);
+        assert_eq!(after_expiry.unwrap().available, 0);
+    }
+
+    #[test]
+    fn an_ineligible_surface_has_no_resets_and_a_plain_usage_read_has_no_status() {
+        let inventory = parse_resets(&reset_usage(false, false, false), SEPT_27).unwrap();
+        assert_eq!(inventory.available, 0);
+        assert!(next_reset_grant(&reset_usage(false, false, false)).is_none());
+        assert!(parse_resets(&json!({"five_hour": {"utilization": 3}}), SEPT_27).is_none());
+    }
+
+    #[test]
+    fn the_next_grant_follows_claude_rules() {
+        assert_eq!(
+            next_reset_grant(&reset_usage(true, false, false)).as_deref(),
+            Some("opus55-launch-promax-20260921")
+        );
+        assert!(next_reset_grant(&reset_usage(true, false, true)).is_none());
+        assert!(next_reset_grant(&reset_usage(true, true, true)).is_some());
+        let mut cooling = reset_usage(true, true, false);
+        cooling["cedar_ember"]["cooldown_until"] = json!("2026-09-28T00:00:00+00:00");
+        assert!(next_reset_grant(&cooling).is_none());
+        let mut spent = reset_usage(true, true, false);
+        spent["cedar_ember"]["grants"][0]["usable_now"] = json!(false);
+        assert!(next_reset_grant(&spent).is_none());
+    }
+
+    #[test]
+    fn a_claim_posts_the_program_as_claude_code() {
+        use crate::http::testing::ScriptedHttp;
+        let http = std::sync::Arc::new(ScriptedHttp::new(vec![(
+            200,
+            json!({"result": "reset", "reset": true, "grant_id": "opus55-launch-promax-20260921", "resets_left": 0, "cleared": ["five_hour", "seven_day"]}),
+        )]));
+        let client = Client::with_http(http.clone(), Origins::default());
+        let claim = client
+            .claim_reset(
+                "sk-ant-oat01-session",
+                "0178f918-0ee9-480e-8fae-e97d8553b503",
+                "opus55-launch-promax-20260921",
+                "55cbe0c1-71ab-4c52-b855-80746f73ff52",
+            )
+            .unwrap();
+        assert_eq!(claim.resets_left, Some(0));
+        assert_eq!(claim.cleared, vec!["five_hour", "seven_day"]);
+        let calls = http.calls.lock().unwrap();
+        let (method, url, headers, body) = &calls[0];
+        assert_eq!(method, "POST json");
+        assert_eq!(
+            url,
+            "https://api.anthropic.com/api/organizations/0178f918-0ee9-480e-8fae-e97d8553b503/reset_rate_limits"
+        );
+        assert!(headers.contains(&("User-Agent".into(), RESET_USER_AGENT.into())));
+        assert!(headers.contains(&("Authorization".into(), "Bearer sk-ant-oat01-session".into())));
+        assert!(!headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-type")));
+        let body: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(body["program"], "cedar_ember");
+        assert_eq!(body["grant_id"], "opus55-launch-promax-20260921");
+        assert_eq!(body["request_id"], "55cbe0c1-71ab-4c52-b855-80746f73ff52");
+    }
+
+    #[test]
+    fn claims_refuse_bad_input_and_report_every_outcome() {
+        let client = Client::with_http(
+            std::sync::Arc::new(crate::http::testing::ScriptedHttp::new(vec![])),
+            Origins::default(),
+        );
+        let org = "0178f918-0ee9-480e-8fae-e97d8553b503";
+        assert!(client
+            .claim_reset("sk-ant-api03-key", org, "g", "r")
+            .is_err());
+        assert!(client
+            .claim_reset("sk-ant-oat01-x", "org", "g", "r")
+            .is_err());
+        assert!(client
+            .claim_reset("sk-ant-oat01-x", org, "Bad/Grant", "r")
+            .is_err());
+        assert!(client
+            .claim_reset("sk-ant-oat01-x", org, "g", "r id")
+            .is_err());
+        for result in [
+            "already_used",
+            "not_limited",
+            "cooldown",
+            "ineligible",
+            "unavailable",
+            "other",
+        ] {
+            assert!(
+                interpret_claim(&json!({"result": result})).is_err(),
+                "{result}"
+            );
+        }
+        assert_eq!(
+            organization_uuid_from_profile(&json!({"organization": {"uuid": org}})).as_deref(),
+            Some(org)
+        );
+        assert!(organization_uuid_from_profile(&json!({"organization": {"uuid": "x"}})).is_none());
+    }
 
     fn progress_labels(lines: &[MetricLine]) -> Vec<String> {
         lines

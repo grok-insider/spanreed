@@ -1,13 +1,31 @@
 use super::CodexAdapter;
 use fabrials_fabric::provider::{CredentialInjector, Upstream, UsageExtractor};
+use fabrials_fabric::reasoning::{self, Issuer, Keep};
 use fabrials_types::HopRecord;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 
-/// Oldest Codex release that can list GPT-6 Sol and Luna. Callers that do not
-/// send their own `client_version` still need a version new enough for the
-/// current subscription catalog.
-pub(crate) const DEFAULT_CATALOG_CLIENT_VERSION: &str = "0.155.1";
+/// Oldest Codex release ChatGPT lists every current subscription model to
+/// (GPT-6.1 Sol needs 0.159). The catalog is requested with at least this
+/// version, so an older client still sees the models it can already call.
+pub(crate) const DEFAULT_CATALOG_CLIENT_VERSION: &str = "0.159.0";
+
+fn version_parts(version: &str) -> Vec<u64> {
+    version
+        .split('.')
+        .map(|part| part.parse().unwrap_or(0))
+        .collect()
+}
+
+/// The newer of the client's version and [`DEFAULT_CATALOG_CLIENT_VERSION`].
+pub(crate) fn catalog_client_version(requested: Option<&str>) -> &str {
+    match requested {
+        Some(version) if version_parts(version) > version_parts(DEFAULT_CATALOG_CLIENT_VERSION) => {
+            version
+        }
+        _ => DEFAULT_CATALOG_CLIENT_VERSION,
+    }
+}
 
 pub(crate) fn client_version_from_query(query: &str) -> Option<&str> {
     query.split('&').find_map(|pair| {
@@ -34,6 +52,12 @@ pub fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+pub(crate) fn strip_unsupported_parameters(value: &mut Value) {
+    if let Some(object) = value.as_object_mut() {
+        object.remove("temperature");
+    }
+}
+
 pub fn responses_request(mut value: Value, chat: bool) -> Result<Value, String> {
     // Optional JSON nulls mean unspecified, including clients overriding an
     // SDK's default output cap for subscription endpoints.
@@ -55,9 +79,16 @@ pub fn responses_request(mut value: Value, chat: bool) -> Result<Value, String> 
     {
         return Err("Codex subscriptions do not support an output-token limit. Remove max_output_tokens, max_tokens and max_completion_tokens; use an API provider if your client requires a token cap.".into());
     }
+    strip_unsupported_parameters(&mut value);
     if chat {
         value = fabrials_fabric::wire_compat::chat_request_to_responses(&value)?;
     }
+    for item in value["input"].as_array_mut().into_iter().flatten() {
+        if item["role"] == "system" {
+            item["role"] = json!("developer");
+        }
+    }
+    reasoning::strip(Issuer::OpenAi, &mut value, Keep::Unknown);
     value["store"] = json!(false);
     value["stream"] = json!(true);
     if value.get("instructions").is_none() {
@@ -70,6 +101,60 @@ fn json_reply(client: &mut dyn Write, status: u16, value: &Value) -> Result<(), 
     let body = value.to_string();
     write!(client,"HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).map_err(|_|"Client disconnected".into())
 }
+fn rejection_body(response: reqwest::blocking::Response) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let _ = response.take(64 * 1024).read_to_end(&mut bytes);
+    bytes
+}
+
+/// The upstream's own reason, bounded, so a client can show why Codex refused.
+fn rejection_message(body: &[u8]) -> String {
+    let value: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    let detail = value["error"]["message"]
+        .as_str()
+        .or_else(|| value["detail"].as_str())
+        .or_else(|| value["message"].as_str())
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty());
+    match detail {
+        Some(detail) => {
+            let detail: String = detail.chars().take(300).collect();
+            format!("Codex rejected the request: {detail}")
+        }
+        None => "Codex rejected the request. Check authorization, model availability and supported parameters.".into(),
+    }
+}
+
+fn reject(
+    client: &mut dyn Write,
+    record: &mut HopRecord,
+    started: std::time::Instant,
+    status: u16,
+    rejected: &[u8],
+) -> Result<Option<HopRecord>, String> {
+    record.status = Some(status);
+    record.duration_ms = Some(started.elapsed().as_millis() as u64);
+    json_reply(
+        client,
+        status,
+        &json!({"error":{"message":rejection_message(rejected),"type":"upstream_error","code":status}}),
+    )?;
+    Ok(Some(record.clone()))
+}
+
+/// The SSE packet with its `data:` payload replaced by `event`.
+fn rewrite_data(raw: &str, event: &Value) -> Vec<u8> {
+    let mut out = String::new();
+    for line in raw.lines().filter(|line| !line.starts_with("data:")) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("data: ");
+    out.push_str(&event.to_string());
+    out.push('\n');
+    out.into_bytes()
+}
+
 fn data(client: &mut dyn Write, value: &Value) -> bool {
     write!(client, "data: {value}\n\n")
         .and_then(|_| client.flush())
@@ -134,7 +219,7 @@ pub fn forward(
     let endpoint = if method == "GET" {
         format!(
             "/backend-api/codex/models?client_version={}",
-            requested_version.unwrap_or(DEFAULT_CATALOG_CLIENT_VERSION)
+            catalog_client_version(requested_version)
         )
     } else {
         "/backend-api/codex/responses".to_string()
@@ -147,43 +232,57 @@ pub fn forward(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "Could not initialize Codex proxy")?;
-    let mut req = http.request(
-        if method == "GET" {
-            reqwest::Method::GET
-        } else {
-            reqwest::Method::POST
-        },
-        url,
-    );
-    for (key, value) in adapter.credential_headers(
-        token,
-        &Upstream {
-            base: base.into(),
-            path: path.into(),
-            route: "codex",
-            account_alias: None,
-        },
-        secret,
-    )? {
-        req = req.header(key, value);
-    }
-    if let Some(request) = request {
-        req = req
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
-            .body(request.to_string());
-    }
-    let response = req.send().map_err(|_| "Codex upstream unavailable")?;
-    let status = response.status().as_u16();
+    let hop = Upstream {
+        base: base.into(),
+        path: path.into(),
+        route: "codex",
+        account_alias: None,
+    };
+    let headers = adapter.credential_headers(token, &hop, secret)?;
+    let send = |request: Option<&Value>| {
+        let mut req = http.request(
+            if method == "GET" {
+                reqwest::Method::GET
+            } else {
+                reqwest::Method::POST
+            },
+            url.clone(),
+        );
+        for (key, value) in &headers {
+            req = req.header(key, value);
+        }
+        if let Some(request) = request {
+            req = req
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .body(request.to_string());
+        }
+        req.send().map_err(|_| "Codex upstream unavailable")
+    };
+    let mut request = request;
+    let mut response = send(request.as_ref())?;
+    let mut status = response.status().as_u16();
     if !(200..300).contains(&status) {
-        record.status = Some(status);
-        record.duration_ms = Some(started.elapsed().as_millis() as u64);
-        json_reply(
-            client,
-            status,
-            &json!({"error":{"message":"Codex rejected the request. Check authorization, model availability and supported parameters.","type":"upstream_error","code":status}}),
-        )?;
-        return Ok(Some(record));
+        let rejected = rejection_body(response);
+        let retry = request
+            .clone()
+            .filter(|_| matches!(status, 400 | 404))
+            .and_then(|mut next| {
+                reasoning::strip(Issuer::OpenAi, &mut next, Keep::OwnOnly).then_some(next)
+            });
+        let Some(next) = retry else {
+            return reject(client, &mut record, started, status, &rejected);
+        };
+        request = Some(next);
+        response = send(request.as_ref())?;
+        status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let rejected = rejection_body(response);
+            return reject(client, &mut record, started, status, &rejected);
+        }
+    }
+    if let Some(request) = request.as_ref() {
+        reasoning::observe_accepted_request(Issuer::OpenAi, request.to_string().as_bytes());
     }
     if method == "GET" {
         let mut bytes = Vec::new();
@@ -230,6 +329,7 @@ pub fn forward(
     let mut total = 0usize;
     let mut terminal = None;
     let mut tool_indices = std::collections::HashMap::new();
+    let mut done_items: Vec<Value> = Vec::new();
     loop {
         let mut line = Vec::new();
         let n = match reader
@@ -273,7 +373,27 @@ pub fn forward(
                 continue;
             }
         };
-        let kind = event["type"].as_str().unwrap_or("");
+        let mut event = event;
+        let kind = event["type"].as_str().unwrap_or("").to_string();
+        let kind = kind.as_str();
+        if kind == "response.output_item.done" {
+            if event["item"]["type"] == "reasoning" {
+                if let Some(blob) = event["item"]["encrypted_content"].as_str() {
+                    reasoning::record(Issuer::OpenAi, blob);
+                }
+            }
+            done_items.push(event["item"].clone());
+        }
+        let mut rewritten = false;
+        if matches!(kind, "response.completed" | "response.incomplete")
+            && event["response"]["output"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+            && !done_items.is_empty()
+        {
+            event["response"]["output"] = Value::Array(std::mem::take(&mut done_items));
+            rewritten = true;
+        }
         if matches!(kind, "response.completed" | "response.incomplete") {
             let response = &event["response"];
             if !response.is_object()
@@ -319,6 +439,11 @@ pub fn forward(
                 }
                 delta.is_none_or(|delta|data(client,&json!({"id":completion_id,"object":"chat.completion.chunk","created":created,"model":record.model,"choices":[{"index":0,"delta":delta,"finish_reason":null}]})))
             } else {
+                let packet = if rewritten {
+                    rewrite_data(&raw, &event)
+                } else {
+                    packet.clone()
+                };
                 client
                     .write_all(&packet)
                     .and_then(|_| client.write_all(b"\n"))
@@ -388,6 +513,35 @@ mod tests {
     }
 
     #[test]
+    fn sampling_temperature_is_removed_without_filtering_unconfirmed_fields() {
+        for chat in [false, true] {
+            for temperature in [json!(1.0), Value::Null] {
+                let mut original = json!({"model":"gpt-6.1","temperature":temperature});
+                if !chat {
+                    original["top_p"] = json!(0.9);
+                }
+                original[if chat { "messages" } else { "input" }] =
+                    json!([{"role":"user","content":"Summarize"}]);
+                original[if chat {
+                    "reasoning_effort"
+                } else {
+                    "reasoning"
+                }] = if chat {
+                    json!("low")
+                } else {
+                    json!({"effort":"low"})
+                };
+                let request = responses_request(original, chat).unwrap();
+                assert!(request.get("temperature").is_none());
+                if !chat {
+                    assert_eq!(request["top_p"], 0.9);
+                }
+                assert_eq!(request["reasoning"]["effort"], "low");
+            }
+        }
+    }
+
+    #[test]
     fn subscription_output_caps_are_rejected_before_contacting_provider() {
         for field in ["max_output_tokens", "max_tokens", "max_completion_tokens"] {
             let mut request = json!({"model":"fixture","messages":[],"input":[]});
@@ -418,6 +572,221 @@ mod tests {
             responses_request(json!({"model":"fixture","messages":[],"audio":{}}), true).is_err()
         );
     }
+
+    /// Serves one scripted reply per connection and hands back each request body.
+    fn scripted_upstream(
+        replies: Vec<(u16, String)>,
+    ) -> (String, std::thread::JoinHandle<Vec<Value>>) {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for (status, reply) in replies {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(socket.try_clone().unwrap());
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_lowercase().strip_prefix("content-length: ") {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let body: Value = serde_json::from_slice(&body).unwrap();
+                let (status, reply) = if body.get("temperature").is_some() {
+                    (
+                        400,
+                        r#"{"error":{"message":"Unsupported parameter: temperature"}}"#.to_string(),
+                    )
+                } else {
+                    (status, reply)
+                };
+                bodies.push(body);
+                let kind = if status == 200 {
+                    "text/event-stream"
+                } else {
+                    "application/json"
+                };
+                write!(socket, "HTTP/1.1 {status} X\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+            }
+            bodies
+        });
+        (base, handle)
+    }
+
+    #[test]
+    fn compaction_and_followup_complete_against_temperature_rejecting_upstream() {
+        for chat in [false, true] {
+            let summary = "Summary of prior turns";
+            let reply = |text: &str| {
+                format!(
+                    "data: {}\n\n",
+                    json!({"type":"response.completed","response":{"id":"resp_compact","model":"gpt-6.1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}})
+                )
+            };
+            let (base, upstream) =
+                scripted_upstream(vec![(200, reply(summary)), (200, reply("Continued"))]);
+            let adapter = CodexAdapter { base: Some(base) };
+            for (prompt, expected) in [("Summarize prior turns", summary), (summary, "Continued")] {
+                let mut request = json!({"model":"gpt-6.1","temperature":1.0,"stream":false});
+                request[if chat {
+                    "reasoning_effort"
+                } else {
+                    "reasoning"
+                }] = if chat {
+                    json!("low")
+                } else {
+                    json!({"effort":"low"})
+                };
+                request[if chat { "messages" } else { "input" }] =
+                    json!([{"role":"user","content":prompt}]);
+                let mut output = Vec::new();
+                let record = forward(
+                    &adapter,
+                    "POST",
+                    if chat {
+                        "/backend-api/codex/chat/completions"
+                    } else {
+                        "/backend-api/codex/responses"
+                    },
+                    request.to_string().as_bytes(),
+                    "fixture-token",
+                    Some(&json!({"account_id":"fixture-account"})),
+                    &mut output,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(record.status, Some(200));
+                assert_eq!(record.total_tokens, 10);
+                let wire = String::from_utf8(output).unwrap();
+                let response: Value =
+                    serde_json::from_str(wire.split_once("\r\n\r\n").unwrap().1).unwrap();
+                if chat {
+                    assert_eq!(response["choices"][0]["message"]["content"], expected);
+                    assert_eq!(response["choices"][0]["finish_reason"], "stop");
+                } else {
+                    assert_eq!(response["output"][0]["content"][0]["text"], expected);
+                    assert_eq!(response["status"], "completed");
+                }
+            }
+            let bodies = upstream.join().unwrap();
+            assert_eq!(bodies.len(), 2);
+            for body in bodies {
+                assert!(body.get("temperature").is_none());
+                assert_eq!(body["reasoning"]["effort"], "low");
+                assert_eq!(body["store"], false);
+                assert_eq!(body["stream"], true);
+            }
+        }
+    }
+
+    #[test]
+    fn system_messages_become_developer_messages() {
+        let request = responses_request(
+            json!({"model":"fixture","input":[{"type":"message","role":"system","content":"rules"},{"type":"message","role":"user","content":"hi"}]}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(request["input"][0]["role"], "developer");
+        assert_eq!(request["input"][1]["role"], "user");
+    }
+
+    #[test]
+    fn empty_completed_output_is_filled_from_streamed_items() {
+        let call = json!({"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file","arguments":"{}","status":"completed"});
+        let terminal = json!({"id":"resp_1","model":"fixture","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}});
+        let stream = format!(
+            "event: response.output_item.done\ndata: {}\n\nevent: response.completed\ndata: {}\n\n",
+            json!({"type":"response.output_item.done","output_index":0,"item":call}),
+            json!({"type":"response.completed","response":terminal})
+        );
+        let (base, upstream) = scripted_upstream(vec![(200, stream)]);
+        let adapter = CodexAdapter { base: Some(base) };
+        let mut output = Vec::new();
+        forward(
+            &adapter,
+            "POST",
+            "/codex/v1/responses",
+            json!({"model":"fixture","input":[],"stream":true})
+                .to_string()
+                .as_bytes(),
+            "fixture-token",
+            Some(&json!({"account_id":"fixture-account"})),
+            &mut output,
+        )
+        .unwrap();
+        upstream.join().unwrap();
+        let wire = String::from_utf8(output).unwrap();
+        let completed = wire
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(completed["response"]["output"][0]["call_id"], "call_1");
+        assert!(wire.contains("event: response.completed"));
+    }
+
+    #[test]
+    fn rejected_reasoning_is_retried_without_it_and_errors_keep_their_reason() {
+        let stale = json!({"type":"reasoning","id":"rs_stale","summary":[],"encrypted_content":"stale-blob-from-another-process"});
+        let ok = format!(
+            "data: {}\n\n",
+            json!({"type":"response.completed","response":{"id":"resp_2","model":"fixture","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"hi"}]}]}})
+        );
+        let (base, upstream) = scripted_upstream(vec![
+            (
+                400,
+                r#"{"error":{"message":"Item with id 'rs_stale' not found."}}"#.into(),
+            ),
+            (200, ok),
+        ]);
+        let adapter = CodexAdapter { base: Some(base) };
+        let body = json!({"model":"fixture","stream":true,"input":[{"type":"message","role":"user","content":"hi"},stale]});
+        let mut output = Vec::new();
+        let record = forward(
+            &adapter,
+            "POST",
+            "/codex/v1/responses",
+            body.to_string().as_bytes(),
+            "fixture-token",
+            Some(&json!({"account_id":"fixture-account"})),
+            &mut output,
+        )
+        .unwrap()
+        .unwrap();
+        let bodies = upstream.join().unwrap();
+        assert_eq!(record.status, Some(200));
+        assert_eq!(bodies[0]["input"].as_array().map(Vec::len), Some(2));
+        assert_eq!(bodies[1]["input"].as_array().map(Vec::len), Some(1));
+
+        let (base, upstream) = scripted_upstream(vec![(
+            400,
+            r#"{"error":{"message":"Unsupported parameter: temperature"}}"#.into(),
+        )]);
+        let adapter = CodexAdapter { base: Some(base) };
+        let mut output = Vec::new();
+        forward(
+            &adapter,
+            "POST",
+            "/codex/v1/responses",
+            json!({"model":"fixture","input":[]}).to_string().as_bytes(),
+            "fixture-token",
+            Some(&json!({"account_id":"fixture-account"})),
+            &mut output,
+        )
+        .unwrap();
+        upstream.join().unwrap();
+        let wire = String::from_utf8(output).unwrap();
+        assert!(wire.contains("Codex rejected the request: Unsupported parameter: temperature"));
+    }
+
     #[test]
     fn fragmented_sse_becomes_chat_chunks_and_one_usage_record() {
         use std::net::TcpListener;
@@ -484,6 +853,17 @@ mod tests {
     }
 
     #[test]
+    fn catalog_version_never_drops_below_the_floor() {
+        assert_eq!(catalog_client_version(None), DEFAULT_CATALOG_CLIENT_VERSION);
+        assert_eq!(
+            catalog_client_version(Some("0.158.0")),
+            DEFAULT_CATALOG_CLIENT_VERSION
+        );
+        assert_eq!(catalog_client_version(Some("0.160.2")), "0.160.2");
+        assert_eq!(catalog_client_version(Some("1.0")), "1.0");
+    }
+
+    #[test]
     fn client_version_accepts_only_a_dotted_release() {
         assert_eq!(
             client_version_from_query("client_version=0.155.1"),
@@ -518,7 +898,7 @@ mod tests {
                 }
             }
             assert!(
-                request.contains("GET /backend-api/codex/models?client_version=0.155.1 HTTP/1.1")
+                request.contains(&format!("GET /backend-api/codex/models?client_version={DEFAULT_CATALOG_CLIENT_VERSION} HTTP/1.1"))
             );
             let body = r#"{"models":[{"slug":"gpt-6-sol","visibility":"list","display_name":"GPT-6-Sol"}]}"#;
             let response = format!(
