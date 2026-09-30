@@ -56,7 +56,19 @@ impl UsageExtractor for NousAdapter {
     }
 }
 
-impl Translator for NousAdapter {}
+impl Translator for NousAdapter {
+    /// The host cuts the listing to the free models of an account without paid access.
+    fn rewrites_models_list(&self, method: &str, hop: &Upstream) -> bool {
+        method.eq_ignore_ascii_case("GET")
+            && hop
+                .path
+                .split('?')
+                .next()
+                .unwrap_or(&hop.path)
+                .trim_end_matches('/')
+                == "/v1/models"
+    }
+}
 
 impl BodyShaper for NousAdapter {}
 

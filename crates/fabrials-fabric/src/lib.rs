@@ -67,6 +67,7 @@ pub mod http;
 pub mod listener;
 pub mod ports;
 pub mod provider;
+pub mod reasoning;
 pub mod routes;
 pub mod wire_compat;
 pub mod ws_tunnel;
