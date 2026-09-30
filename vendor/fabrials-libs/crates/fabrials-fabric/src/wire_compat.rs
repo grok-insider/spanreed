@@ -24,13 +24,31 @@ pub fn is_chat_completions(path: &str) -> bool {
 /// Any other path, a body that is already chat, and a body that is not JSON
 /// are returned unchanged.
 pub fn adapt_upstream_body(path: &str, body: &[u8]) -> Vec<u8> {
-    responses_body_as_chat(path, body).unwrap_or_else(|| body.to_vec())
+    adapt_upstream_body_owned(path, body.to_vec())
 }
 
 /// [`adapt_upstream_body`] that hands back an unchanged body without copying
 /// it. Inference bodies reach tens of megabytes of inline images.
 pub fn adapt_upstream_body_owned(path: &str, body: Vec<u8>) -> Vec<u8> {
-    responses_body_as_chat(path, &body).unwrap_or(body)
+    let body = responses_body_as_chat(path, &body).unwrap_or(body);
+    without_message_model_ids(path, &body).unwrap_or(body)
+}
+
+/// Grok Build tags chat messages with a non-standard `model_id`; strict
+/// upstreams (GLM) reject unknown message fields.
+fn without_message_model_ids(path: &str, body: &[u8]) -> Option<Vec<u8>> {
+    const NEEDLE: &[u8] = b"\"model_id\"";
+    if !is_chat_completions(path) || !body.windows(NEEDLE.len()).any(|w| w == NEEDLE) {
+        return None;
+    }
+    let mut value = serde_json::from_slice::<Value>(body).ok()?;
+    let mut removed = false;
+    for message in value.get_mut("messages")?.as_array_mut()? {
+        if let Some(object) = message.as_object_mut() {
+            removed |= object.remove("model_id").is_some();
+        }
+    }
+    removed.then(|| serde_json::to_vec(&value).ok()).flatten()
 }
 
 fn responses_body_as_chat(path: &str, body: &[u8]) -> Option<Vec<u8>> {
@@ -779,6 +797,22 @@ fn chat_usage(usage: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chat_messages_lose_model_id_only_on_chat_completions() {
+        let body = serde_json::json!({"model":"glm-5.3","messages":[
+            {"role":"user","content":"hi"},
+            {"role":"assistant","content":"","model_id":"glm-5.3","tool_calls":[]}
+        ]})
+        .to_string()
+        .into_bytes();
+        let adapted: serde_json::Value =
+            serde_json::from_slice(&super::adapt_upstream_body("/v1/chat/completions", &body))
+                .expect("json");
+        assert!(adapted["messages"][1].get("model_id").is_none());
+        assert_eq!(adapted["model"], "glm-5.3");
+        assert_eq!(super::adapt_upstream_body("/v1/messages", &body), body);
+    }
+
     use super::*;
 
     #[test]
