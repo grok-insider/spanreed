@@ -1,0 +1,47 @@
+import { type ReactNode, type Ref, type TextareaHTMLAttributes } from "react";
+export type ChatComposerStatus = "ready" | "submitting" | "streaming";
+export type ChatComposerProps = {
+    value?: string;
+    defaultValue?: string;
+    onValueChange?: (value: string) => void;
+    onSubmit: (value: string) => void;
+    onStop?: () => void;
+    status?: ChatComposerStatus;
+    queueWhileBusy?: boolean;
+    disabled?: boolean;
+    submitDisabled?: boolean;
+    allowEmptySubmit?: boolean;
+    placeholder?: string;
+    label?: string;
+    sendLabel?: string;
+    queueLabel?: string;
+    stopLabel?: string;
+    attachments?: ReactNode;
+    tools?: ReactNode;
+    trailing?: ReactNode;
+    footer?: ReactNode;
+    onPasteFiles?: (files: File[]) => void;
+    onRemoveLastAttachment?: () => void;
+    textareaRef?: Ref<HTMLTextAreaElement>;
+    textareaProps?: Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "defaultValue" | "onChange" | "placeholder" | "disabled">;
+    maxHeight?: string;
+    className?: string;
+};
+export declare function ChatComposer({ value: valueProp, defaultValue, onValueChange, onSubmit, onStop, status, queueWhileBusy, disabled, submitDisabled, allowEmptySubmit, placeholder, label, sendLabel, queueLabel, stopLabel, attachments, tools, trailing, footer, onPasteFiles, onRemoveLastAttachment, textareaRef, textareaProps, maxHeight, className, }: ChatComposerProps): import("react").JSX.Element;
+export declare function ComposerToggle({ pressed, onPressedChange, icon, children, label, tooltip, disabled, }: {
+    pressed: boolean;
+    onPressedChange: (pressed: boolean) => void;
+    icon?: ReactNode;
+    children?: ReactNode;
+    label: string;
+    tooltip?: ReactNode;
+    disabled?: boolean;
+}): import("react").JSX.Element;
+export declare function ComposerButton({ icon, children, label, tooltip, disabled, onClick, }: {
+    icon?: ReactNode;
+    children?: ReactNode;
+    label: string;
+    tooltip?: ReactNode;
+    disabled?: boolean;
+    onClick?: () => void;
+}): import("react").JSX.Element;
