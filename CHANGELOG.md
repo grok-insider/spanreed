@@ -4,8 +4,16 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.2] - 2026-09-30
+## [0.7.2] - 2026-10-02
 
+- test(desktop): error states in the fixtures
+- fix(desktop): keep page cards at their content height in a short window
+- fix(desktop): show the current workspace in forced colours
+- test(desktop): guard the design rules the migration relies on
+- refactor(desktop): adopt the shared parts and layout of the new Fabrials UI
+- chore(desktop): move the renderer to the current Fabrials UI
+- test(desktop): hosted relay, linked account and running proxy in the fixtures
+- test(desktop): let the fixtures page show the window title bar
 - chore: record fabrials-libs db3544de726e
 - Squashed 'vendor/fabrials-libs/' changes from 64cd914..db3544d
 - Squashed 'vendor/fabrials-libs/' changes from 8606b3a..64cd914
