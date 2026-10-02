@@ -1,4 +1,4 @@
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { createFixtures } from "./data";
 
 const params = new URLSearchParams(location.search);
@@ -7,6 +7,8 @@ for (const [key, name] of [["theme", "spanreed.theme"], ["mode", "spanreed.mode"
   const value = params.get(key);
   if (value) localStorage.setItem(name, value);
 }
+// ?chrome=1 shows the in-app title bar (the real window is borderless) and answers its window commands.
+if (params.get("chrome")) { (globalThis as { isTauri?: boolean }).isTauri = true; mockWindows("main"); }
 const fixtures = createFixtures(scenario);
 const state = {
   accounts: fixtures.accounts.map((account) => ({ ...account })),
@@ -25,6 +27,7 @@ mockIPC(async (cmd, payload) => {
   const args = (payload ?? {}) as Record<string, any>;
   await delay(cmd === "snapshot" || cmd === "usage_report" ? 250 : 60);
   switch (cmd) {
+    case "take_desktop_route": return null;
     case "snapshot": return fixtures.snapshot;
     case "accounts": return { accounts: state.accounts };
     case "detection": return fixtures.detection;
@@ -80,6 +83,7 @@ mockIPC(async (cmd, payload) => {
       if (args.operation === "dashboard") throw "Connect this installation to Fabrials in Settings to open your hosted workspace.";
       throw "Hosted workspace is unavailable in fixtures.";
     default:
+      if (cmd.startsWith("plugin:window|")) return null;
       console.warn("Unhandled fixture command", cmd, args);
       throw `Fixture has no response for ${cmd}`;
   }
