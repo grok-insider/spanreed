@@ -22,7 +22,7 @@ export function UsagePage({ tab }: { tab: string | null }) {
   return <>
     <PageHeader title="Usage" description="What your tools used, read from their local logs, limit readings over time and requests sent through Connect." />
     <Tabs value={current} onValueChange={(value) => { location.hash = routeHref({ workspace: "local", page: "usage", tab: String(value) }); }}>
-      <TabsList aria-label="Usage views">
+      <TabsList aria-label="Usage views" scrollable="narrow">
         {tabs.map((item) => <TabsTrigger key={item.id} value={item.id}>{item.label}</TabsTrigger>)}
       </TabsList>
       <TabsContent value="consumption"><ConsumptionTab /></TabsContent>

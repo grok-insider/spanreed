@@ -7,8 +7,8 @@ provider, quota, consumption and migration views come from `@fabrials/ai-ui`.
 Both are generated distributions under `vendor/fabrials-ui-<version>` and
 `vendor/fabrials-ai-ui-<version>`. Regenerate them from the fabrials-ui
 repository with `bun run vendor spanreed --write`; never edit them by hand.
-`bun run check:vendor` verifies their manifests. The unversioned
-`vendor/fabrials-ui` copy is kept only for the Rust contract drift tests.
+`bun run check:vendor` verifies their manifests. The Rust contract tests do not
+read these copies: `src/contracts.ts` is generated from the Rust types.
 
 The app has two workspaces, picked at the top of the sidebar: **This computer**
 and **Hosted relay** (ai-relay at ai.fabrials.com). Both use the same sections:
@@ -80,7 +80,8 @@ AppIndicator runtime dependency. It does not need the development shell.
 
 The Bun dependency derivation installs from the frozen lockfile with scripts
 disabled and verifies a recursive SHA-256 hash. Dependency changes may require
-updating `nodeModules.outputHash` in `flake.nix`. The local UI package is linked
+updating `nodeModules.outputHash` in `flake.nix` (run `nix build .#spanreed-desktop.nodeModules`
+and copy the `got:` hash). The local UI package is linked
 to the current source before building, so cached dependencies cannot retain an
 older version of its components. The Linux dependency
 closure includes both CPU architectures; actual ARM desktop execution still
