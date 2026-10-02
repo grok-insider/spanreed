@@ -25,6 +25,11 @@ test("the page column anchors to the left gutter instead of centring", () => {
   expect(main).not.toMatch(/margin-inline:\s*auto/);
 });
 
+test("page rows keep their content height so cards are never clipped in a short window", () => {
+  const main = css.match(/\.sr-main \{[^}]*\}/)?.[0] ?? "";
+  expect(main).toContain("grid-auto-rows: max-content");
+});
+
 test("tab strips scroll themselves instead of wrapping onto a second row", () => {
   for (const name of ["usage.tsx", "settings.tsx", "remote-workspace.tsx"]) {
     const text = sources.find(([file]) => file === name)![1];

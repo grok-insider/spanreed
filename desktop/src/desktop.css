@@ -27,7 +27,7 @@ body { font-family: var(--fui-font-sans); color: var(--foreground); -webkit-font
 .sr-window-controls { display: flex; gap: 2px; }
 .sr-window-close:hover { background: color-mix(in srgb, var(--destructive) 16%, var(--card)); }
 .sr-main {
-  display: grid; grid-template-columns: minmax(0, 76rem); justify-content: start; align-content: start; gap: var(--fui-space-6); flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: grid; grid-template-columns: minmax(0, 76rem); grid-auto-rows: max-content; justify-content: start; align-content: start; gap: var(--fui-space-6); flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   width: 100%; box-sizing: border-box; padding: var(--fui-space-6) var(--fui-space-8) var(--fui-space-8);
 }
 .sr-main > * { min-width: 0; }
