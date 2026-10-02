@@ -1,6 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label, NativeSelect, Skeleton, Switch, Table, Textarea, type Tone } from "@fabrials/ui";
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Disclosure, DisclosurePanel, DisclosureSummary, Input, Label, NativeSelect, Skeleton, Switch, Table, Textarea, type Tone } from "@fabrials/ui";
 import { useClock, type ConsumptionReport, type ConsumptionSource } from "@fabrials/ai-ui";
 import { useLocalData } from "./local-data";
 import { Done, ErrorAlert } from "./feedback";
@@ -83,10 +83,10 @@ export function UsageSourcesTab() {
       <h2 id="sources-found" className="sr-section-title">Found on this computer</h2>
       <p className="fui-description">Spanreed reads these tools' own log files. Nothing is sent anywhere unless you turn on sync in Settings.</p>
       {found.length ? table(found, "Tools with usage") : <p className="fui-description">No supported tool has written usage on this computer yet.</p>}
-      {missing.length > 0 && <details className="sr-disclosure">
-        <summary>Not found ({missing.length})</summary>
-        {table(missing, "Tools not found")}
-      </details>}
+      {missing.length > 0 && <Disclosure>
+        <DisclosureSummary size="sm">Not found ({missing.length})</DisclosureSummary>
+        <DisclosurePanel>{table(missing, "Tools not found")}</DisclosurePanel>
+      </Disclosure>}
     </section>
     <div className="sr-two-columns">
       <Card>

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronDown, Ellipsis, KeyRound, Plus } from "lucide-react";
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-  Badge, Button, Card, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+  Badge, Button, Card, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Disclosure, DisclosurePanel, DisclosureSummary,
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   PageHeader, SectionHeader, StatePanel,
 } from "@fabrials/ui";
@@ -143,10 +143,10 @@ function DetectedTools({ expanded }: { expanded: boolean }) {
       {found.length ? <ul className="sr-detected">{found.map((provider) => <li key={provider.id}>
         <ProviderIcon provider={provider.id} size={18} /><span>{provider.name}</span>{status(provider.id)}
       </li>)}</ul> : <p className="sr-card-note">None of the {detection.length} supported tools has a sign-in on this computer yet.</p>}
-      {missing.length > 0 && <details className="sr-disclosure sr-card-note" open={expanded || undefined}>
-        <summary>Also supported ({missing.length})</summary>
-        <p className="fui-description">{missing.map((provider) => provider.name).join(", ")}</p>
-      </details>}
+      {missing.length > 0 && <Disclosure className="sr-card-note" open={expanded || undefined}>
+        <DisclosureSummary size="sm">Also supported ({missing.length})</DisclosureSummary>
+        <DisclosurePanel><p className="fui-description">{missing.map((provider) => provider.name).join(", ")}</p></DisclosurePanel>
+      </Disclosure>}
     </Card>
   </section>;
 }

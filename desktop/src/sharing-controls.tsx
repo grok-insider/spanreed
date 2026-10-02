@@ -1,6 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Alert, AlertAction, AlertDescription, Button, Card, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, NativeCheckbox, Switch } from "@fabrials/ui";
+import { Alert, AlertAction, AlertDescription, Button, Card, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Disclosure, DisclosurePanel, DisclosureSummary, NativeCheckbox, Switch } from "@fabrials/ui";
 import type { SharingConsent } from "@fabrials/ai-ui";
 import { PrivateHistory } from "./private-history";
 import { useLocalData } from "./local-data";
@@ -92,11 +92,13 @@ function Synchronization({ linked }: { linked: boolean }) {
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(async () => { await save(); await load(); return "Sync selection saved."; })}>Save selection</Button>
       <Button size="sm" variant="ghost" disabled={!linked} onClick={() => setHistoryOpen(true)}>View synced history</Button>
     </div>
-    {selection.includes("codex") && <details className="sr-disclosure">
-      <summary>Match Codex with its hosted account</summary>
+    {selection.includes("codex") && <Disclosure>
+      <DisclosureSummary size="sm">Match Codex with its hosted account</DisclosureSummary>
+      <DisclosurePanel className="sr-form">
       <p className="fui-description">Sign in to the same Codex account on the hosted relay, then verify the match here. This sends signed OpenAI identity details once, including profile claims. Access and refresh tokens are not sent.</p>
       <Button size="sm" variant="outline" disabled={busy || !linked} onClick={() => void run(async () => invoke<string>("link_codex_source"))}>Verify the match</Button>
-    </details>}
+      </DisclosurePanel>
+    </Disclosure>}
     <ErrorAlert title="Sync didn't work" error={error} />
     <Done>{notice}</Done>
     <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>

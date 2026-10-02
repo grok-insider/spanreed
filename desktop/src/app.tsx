@@ -2,7 +2,7 @@ import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Boxes, ChartColumn, CircleGauge, Plug, RefreshCw, Route as RouteIcon } from "lucide-react";
-import { Button, StatusDot } from "@fabrials/ui";
+import { Badge, Button, StatusDot } from "@fabrials/ui";
 import { useClock } from "@fabrials/ai-ui";
 import { DesktopShell, settingsItem, type NavGroup } from "./desktop-shell";
 import { LocalDataProvider, useLocalData } from "./local-data";
@@ -44,13 +44,13 @@ function LocalWorkspace({ route, theme, onThemeChange, appError }: { route: Rout
   const running = data.proxy?.state === "running";
   const groups: NavGroup[] = [
     { label: "Monitor", items: [
-      { page: "overview", label: "Overview", icon: CircleGauge, badge: attention ? <span className="sr-nav-count"><span aria-hidden>{attention}</span><span className="fui-sr-only">, {attention} need attention</span></span> : undefined },
+      { page: "overview", label: "Overview", icon: CircleGauge, badge: attention ? <Badge tone="warning"><span aria-hidden>{attention}</span><span className="fui-sr-only">, {attention} need attention</span></Badge> : undefined },
       { page: "usage", label: "Usage", icon: ChartColumn },
     ] },
     { label: "Set up", items: [
       { page: "accounts", label: "Accounts", icon: Boxes },
       { page: "routing", label: "Routing", icon: RouteIcon },
-      { page: "connect", label: "Connect", icon: Plug, badge: running ? <span className="sr-nav-dot"><span className="fui-sr-only">, proxy running</span></span> : undefined },
+      { page: "connect", label: "Connect", icon: Plug, badge: running ? <StatusDot tone="success" hideLabel label=", proxy running" /> : undefined },
     ] },
   ];
   const status = <StatusDot tone={running ? "success" : "neutral"} label={running ? `Proxy on ${data.proxy!.bind}` : "Proxy off"} />;

@@ -1,4 +1,4 @@
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { createFixtures } from "./data";
 
 const params = new URLSearchParams(location.search);
@@ -7,13 +7,18 @@ for (const [key, name] of [["theme", "spanreed.theme"], ["mode", "spanreed.mode"
   const value = params.get(key);
   if (value) localStorage.setItem(name, value);
 }
+// ?chrome=1 shows the in-app title bar (the real window is borderless) and answers its window commands.
+if (params.get("chrome")) { (globalThis as { isTauri?: boolean }).isTauri = true; mockWindows("main"); }
+// ?fail=snapshot|sync|hosted makes that part answer with an error, to review the error alerts and warnings.
+const fail = params.get("fail");
 const fixtures = createFixtures(scenario);
 const state = {
   accounts: fixtures.accounts.map((account) => ({ ...account })),
   consent: { shareMetrics: false, syncHistory: false },
-  proxy: { state: "stopped", bind: "127.0.0.1:18736", error: null as string | null },
+  proxy: (params.get("proxy") === "running" ? { state: "running", bind: "127.0.0.1:18736", error: null } : { state: "stopped", bind: "127.0.0.1:18736", error: null }) as { state: string; bind: string; error: string | null },
   notifications: { resetExpiry: false },
-  link: { state: "disconnected" } as Record<string, unknown>,
+  // ?link=linked pretends this computer is connected to a Fabrials account, which opens the hosted workspace and the sync history.
+  link: (params.get("link") === "linked" ? { state: "linked", user: { username: "ash" } } : { state: "disconnected" }) as Record<string, unknown>,
   syncSources: [] as string[],
   usageSettings: { additional_roots: {} as Record<string, string[]>, disabled_clients: [] as string[] },
   connections: [] as string[],
@@ -25,7 +30,10 @@ mockIPC(async (cmd, payload) => {
   const args = (payload ?? {}) as Record<string, any>;
   await delay(cmd === "snapshot" || cmd === "usage_report" ? 250 : 60);
   switch (cmd) {
-    case "snapshot": return fixtures.snapshot;
+    case "take_desktop_route": case "codex_session_move": return null;
+    case "snapshot":
+      if (fail === "snapshot") throw "The providers didn't answer in time. Check your connection and try again.";
+      return fixtures.snapshot;
     case "accounts": return { accounts: state.accounts };
     case "detection": return fixtures.detection;
     case "privacy": return state.consent;
@@ -54,7 +62,7 @@ mockIPC(async (cmd, payload) => {
     case "fabrials_open": case "open_hosted": case "open_device_login": case "remote_open_authorization": return null;
     case "sync_settings": return { sources: state.syncSources };
     case "save_sync_settings": state.syncSources = args.settings.sources; return null;
-    case "sync_status": return { lastSuccessMs: null, uploaded: 0, downloaded: 0, error: null };
+    case "sync_status": return { lastSuccessMs: null, uploaded: 0, downloaded: 0, error: fail === "sync" ? "The last sync was rejected: your Fabrials session expired. Connect again in Settings." : null };
     case "sync_now": return "Synchronized 0 observations.";
     case "publication_status": return { lastSharedDay: null, due: true, schedule: "systemd-user (spanreed-share.timer: inactive); last shared: never" };
     case "publish_metrics": case "set_publication_schedule": return "Saved.";
@@ -77,9 +85,23 @@ mockIPC(async (cmd, payload) => {
       return { warnings: [], id: "review-1", path: "~/.config/opencode/opencode.json", providerId: `spanreed-${args.alias}`, addition: { npm: "@ai-sdk/openai-compatible", options: { baseURL: `http://${state.proxy.bind}/acct/${args.alias}/v1` } }, client: cmd === "preview_grok_configuration" ? "grok" : "opencode", operation: cmd.endsWith("remove") ? "remove" : cmd.endsWith("update") ? "update" : "create" };
     case "apply_client_configuration": return null;
     case "remote_request":
-      if (args.operation === "dashboard") throw "Connect this installation to Fabrials in Settings to open your hosted workspace.";
-      throw "Hosted workspace is unavailable in fixtures.";
+      if (state.link.state !== "linked") {
+        if (args.operation === "dashboard") throw "Connect this installation to Fabrials in Settings to open your hosted workspace.";
+        throw "Hosted workspace is unavailable in fixtures.";
+      }
+      switch (args.operation) {
+        case "dashboard":
+          if (fail === "hosted") throw "The hosted relay answered 503. Try again in a minute.";
+          return fixtures.hostedDashboard;
+        case "consumption": return fixtures.hostedConsumption;
+        case "migrationSessions": return { sessions: [] };
+        case "migrationCandidates": return { accounts: [] };
+        case "recentSync": return { observations: [], before: null, has_more: false };
+        case "createKey": case "rotateKey": return { ok: true, key: "sk-relay-fixture-0000000000", prefix: "sk-relay-fixt" };
+        default: return { ok: true };
+      }
     default:
+      if (cmd.startsWith("plugin:window|")) return null;
       console.warn("Unhandled fixture command", cmd, args);
       throw `Fixture has no response for ${cmd}`;
   }

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRight, Check, CircleAlert, TriangleAlert } from "lucide-react";
+import { Check, CircleAlert, TriangleAlert } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Meter, PageHeader, SectionHeader, Skeleton, Stat, StatGroup, StatePanel } from "@fabrials/ui";
 import { ProviderIcon, ResetInventory, useClock, type ConsumptionReport, type MetricLine, type ProviderOutput, type UsageRecord } from "@fabrials/ai-ui";
 import { useLocalData } from "./local-data";
@@ -122,7 +122,7 @@ function RecentTotals() {
     { label: "Requests through Connect", value: requests === null ? "—" : formatCount(requests), note: proxy?.state === "running" ? "Proxy is running" : "Proxy is off", tab: "requests" },
   ];
   return <section aria-labelledby="totals-title">
-    <SectionHeader title={<span id="totals-title">Last 7 days</span>} actions={<LinkButton variant="ghost" href={routeHref({ workspace: "local", page: "usage" })}>Open Usage <ArrowRight aria-hidden size={14} /></LinkButton>} />
+    <SectionHeader title={<span id="totals-title">Last 7 days</span>} actions={<LinkButton variant="ghost" href={routeHref({ workspace: "local", page: "usage" })}>Open Usage</LinkButton>} />
     <StatGroup>
       {tiles.map((tile) => <Stat key={tile.label} label={tile.label} value={tile.value} hint={<a href={routeHref({ workspace: "local", page: "usage", tab: tile.tab })}>{tile.note}</a>} />)}
     </StatGroup>

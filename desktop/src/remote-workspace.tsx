@@ -2,7 +2,7 @@ import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Boxes, ChartColumn, ChevronDown, CircleGauge, KeyRound, Plug, Plus, RefreshCw, Route as RouteIcon } from "lucide-react";
 import {
-  Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+  Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Disclosure, DisclosurePanel, DisclosureSummary,
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   Input, Label, Meter, NativeSelect, PageHeader, SectionHeader, Skeleton, Stat, StatGroup, StatePanel, StatusDot, Table, Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@fabrials/ui";
@@ -124,7 +124,7 @@ function HostedUsage({ tab, data }: { tab: string | null; data: DashboardPayload
   const now = useClock() ?? Date.now();
   const current = ["consumption", "history", "requests"].includes(tab ?? "") ? tab! : "consumption";
   return <Tabs value={current} onValueChange={(value) => { location.hash = routeHref({ workspace: "hosted", page: "usage", tab: String(value) }); }}>
-    <TabsList aria-label="Usage views"><TabsTrigger value="consumption">Synced consumption</TabsTrigger><TabsTrigger value="history">Private history</TabsTrigger><TabsTrigger value="requests">Requests</TabsTrigger></TabsList>
+    <TabsList aria-label="Usage views" scrollable="narrow"><TabsTrigger value="consumption">Synced consumption</TabsTrigger><TabsTrigger value="history">Private history</TabsTrigger><TabsTrigger value="requests">Requests</TabsTrigger></TabsList>
     <TabsContent value="consumption"><SynchronizedConsumption load={loadConsumption} /></TabsContent>
     <TabsContent value="history"><PrivateHistory hosted key={data.session.owner} /></TabsContent>
     <TabsContent value="requests">{data.summary.recent.length ? <Table aria-label="Recent hosted requests" regionLabel="Recent hosted requests">
@@ -338,7 +338,7 @@ function HostedConnect({ data, reload }: { data: DashboardPayload; reload: () =>
 function HostedSettings({ tab, data, onLink }: { tab: string | null; data: DashboardPayload | null; onLink: (view: LinkView) => void }) {
   const current = tab === "transfer" ? "transfer" : "account";
   return <Tabs value={current} onValueChange={(value) => { location.hash = routeHref({ workspace: "hosted", page: "settings", tab: String(value) }); }}>
-    <TabsList aria-label="Settings sections"><TabsTrigger value="account">Fabrials account</TabsTrigger><TabsTrigger value="transfer">Transfer accounts</TabsTrigger></TabsList>
+    <TabsList aria-label="Settings sections" scrollable="narrow"><TabsTrigger value="account">Fabrials account</TabsTrigger><TabsTrigger value="transfer">Transfer accounts</TabsTrigger></TabsList>
     <TabsContent value="account"><Card className="sr-setting-card"><SectionHeader title="Fabrials account" description="The hosted relay uses this connection." /><FabrialsLink onChange={onLink} /></Card></TabsContent>
     <TabsContent value="transfer">{data ? <RemoteMigration key={data.session.owner} /> : <StatePanel state="empty" title="Connect Fabrials first" description="Transfers need a connected hosted relay." />}</TabsContent>
   </Tabs>;
@@ -359,17 +359,17 @@ function KeyEditor({ existing, onSaved, onIssued }: { existing?: KeyView; onSave
       catch (error) { setError(String(error)); } finally { setBusy(false); }
     }}>
       <Label>Name<Input required value={policy.name ?? ""} onChange={(event) => setPolicy({ ...policy, name: event.target.value })} /></Label>
-      <details className="sr-disclosure">
-        <summary>Limit this key</summary>
-        <div className="sr-form">
+      <Disclosure>
+        <DisclosureSummary size="sm">Limit this key</DisclosureSummary>
+        <DisclosurePanel className="sr-form">
           <div className="sr-field-row">
             <Label>Spending guard (USD)<Input type="number" min="0" step="any" value={policy.budget_usd ?? ""} onChange={(event) => setPolicy({ ...policy, budget_usd: event.target.value === "" ? null : Number(event.target.value) })} /></Label>
             <Label>Period<NativeSelect value={policy.budget_period} onChange={(event) => setPolicy({ ...policy, budget_period: event.target.value })}><option value="calendar_month">Calendar month</option><option value="rolling_30d">Rolling 30 days</option><option value="lifetime">Lifetime</option></NativeSelect></Label>
           </div>
           <p className="fui-description">Checked before each request. Requests already running can finish above the amount.</p>
           {scopes.map(([scope, label]) => <Label key={scope}>Allowed {label.toLowerCase()}<Input placeholder="Comma-separated. Empty allows all." value={Array.isArray(policy[scope]) ? (policy[scope] as string[]).join(", ") : (policy[scope] as string | null | undefined) ?? ""} onChange={(event) => setPolicy({ ...policy, [scope]: event.target.value })} /></Label>)}
-        </div>
-      </details>
+        </DisclosurePanel>
+      </Disclosure>
       <ErrorAlert title="Couldn't save the key" error={error} />
       <div className="fui-actions"><Button disabled={busy} type="submit">{busy ? "Saving…" : existing ? "Save changes" : "Create key"}</Button></div>
     </form>}
@@ -386,7 +386,7 @@ function ManualQuota({ account, mutate }: { account: AccountView; mutate: Mutate
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
-  return <details className="sr-disclosure"><summary>Set subscription credits by hand</summary><form className="sr-form" onSubmit={async (event) => {
+  return <Disclosure><DisclosureSummary size="sm">Set subscription credits by hand</DisclosureSummary><DisclosurePanel><form className="sr-form" onSubmit={async (event) => {
     event.preventDefault(); const form = new FormData(event.currentTarget); setBusy(true); setError(null); setNotice(null);
     try {
       const plan = String(form.get("plan") ?? "").trim();
@@ -406,5 +406,5 @@ function ManualQuota({ account, mutate }: { account: AccountView; mutate: Mutate
     <ErrorAlert title="Couldn't save credits" error={error} />
     <Done>{notice}</Done>
     <div className="fui-actions"><Button size="sm" disabled={busy} type="submit">Save credits</Button><Action label="Clear" variant="ghost" run={() => mutate("setQuota", { provider: account.provider, alias: account.alias, clear: true })} /></div>
-  </form></details>;
+  </form></DisclosurePanel></Disclosure>;
 }
