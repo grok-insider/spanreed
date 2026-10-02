@@ -31,3 +31,8 @@ test("tab strips scroll themselves instead of wrapping onto a second row", () =>
     for (const tag of text.match(/<TabsList[^>]*>/g) ?? []) expect(tag, name).toContain("scrollable");
   }
 });
+
+test("the workspace switcher still marks the current place in forced colours", () => {
+  const block = css.match(/@media \(forced-colors: active\) \{[^}]*\.sr-switcher-option\[aria-current\][^}]*\}[^}]*\}/)?.[0] ?? "";
+  expect(block).toContain("outline");
+});

@@ -12,6 +12,7 @@ body { font-family: var(--fui-font-sans); color: var(--foreground); -webkit-font
 }
 .sr-switcher-option[aria-current] { background: var(--card); color: var(--foreground); box-shadow: var(--fui-shadow-xs); }
 .sr-switcher-option:not([aria-current]):hover { color: var(--foreground); }
+@media (forced-colors: active) { .sr-switcher-option[aria-current] { outline: 2px solid Highlight; outline-offset: -2px; } }
 .sr-window-header {
   display: flex; align-items: center; gap: var(--fui-space-2); flex-shrink: 0;
   min-height: 3.5rem; padding: var(--fui-space-2) var(--fui-space-3);
