@@ -13,9 +13,10 @@ const fixtures = createFixtures(scenario);
 const state = {
   accounts: fixtures.accounts.map((account) => ({ ...account })),
   consent: { shareMetrics: false, syncHistory: false },
-  proxy: { state: "stopped", bind: "127.0.0.1:18736", error: null as string | null },
+  proxy: (params.get("proxy") === "running" ? { state: "running", bind: "127.0.0.1:18736", error: null } : { state: "stopped", bind: "127.0.0.1:18736", error: null }) as { state: string; bind: string; error: string | null },
   notifications: { resetExpiry: false },
-  link: { state: "disconnected" } as Record<string, unknown>,
+  // ?link=linked pretends this computer is connected to a Fabrials account, which opens the hosted workspace and the sync history.
+  link: (params.get("link") === "linked" ? { state: "linked", user: { username: "ash" } } : { state: "disconnected" }) as Record<string, unknown>,
   syncSources: [] as string[],
   usageSettings: { additional_roots: {} as Record<string, string[]>, disabled_clients: [] as string[] },
   connections: [] as string[],
@@ -27,7 +28,7 @@ mockIPC(async (cmd, payload) => {
   const args = (payload ?? {}) as Record<string, any>;
   await delay(cmd === "snapshot" || cmd === "usage_report" ? 250 : 60);
   switch (cmd) {
-    case "take_desktop_route": return null;
+    case "take_desktop_route": case "codex_session_move": return null;
     case "snapshot": return fixtures.snapshot;
     case "accounts": return { accounts: state.accounts };
     case "detection": return fixtures.detection;
@@ -80,8 +81,19 @@ mockIPC(async (cmd, payload) => {
       return { warnings: [], id: "review-1", path: "~/.config/opencode/opencode.json", providerId: `spanreed-${args.alias}`, addition: { npm: "@ai-sdk/openai-compatible", options: { baseURL: `http://${state.proxy.bind}/acct/${args.alias}/v1` } }, client: cmd === "preview_grok_configuration" ? "grok" : "opencode", operation: cmd.endsWith("remove") ? "remove" : cmd.endsWith("update") ? "update" : "create" };
     case "apply_client_configuration": return null;
     case "remote_request":
-      if (args.operation === "dashboard") throw "Connect this installation to Fabrials in Settings to open your hosted workspace.";
-      throw "Hosted workspace is unavailable in fixtures.";
+      if (state.link.state !== "linked") {
+        if (args.operation === "dashboard") throw "Connect this installation to Fabrials in Settings to open your hosted workspace.";
+        throw "Hosted workspace is unavailable in fixtures.";
+      }
+      switch (args.operation) {
+        case "dashboard": return fixtures.hostedDashboard;
+        case "consumption": return fixtures.hostedConsumption;
+        case "migrationSessions": return { sessions: [] };
+        case "migrationCandidates": return { accounts: [] };
+        case "recentSync": return { observations: [], before: null, has_more: false };
+        case "createKey": case "rotateKey": return { ok: true, key: "sk-relay-fixture-0000000000", prefix: "sk-relay-fixt" };
+        default: return { ok: true };
+      }
     default:
       if (cmd.startsWith("plugin:window|")) return null;
       console.warn("Unhandled fixture command", cmd, args);

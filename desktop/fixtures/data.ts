@@ -119,8 +119,52 @@ export function createFixtures(scenario: Scenario, now = Date.now()) {
     return { ts_ms: now - index * 7 * 60_000, session_id: null, model: kind === "tts" ? "grok-tts" : models[index % 3], input_tokens: kind === "tts" ? 0 : input, output_tokens: kind === "tts" ? 0 : output, cached_input_tokens: Math.round(input * 0.6), reasoning_tokens: 0, total_tokens: kind === "tts" ? 0 : input + output, cost_usd_ticks: 0, request_id: `req_${(0x5e21 + index).toString(16)}`, account_id: index % 4 === 0 ? "grok/work" : "grok/personal", route: "grok", provider: "grok", key_hash: null, kind, duration_ms: Math.round(900 + random() * 14_000), status: index === 7 ? 429 : 200, unit: kind === "tts" ? "chars" : "tokens", quantity: kind === "tts" ? 1840 : null, hosted_tools: null };
   });
 
+  // The hosted relay (ai.fabrials.com) as a Fabrials-linked computer sees it. Synthetic, like everything here.
+  const hostedOutput = (providerId: string, displayName: string, plan: string, used: number, resetsInDays: number) => ({
+    providerId, displayName, plan,
+    lines: [{ type: "progress", kind: "quota", label: "Weekly", used, limit: 100, format: { kind: "percent" }, resetsAt: iso(now + resetsInDays * DAY) }],
+  });
+  const hostedAccounts = [
+    { usage_output: hostedOutput("grok", "Grok", "SuperGrok Heavy", 64, 2.4), reset_inventory: null, balance: null, id: "grok/relay", provider: "grok", alias: "relay", label: "relay", active: true, plan: "SuperGrok Heavy", used_pct: 64, resets_at: iso(now + 2.4 * DAY), has_secret: true, quota_detail: null, catalog: null, email: null, auth_type: "oauth", needs_reauth: false },
+    { usage_output: hostedOutput("codex", "Codex", "Pro", 31, 4.1), reset_inventory: null, balance: null, id: "codex/shared", provider: "codex", alias: "shared", label: "shared", active: true, plan: "Pro", used_pct: 31, resets_at: iso(now + 4.1 * DAY), has_secret: true, quota_detail: null, catalog: null, email: null, auth_type: "oauth", needs_reauth: false },
+    { usage_output: null, reset_inventory: null, balance: { availability: "available", freshness: "fresh", observedAtMs: now - 12 * 60_000, source: "openai", value: { remainingUsd: 38.42, subscriptionRemainingUsd: null, subscriptionLimitUsd: null, purchasedRemainingUsd: 38.42, paidAccess: true }, error: null }, id: "openai/api", provider: "openai", alias: "api", label: "api", active: true, plan: null, used_pct: null, resets_at: null, has_secret: true, quota_detail: null, catalog: null, email: null, auth_type: "api_key", needs_reauth: false },
+    { usage_output: null, reset_inventory: null, balance: null, id: "nous/old", provider: "nous", alias: "old", label: "old", active: false, plan: null, used_pct: 12, resets_at: iso(now + 1 * DAY), has_secret: true, quota_detail: null, catalog: null, email: null, auth_type: "oauth", needs_reauth: true },
+  ];
+  const hostedTotals = (scale: number) => ({ requests: Math.round(412 * scale), input_tokens: Math.round(9_800_000 * scale), output_tokens: Math.round(610_000 * scale), cached_input_tokens: Math.round(6_100_000 * scale), usd: Math.round(18.4 * scale * 100) / 100 });
+  const hostedDashboard = {
+    generated_at_ms: now, usage_truncated: false,
+    session: { owner: "u_fixture", username: "ash" },
+    relay: { id: "relay-1", version: "0.8.0", mode: "vps", capabilities: ["accounts", "keys"], endpoints: [{ key: "default", label: "ai.fabrials.com", http_url: "https://ai.fabrials.com", websocket_url: null, reachability: "public", available: true, is_default: true }] },
+    summary: {
+      days: 7, today: hostedTotals(0.2), window: hostedTotals(1),
+      accounts: hostedAccounts.map((account, index) => ({ id: account.id, alias: account.alias, provider: account.provider, plan: account.plan, used_pct: account.used_pct, active: account.active, requests: 180 - index * 40, tokens: 4_200_000 - index * 900_000, usd: 8.2 - index * 2 })),
+      models: [{ model: "grok-4.5", requests: 220, tokens: 5_100_000, usd: 9.1 }, { model: "gpt-5.2-codex", requests: 140, tokens: 3_300_000, usd: 7.4 }, { model: "grok-4.5-fast", requests: 52, tokens: 1_000_000, usd: 1.9 }],
+      recent: Array.from({ length: 12 }, (_, index) => ({ ts_ms: now - index * 11 * 60_000, account_id: index % 3 ? "grok/relay" : "codex/shared", model: index % 3 ? "grok-4.5" : "gpt-5.2-codex", kind: "chat", input_tokens: Math.round(6_000 + random() * 70_000), output_tokens: Math.round(300 + random() * 5_000), duration_ms: Math.round(800 + random() * 9_000), status: index === 4 ? 429 : 200, usd: Math.round(random() * 0.9 * 10_000) / 10_000 })),
+    },
+    accounts: hostedAccounts,
+    synchronized_accounts: [
+      { linked_account_id: "grok/relay", device: "desk", source: "grok", observed_at_ms: now - 8 * 60_000, output: hostedOutput("grok", "Grok", "SuperGrok Heavy", 61, 2.4), local_usage: null },
+      { linked_account_id: null, device: "laptop", source: "claude", observed_at_ms: now - 3 * HOUR, output: hostedOutput("claude", "Claude", "Max 5x", 42, 3.1), local_usage: null },
+    ],
+    keys: [
+      { key_hash: "kh_1", prefix: "sk-relay-4f2a", enabled: true, spent_usd: 6.12, policy: { pool_policy: false, name: "desk tools", budget_usd: 25, budget_period: "month", allow_providers: ["grok", "codex"], allow_accounts: [], allow_models: [], allow_routes: [], allow_kinds: [] } },
+      { key_hash: "kh_2", prefix: "sk-relay-9b10", enabled: false, spent_usd: 0, policy: { pool_policy: false, name: "ci", budget_usd: null, budget_period: "month", allow_providers: [], allow_accounts: [], allow_models: ["grok-4.5-fast"], allow_routes: [], allow_kinds: ["chat"] } },
+    ],
+    steering: ["grok", "codex"].map((provider) => ({ provider, route: provider === "grok" ? "/v1" : `/${provider}/v1`, enabled: provider === "grok", mode: provider === "grok" ? "autosteer" : "active", exhausted_pct: 90, queue: hostedAccounts.filter((account) => account.provider === provider).map((account) => ({ id: account.id, alias: account.alias, plan: account.plan, used_pct: account.used_pct, resets_at: account.resets_at, active: account.active, exhausted: false, score: 0.8, factors: "plan weight, headroom" })) })),
+    catalog: [{ provider: "grok", model: "grok-4.5", account_alias: "relay", probed_at_ms: now - HOUR }, { provider: "codex", model: "gpt-5.2-codex", account_alias: "shared", probed_at_ms: now - HOUR }],
+    connectors: [], fab_pool: null,
+  };
+  const hostedConsumption = {
+    snapshots: [{
+      device: "desk", source: "claude", revision: 3, observed_at_ms: now - 20 * 60_000, partial: false,
+      days: Array.from({ length: 14 }, (_, index) => ({ date: iso(now - (13 - index) * DAY).slice(0, 10), tokens: Math.round(2e6 + random() * 6e6), estimated_usd: Math.round(random() * 3000) / 100 })),
+      period_totals: { tokens: 62_000_000, known_usd: 188.4, partial: false },
+      models: [{ model: "claude-sonnet-4.5", requests: 640, tokens: 41_000_000, estimated_usd: 120.5 }, { model: "claude-opus-4.5", requests: 90, tokens: 21_000_000, estimated_usd: 67.9 }],
+    }],
+  };
+
   return {
-    detection, snapshot, accounts, clients, usageReport, history, hops, models,
+    detection, snapshot, accounts, clients, usageReport, history, hops, models, hostedDashboard, hostedConsumption,
     routing() {
       return {
         policies: ["grok", "codex", "nous", "openai"].map((provider) => ({ provider, autosteer: provider === "grok", exhausted_pct: provider === "grok" ? 90 : 100, mode: provider === "grok" ? "autosteer" : "active" })),
