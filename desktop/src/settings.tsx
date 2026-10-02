@@ -28,7 +28,7 @@ export function SettingsPage({ tab, theme, onThemeChange }: { tab: string | null
   return <>
     <PageHeader title="Settings" description="Appearance, reminders, your Fabrials account and what leaves this computer." />
     <Tabs value={current} onValueChange={(value) => { location.hash = routeHref({ workspace: "local", page: "settings", tab: String(value) }); }}>
-      <TabsList aria-label="Settings sections">{sections.map((section) => <TabsTrigger key={section.id} value={section.id}>{section.label}</TabsTrigger>)}</TabsList>
+      <TabsList aria-label="Settings sections" scrollable="narrow">{sections.map((section) => <TabsTrigger key={section.id} value={section.id}>{section.label}</TabsTrigger>)}</TabsList>
       <TabsContent value="general" className="sr-stack">
         <Card className="sr-setting-card">
           <SectionHeader title="Appearance" description="Follow your system, or keep Spanreed light or dark. The window title bar follows too." />
