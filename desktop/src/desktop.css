@@ -18,9 +18,14 @@ body { font-family: var(--fui-font-sans); color: var(--foreground); -webkit-font
   min-height: 3.5rem; padding: var(--fui-space-2) var(--fui-space-3);
   border-bottom: 1px solid var(--border); background: var(--background);
 }
-.sr-titlebar { flex: 1; align-self: stretch; display: flex; align-items: center; min-width: 2rem; }
-.sr-titlebar-title { display: none; font-weight: 600; }
-.sr-header-actions { display: flex; align-items: center; gap: var(--fui-space-2); flex-wrap: wrap; justify-content: flex-end; }
+.sr-titlebar { flex: 1; align-self: stretch; display: flex; align-items: center; min-width: 0; overflow: hidden; container-type: inline-size; }
+/* A title squeezed to a few pixels would show a sliver of its first letter: hide it when it cannot show at least a word. */
+@container (max-width: 4.5rem) { .sr-titlebar-title { visibility: hidden; } }
+.sr-titlebar-title { display: none; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* One row at every width: a wrapping action cluster pushed the title bar onto two rows at the 400 px minimum window. Below 480 px the
+   refresh button keeps its icon only and the "updated" note goes, so the cluster fits beside the trigger and the window controls. */
+.sr-header-actions { display: flex; align-items: center; gap: var(--fui-space-2); flex-wrap: nowrap; flex-shrink: 0; justify-content: flex-end; }
+@media (max-width: 480px) { .sr-refresh-label, .sr-updated { display: none; } }
 .sr-updated { color: var(--muted-foreground); font-size: var(--fui-text-xs); white-space: nowrap; }
 .sr-inline-label { display: flex; align-items: center; gap: var(--fui-space-2); font-size: var(--fui-text-xs); color: var(--muted-foreground); }
 .sr-inline-label .fui-input { min-height: 2rem; width: auto; }

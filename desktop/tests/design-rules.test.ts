@@ -41,3 +41,15 @@ test("the workspace switcher still marks the current place in forced colours", (
   const block = css.match(/@media \(forced-colors: active\) \{[^}]*\.sr-switcher-option\[aria-current\][^}]*\}[^}]*\}/)?.[0] ?? "";
   expect(block).toContain("outline");
 });
+
+test("the header is one row: its actions never wrap, and below 480 px the refresh label and the updated note give way", () => {
+  const actions = css.match(/\.sr-header-actions \{[^}]*\}/)?.[0] ?? "";
+  expect(actions).toContain("flex-wrap: nowrap");
+  expect(actions).not.toContain("flex-wrap: wrap");
+  const narrow = css.match(/@media \(max-width: 480px\) \{[^}]*\}/)?.[0] ?? "";
+  expect(narrow).toContain(".sr-refresh-label");
+  expect(narrow).toContain(".sr-updated");
+  // the button keeps a name when its label is hidden
+  expect(sources.find(([name]) => name === "app.tsx")?.[1]).toMatch(/aria-label=\{data\.loading \? "Refreshing" : "Refresh"\}/);
+});
+
