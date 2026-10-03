@@ -56,8 +56,8 @@ function LocalWorkspace({ route, theme, onThemeChange, appError }: { route: Rout
   const status = <StatusDot tone={running ? "success" : "neutral"} label={running ? `Proxy on ${data.proxy!.bind}` : "Proxy off"} />;
   const actions = <>
     {data.updatedAt && <span className="sr-updated">Updated {ago(data.updatedAt, now)}</span>}
-    <Button variant="outline" size="sm" disabled={data.loading} onClick={() => void data.refresh()}>
-      <RefreshCw aria-hidden size={14} className={data.loading ? "fui-spin" : undefined} />{data.loading ? "Refreshing…" : "Refresh"}
+    <Button variant="outline" size="sm" disabled={data.loading} aria-label={data.loading ? "Refreshing" : "Refresh"} onClick={() => void data.refresh()}>
+      <RefreshCw aria-hidden size={14} className={data.loading ? "fui-spin" : undefined} /><span className="sr-refresh-label">{data.loading ? "Refreshing…" : "Refresh"}</span>
     </Button>
   </>;
   return <DesktopShell route={route} groups={groups} footer={[settingsItem]} status={status} actions={actions} theme={theme} onThemeChange={onThemeChange}>
