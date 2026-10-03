@@ -4,8 +4,9 @@ All notable, user-facing changes to Spanreed are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.2] - 2026-10-02
+## [0.7.2] - 2026-10-03
 
+- fix(desktop): the window header is one row down to the 400 px minimum
 - test(desktop): error states in the fixtures
 - fix(desktop): keep page cards at their content height in a short window
 - fix(desktop): show the current workspace in forced colours
