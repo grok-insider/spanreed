@@ -56,6 +56,12 @@ pub trait CredentialInjector: Send + Sync {
         let _ = secret;
         Ok(self.inject_for(token, hop))
     }
+    /// Value sent when the client already carries an injected header name.
+    /// Default `None`: the injected value replaces the client's.
+    fn merge_client_header(&self, name: &str, client: &str, injected: &str) -> Option<String> {
+        let _ = (name, client, injected);
+        None
+    }
 }
 
 /// Official usage out of a captured response body.
@@ -97,6 +103,21 @@ pub trait BodyShaper: Send + Sync {
     fn shape_request(&self, hop: &Upstream, token: Option<&str>, body: &[u8]) -> Option<Vec<u8>> {
         let _ = (hop, token, body);
         None
+    }
+    /// One replacement body after the upstream rejected `body`. `None` = no retry.
+    fn reshape_after_rejection(
+        &self,
+        hop: &Upstream,
+        status: u16,
+        rejected: &[u8],
+        body: &[u8],
+    ) -> Option<Vec<u8>> {
+        let _ = (hop, status, rejected, body);
+        None
+    }
+    /// The request that was forwarded and the response captured for it.
+    fn observe_exchange(&self, hop: &Upstream, accepted: bool, request: &[u8], response: &[u8]) {
+        let _ = (hop, accepted, request, response);
     }
 }
 
@@ -176,6 +197,9 @@ impl CredentialInjector for ProviderParts {
     ) -> Result<Vec<(String, String)>, String> {
         self.credentials.credential_headers(token, hop, secret)
     }
+    fn merge_client_header(&self, name: &str, client: &str, injected: &str) -> Option<String> {
+        self.credentials.merge_client_header(name, client, injected)
+    }
 }
 
 impl UsageExtractor for ProviderParts {
@@ -208,6 +232,20 @@ impl Translator for ProviderParts {
 impl BodyShaper for ProviderParts {
     fn shape_request(&self, hop: &Upstream, token: Option<&str>, body: &[u8]) -> Option<Vec<u8>> {
         self.shaper.shape_request(hop, token, body)
+    }
+    fn reshape_after_rejection(
+        &self,
+        hop: &Upstream,
+        status: u16,
+        rejected: &[u8],
+        body: &[u8],
+    ) -> Option<Vec<u8>> {
+        self.shaper
+            .reshape_after_rejection(hop, status, rejected, body)
+    }
+    fn observe_exchange(&self, hop: &Upstream, accepted: bool, request: &[u8], response: &[u8]) {
+        self.shaper
+            .observe_exchange(hop, accepted, request, response)
     }
 }
 

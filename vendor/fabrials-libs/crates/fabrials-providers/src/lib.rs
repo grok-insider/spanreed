@@ -5,11 +5,13 @@ pub mod grok;
 pub mod grok_cli;
 pub mod kimi;
 pub mod nous;
+pub mod opencode;
 
 pub mod device_flow;
 
 pub mod http;
 
+pub mod billing;
 pub mod catalog;
 
 pub mod oauth;

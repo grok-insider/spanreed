@@ -144,3 +144,178 @@ fn a_host_source_can_replace_the_published_overlays() {
     assert_eq!(map.exact("acme-2").unwrap().input, 5e-6);
     assert!(map.exact("gpt-6-astra").is_none());
 }
+
+#[test]
+fn sol_and_luna_price_the_full_request_only_above_the_prompt_threshold() {
+    use fabrials_pricing::cost::list_cost_usd_with;
+    use fabrials_types::HopRecord;
+
+    let table = build_table(embedded_json(), None, None);
+    for (model, input, read, write, output) in [
+        ("gpt-6.1-sol", 2e-6, 1e-7, 2.5e-6, 1e-5),
+        ("gpt-6-sol", 2e-6, 2e-7, 2.5e-6, 1e-5),
+        ("gpt-6-luna", 1e-7, 1e-8, 1.25e-7, 5e-7),
+    ] {
+        let price = table.exact(model).unwrap();
+        assert_eq!(price.long_context_threshold_tokens, Some(272_000));
+        assert_eq!(price.input, input);
+        assert_eq!(price.cache_read, read);
+        assert_eq!(price.cache_create, write);
+        assert_eq!(price.output, output);
+        assert_eq!(
+            table.exact(&format!("openai/{model}")).unwrap().input,
+            input
+        );
+        assert_eq!(
+            table.find(&format!("{model}-20260930")).unwrap().input,
+            input
+        );
+        assert!(table.exact(&format!("{model}-unknown")).is_none());
+        for prompt in [200_000, 271_999, 272_000, 272_001] {
+            let factor = if prompt > 272_000 { 2.0 } else { 1.0 };
+            let output_factor = if prompt > 272_000 { 1.5 } else { 1.0 };
+            for (cache_read, cache_create) in [(0, 0), (100_000, 0), (0, 100_000), (50_000, 50_000)]
+            {
+                let usage = Usage {
+                    input: prompt - cache_read - cache_create,
+                    cache_read,
+                    cache_create,
+                    output: 300_000,
+                };
+                let expected = (usage.input as f64 * input
+                    + cache_read as f64 * read
+                    + cache_create as f64 * write)
+                    * factor
+                    + usage.output as f64 * output * output_factor;
+                let strict = table.exact_cost(model, usage).unwrap().0;
+                assert!((strict - expected).abs() < 1e-12, "{model} {prompt}");
+                assert!((table.cost(model, usage).unwrap() - expected).abs() < 1e-12);
+                if cache_create == 0 {
+                    let record = HopRecord {
+                        model: Some(model.into()),
+                        input_tokens: prompt,
+                        cached_input_tokens: cache_read,
+                        output_tokens: usage.output,
+                        ..Default::default()
+                    };
+                    assert!(
+                        (list_cost_usd_with(&record, &table).unwrap() - expected).abs() < 1e-12
+                    );
+                }
+            }
+        }
+    }
+    assert!(table
+        .exact_cost("unpublished-model", Usage::default())
+        .is_none());
+}
+
+#[test]
+fn model_threshold_survives_filtering_and_price_layer_precedence() {
+    let row = serde_json::json!({
+        "input_cost_per_token": 9e-6,
+        "output_cost_per_token": 9e-6,
+        "long_context_threshold_tokens": 123,
+        "input_cost_per_token_above_200k_tokens": 18e-6
+    });
+    let remote = serde_json::json!({"claude-test": row, "gpt-6-sol": row}).to_string();
+    let filtered = filter_upstream(&remote).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&filtered).unwrap();
+    assert_eq!(value["gpt-6-sol"]["long_context_threshold_tokens"], 123);
+    let published = build_table(embedded_json(), Some(&filtered), None);
+    assert_eq!(
+        published
+            .exact("gpt-6-sol")
+            .unwrap()
+            .long_context_threshold_tokens,
+        Some(272_000)
+    );
+    let user = build_table(embedded_json(), Some(&filtered), Some(&filtered));
+    assert_eq!(
+        user.exact("gpt-6-sol")
+            .unwrap()
+            .long_context_threshold_tokens,
+        Some(123)
+    );
+    let legacy = build_table(
+        r#"{"legacy": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6, "input_cost_per_token_above_200k_tokens": 3e-6}}"#,
+        None,
+        None,
+    );
+    assert_eq!(
+        legacy
+            .exact("legacy")
+            .unwrap()
+            .long_context_threshold_tokens,
+        None
+    );
+    let usage = Usage {
+        input: 200_001,
+        ..Default::default()
+    };
+    assert!((legacy.cost("legacy", usage).unwrap() - (200_000.0 * 1e-6 + 3e-6)).abs() < 1e-12);
+}
+
+#[test]
+fn unknown_prefixes_and_suffixes_never_inherit_a_price() {
+    use fabrials_pricing::cost::list_cost_usd_with;
+    use fabrials_types::HopRecord;
+
+    let table = build_table(embedded_json(), None, None);
+    for model in [
+        "gpt",
+        "gpt-6",
+        "gpt-6.1",
+        "gpt-6.1-sol-unknown",
+        "gpt-6.1-sol-fast-unpublished",
+        "gpt-6.1-sol-20260930-extra",
+        "gpt-6.1-sol-2026-9-30",
+        "gpt-6.1-sol-20261301",
+        "gpt-6.1-sol-2026-02-30",
+        "gpt-6.1-sol-2026093",
+        "gpt-6.1-sol-202609300",
+        "gpt-6.1-sol20260930",
+        "openai/gpt-6.1-sol:unknown",
+        "gpt-6.1-sol-２０２６０９３０",
+    ] {
+        assert!(table.find(model).is_none(), "{model}");
+        assert!(table.find(model).is_none(), "memoized {model}");
+        assert!(
+            table
+                .cost(
+                    model,
+                    Usage {
+                        input: 100,
+                        ..Default::default()
+                    }
+                )
+                .is_none(),
+            "{model}"
+        );
+        let record = HopRecord {
+            model: Some(model.into()),
+            input_tokens: 100,
+            ..Default::default()
+        };
+        assert!(list_cost_usd_with(&record, &table).is_none(), "{model}");
+    }
+    for model in ["gpt-6.1-sol-20260930", "openai/GPT-6.1-SOL@2026-09-30"] {
+        assert_eq!(table.find(model).unwrap().input, 2e-6);
+    }
+}
+
+#[test]
+fn aliases_require_explicit_entries_and_dated_rows_do_not_price_their_base() {
+    let rows = r#"{
+        "acme-model-2026-09-30": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6},
+        "acme-model-fast": {"input_cost_per_token": 3e-6, "output_cost_per_token": 4e-6},
+        "acme-alias": {"input_cost_per_token": 3e-6, "output_cost_per_token": 4e-6}
+    }"#;
+    let table = build_table(rows, None, None);
+    for model in ["acme", "acme-model", "acme-model-f", "acme-alias-extra"] {
+        assert!(table.find(model).is_none(), "{model}");
+    }
+    assert_eq!(table.find("provider/ACME-ALIAS").unwrap().input, 3e-6);
+    assert_eq!(table.find("acme-model-fast").unwrap().input, 3e-6);
+    assert_eq!(table.find("acme-model-2026-09-30").unwrap().input, 1e-6);
+}

@@ -24,22 +24,44 @@ pub fn is_chat_completions(path: &str) -> bool {
 /// Any other path, a body that is already chat, and a body that is not JSON
 /// are returned unchanged.
 pub fn adapt_upstream_body(path: &str, body: &[u8]) -> Vec<u8> {
+    adapt_upstream_body_owned(path, body.to_vec())
+}
+
+/// [`adapt_upstream_body`] that hands back an unchanged body without copying
+/// it. Inference bodies reach tens of megabytes of inline images.
+pub fn adapt_upstream_body_owned(path: &str, body: Vec<u8>) -> Vec<u8> {
+    let body = responses_body_as_chat(path, &body).unwrap_or(body);
+    without_message_model_ids(path, &body).unwrap_or(body)
+}
+
+/// Grok Build tags chat messages with a non-standard `model_id`; strict
+/// upstreams (GLM) reject unknown message fields.
+fn without_message_model_ids(path: &str, body: &[u8]) -> Option<Vec<u8>> {
+    const NEEDLE: &[u8] = b"\"model_id\"";
+    if !is_chat_completions(path) || !body.windows(NEEDLE.len()).any(|w| w == NEEDLE) {
+        return None;
+    }
+    let mut value = serde_json::from_slice::<Value>(body).ok()?;
+    let mut removed = false;
+    for message in value.get_mut("messages")?.as_array_mut()? {
+        if let Some(object) = message.as_object_mut() {
+            removed |= object.remove("model_id").is_some();
+        }
+    }
+    removed.then(|| serde_json::to_vec(&value).ok()).flatten()
+}
+
+fn responses_body_as_chat(path: &str, body: &[u8]) -> Option<Vec<u8>> {
     if !is_chat_completions(path) {
-        return body.to_vec();
+        return None;
     }
-    let Ok(value) = serde_json::from_slice::<Value>(body) else {
-        return body.to_vec();
-    };
-    let Some(obj) = value.as_object() else {
-        return body.to_vec();
-    };
+    let value = serde_json::from_slice::<Value>(body).ok()?;
+    let obj = value.as_object()?;
     if obj.contains_key("messages") || !obj.contains_key("input") {
-        return body.to_vec();
+        return None;
     }
-    let Some(messages) = input_to_messages(obj.get("input")) else {
-        return body.to_vec();
-    };
-    serde_json::to_vec(&responses_to_chat(obj, messages)).unwrap_or_else(|_| body.to_vec())
+    let messages = input_to_messages(obj.get("input"))?;
+    serde_json::to_vec(&responses_to_chat(obj, messages)).ok()
 }
 
 /// One downgraded body when `request` asks for strict `json_schema` and the
@@ -775,6 +797,22 @@ fn chat_usage(usage: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chat_messages_lose_model_id_only_on_chat_completions() {
+        let body = serde_json::json!({"model":"glm-5.3","messages":[
+            {"role":"user","content":"hi"},
+            {"role":"assistant","content":"","model_id":"glm-5.3","tool_calls":[]}
+        ]})
+        .to_string()
+        .into_bytes();
+        let adapted: serde_json::Value =
+            serde_json::from_slice(&super::adapt_upstream_body("/v1/chat/completions", &body))
+                .expect("json");
+        assert!(adapted["messages"][1].get("model_id").is_none());
+        assert_eq!(adapted["model"], "glm-5.3");
+        assert_eq!(super::adapt_upstream_body("/v1/messages", &body), body);
+    }
+
     use super::*;
 
     #[test]
@@ -839,6 +877,30 @@ mod tests {
     fn chat_body_is_unchanged() {
         let raw = br#"{"model":"deepseek-flash","messages":[{"role":"user","content":"hi"}]}"#;
         assert_eq!(adapt_upstream_body("/v1/chat/completions", raw), raw);
+    }
+
+    #[test]
+    fn owned_adaptation_reuses_an_unchanged_body() {
+        for (path, raw) in [
+            (
+                "/v1/responses",
+                br#"{"model":"grok-4.7","input":"hi"}"#.to_vec(),
+            ),
+            (
+                "/v1/chat/completions",
+                br#"{"model":"deepseek-flash","messages":[]}"#.to_vec(),
+            ),
+        ] {
+            let address = raw.as_ptr();
+            let out = adapt_upstream_body_owned(path, raw);
+            assert_eq!(out.as_ptr(), address, "{path}");
+        }
+        let translated = adapt_upstream_body_owned(
+            "/v1/chat/completions",
+            br#"{"model":"deepseek-flash","input":"hi"}"#.to_vec(),
+        );
+        let out: Value = serde_json::from_slice(&translated).unwrap();
+        assert_eq!(out["messages"][0]["content"], "hi");
     }
 
     #[test]

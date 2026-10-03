@@ -16,6 +16,8 @@ const FAMILIES: &[&str] = &["claude", "gpt", "codex", "gemini", "grok", "minimax
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct RawPricing {
     #[serde(skip_serializing_if = "Option::is_none")]
+    long_context_threshold_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     input_cost_per_token: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     output_cost_per_token: Option<f64>,
@@ -41,6 +43,7 @@ struct RawPricing {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pricing {
+    pub long_context_threshold_tokens: Option<u64>,
     pub input: f64,
     pub output: f64,
     pub cache_create: f64,
@@ -73,6 +76,7 @@ impl Pricing {
         let input = r.input_cost_per_token.unwrap_or(0.0);
         let output = r.output_cost_per_token.unwrap_or(0.0);
         Some(Pricing {
+            long_context_threshold_tokens: r.long_context_threshold_tokens,
             input,
             output,
             cache_create: r.cache_creation_input_token_cost.unwrap_or(input * 1.25),
@@ -122,10 +126,7 @@ pub struct PricingMap {
     table: HashMap<String, Pricing>,
     /// Normalized key to list price. The table keys are provider-qualified
     /// (`xai/grok-4.3`) while usage records carry the bare name (`grok-4.3`),
-    /// so this index answers those without touching `prefix`.
     normalized: HashMap<String, Pricing>,
-    /// Normalized keys in a stable order, for the dated-variant fallback.
-    prefix: Vec<(String, Pricing)>,
     /// `find` answers by model name. A fold revisits the same handful of
     /// models tens of thousands of times.
     memo: Mutex<HashMap<String, Option<Pricing>>>,
@@ -142,7 +143,6 @@ impl PricingMap {
         let mut normalized: HashMap<String, (String, Pricing)> = HashMap::new();
         let mut keys: Vec<&String> = table.keys().collect();
         keys.sort();
-        let mut prefix = Vec::with_capacity(keys.len());
         for key in keys {
             let pricing = table[key];
             let nkey = normalize(key);
@@ -152,7 +152,6 @@ impl PricingMap {
                     normalized.insert(nkey.clone(), (key.clone(), pricing));
                 }
             }
-            prefix.push((nkey, pricing));
         }
         Self {
             table,
@@ -160,7 +159,6 @@ impl PricingMap {
                 .into_iter()
                 .map(|(nkey, (_, pricing))| (nkey, pricing))
                 .collect(),
-            prefix,
             memo: Mutex::new(HashMap::new()),
             provider_rates: Vec::new(),
         }
@@ -185,23 +183,11 @@ impl PricingMap {
         found
     }
 
-    /// Longest shared prefix against the precomputed normalized keys.
     fn scan_dated_variant(&self, norm: &str) -> Option<Pricing> {
-        let mut best: Option<(Pricing, usize)> = None;
-        for (nkey, pricing) in &self.prefix {
-            if pricing.is_voice_only() {
-                continue;
-            }
-            let matched = if norm.starts_with(nkey.as_str()) || nkey.starts_with(norm) {
-                nkey.len().min(norm.len())
-            } else {
-                0
-            };
-            if matched > 0 && best.map(|(_, l)| matched > l).unwrap_or(true) {
-                best = Some((*pricing, matched));
-            }
-        }
-        best.map(|(pricing, _)| pricing)
+        self.normalized.iter().find_map(|(key, pricing)| {
+            let date = norm.strip_prefix(key.as_str())?.strip_prefix('-')?;
+            (!pricing.is_voice_only() && valid_model_date(date)).then_some(*pricing)
+        })
     }
 
     pub fn get(&self, model: &str) -> Option<&Pricing> {
@@ -239,6 +225,18 @@ impl PricingMap {
 }
 
 fn tiered_cost(p: &Pricing, usage: Usage) -> f64 {
+    if let Some(threshold) = p.long_context_threshold_tokens {
+        let prompt = usage
+            .input
+            .saturating_add(usage.cache_create)
+            .saturating_add(usage.cache_read);
+        let long = prompt > threshold;
+        let rate = |base: f64, high: Option<f64>| if long { high.unwrap_or(base) } else { base };
+        return usage.input as f64 * rate(p.input, p.input_above_200k)
+            + usage.output as f64 * rate(p.output, p.output_above_200k)
+            + usage.cache_create as f64 * rate(p.cache_create, p.cache_create_above_200k)
+            + usage.cache_read as f64 * rate(p.cache_read, p.cache_read_above_200k);
+    }
     tiered(usage.input, p.input, p.input_above_200k)
         + tiered(usage.output, p.output, p.output_above_200k)
         + tiered(
@@ -255,6 +253,35 @@ fn tiered(tokens: u64, base: f64, above_200k: Option<f64>) -> f64 {
         Some(high) if tokens > TIER => (TIER as f64) * base + ((tokens - TIER) as f64) * high,
         _ => (tokens as f64) * base,
     }
+}
+
+fn valid_model_date(date: &str) -> bool {
+    let compact = match date.as_bytes() {
+        bytes if bytes.len() == 8 && bytes.iter().all(u8::is_ascii_digit) => date.to_owned(),
+        bytes
+            if bytes.len() == 10
+                && bytes[4] == b'-'
+                && bytes[7] == b'-'
+                && bytes
+                    .iter()
+                    .enumerate()
+                    .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) =>
+        {
+            date.replace('-', "")
+        }
+        _ => return false,
+    };
+    let year: u32 = compact[..4].parse().unwrap();
+    let month: u32 = compact[4..6].parse().unwrap();
+    let day: u32 = compact[6..].parse().unwrap();
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        _ => return false,
+    };
+    year > 0 && day > 0 && day <= days
 }
 
 pub fn normalize(model: &str) -> String {
@@ -550,14 +577,29 @@ mod tests {
     }
 
     #[test]
-    fn dated_variants_fall_back_to_the_shared_prefix() {
+    fn dated_variants_resolve_only_with_valid_full_dates() {
         let map = build_table(
             r#"{"xai/grok-4.6": {"input_cost_per_token": 3e-6, "output_cost_per_token": 9e-6}}"#,
             None,
             None,
         );
-        let dated = map.find("grok-4.6-0309").expect("dated variant priced");
-        assert_eq!(dated.input, 3e-6);
+        for model in [
+            "grok-4.6-2026-03-09",
+            "grok-4.6-20260309",
+            "xai/grok-4.6@2024-02-29",
+        ] {
+            assert_eq!(map.find(model).expect("dated variant priced").input, 3e-6);
+        }
+        for model in [
+            "grok-4.6-0309",
+            "grok-4.6-20260229",
+            "grok-4.6-2026-04-31",
+            "grok-4.6-00000101",
+            "grok-4.6-20260001",
+            "grok-4.6-20260100",
+        ] {
+            assert!(map.find(model).is_none(), "{model}");
+        }
     }
 
     #[test]

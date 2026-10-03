@@ -1197,6 +1197,7 @@ dependencies = [
 name = "fabrials-fabric"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "fabrials-accounts",
  "fabrials-pricing",
  "fabrials-types",
@@ -4150,7 +4151,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-adapters"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "dirs 5.0.1",
  "fabrials-accounts",
@@ -4187,7 +4188,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-app"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "fabrials-fabric",
  "fabrials-pricing",
@@ -4200,7 +4201,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-desktop"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "fabrials-types",
  "serde",
@@ -4214,7 +4215,7 @@ dependencies = [
 
 [[package]]
 name = "spanreed-domain"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "fabrials-types",
  "serde",
