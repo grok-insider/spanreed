@@ -24,6 +24,9 @@ use crate::session_catalog::{self, SessionSummary};
 /// Why a command could not be carried out.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DispatchError {
+    #[allow(missing_docs)]
+    #[error("request refused: {0}")]
+    Refused(&'static str),
     /// The addressed workspace is not enrolled.
     #[error("workspace is not enrolled")]
     UnknownWorkspace,
@@ -91,6 +94,7 @@ impl DispatchError {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Refused(code) => code,
             Self::UnknownWorkspace => "unknown_workspace",
             Self::NoSession => "no_session",
             Self::SessionAlreadyActive => "session_already_active",
@@ -207,9 +211,22 @@ pub struct ProjectProjection {
 pub enum DispatchOutcome {
     #[allow(missing_docs)]
     #[serde(rename_all = "camelCase")]
+    SessionModels {
+        session_id: String,
+        #[serde(flatten)]
+        state: crate::models::SessionModelState,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
     RemoteCapabilities {
         #[allow(missing_docs)]
         content_protocol_version: u32,
+        #[allow(missing_docs)]
+        multi_writer: bool,
+        #[allow(missing_docs)]
+        multi_writer_protocol_version: u32,
+        #[allow(missing_docs)]
+        targeted_cancel_supported: bool,
         projects: bool,
         control_transfer: bool,
         device_panel: bool,
@@ -300,6 +317,8 @@ pub enum DispatchOutcome {
     /// The enrolled workspaces, with their current availability.
     #[serde(rename_all = "camelCase")]
     Workspaces {
+        #[allow(missing_docs)]
+        observation_epoch: u64,
         /// Enrolled workspaces. Never carries a filesystem path.
         workspaces: Vec<WorkspaceProjection>,
         /// Folders that already have Grok sessions (session store), plus
@@ -980,6 +999,14 @@ async fn run(
     agent: Option<&Arc<AgentHandle>>,
 ) -> Result<DispatchOutcome, DispatchError> {
     match &envelope.operation {
+        Operation::GetSessionExecution { .. }
+        | Operation::GetSessionModels { .. }
+        | Operation::SetSessionConfiguration { .. }
+        | Operation::SetQueuePaused { .. }
+        | Operation::ClearQueuedPrompts { .. }
+        | Operation::CancelSessionTurn { .. }
+        | Operation::ReviewUncertainTurn { .. }
+        | Operation::InterruptAndEnqueue { .. } => Err(DispatchError::Unsupported),
         // The browser's first call, and the one it repeats to refresh: both
         // answer with the enrolment set and whether a session is open.
         Operation::Bootstrap | Operation::ListWorkspaces => Ok(project_state(journal, state)),
@@ -1308,6 +1335,7 @@ const fn addressed_session_of(operation: &Operation) -> Option<&String> {
 /// until they say they have seen it.
 fn project_state(journal: &Journal, state: &SessionState) -> DispatchOutcome {
     DispatchOutcome::Workspaces {
+        observation_epoch: journal.observation_epoch(),
         workspaces: state.project_workspaces(),
         projects: state.project_projects(),
         open_sessions: state.project_sessions(),

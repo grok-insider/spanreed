@@ -11,8 +11,8 @@ use std::{
 use tokio::sync::Mutex;
 use zeroize::Zeroize;
 
-const API: &str = "https://fabrials.com/api/spanreed/publications";
-const ORIGIN: &str = "https://desktop.grok.me";
+const API: &str = "https://publications.fabrials.com/v1";
+const EXCHANGE: &str = "https://fabrials.com/api/spanreed/publications/exchange";
 const FILE: &str = "publications-v2.json";
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -42,11 +42,30 @@ impl Drop for Pending {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PendingUpload {
+    revision: u64,
+    request_digest: String,
+    fingerprint: String,
+    entry_hashes: Vec<String>,
+    ordinals: Vec<u64>,
+    high_water: u64,
+    source_length: u64,
+    source_fingerprint: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Publication {
     session_id: String,
     workspace: PathBuf,
     title: String,
     upload_token: String,
+    #[serde(default)]
+    revoke_token: String,
+    #[serde(default)]
+    generation: String,
+    #[serde(default)]
+    pending_upload: Option<PendingUpload>,
     phase: String,
     expires_at: u64,
     revision: u64,
@@ -64,6 +83,7 @@ struct Publication {
 impl Drop for Publication {
     fn drop(&mut self) {
         self.upload_token.zeroize();
+        self.revoke_token.zeroize();
     }
 }
 #[derive(Default, Serialize, Deserialize)]
@@ -79,6 +99,8 @@ pub struct Publications {
     directory: PathBuf,
     public_key: String,
     api: String,
+    exchange: String,
+    web_origin: String,
     client: reqwest::Client,
     state: Mutex<State>,
     receipts: Mutex<Receipts>,
@@ -141,7 +163,14 @@ fn token(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 fn id(value: &str) -> bool {
-    value.len() == 36 && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
 }
 fn random() -> Result<String, String> {
     let mut bytes = [0u8; 32];
@@ -168,7 +197,14 @@ fn receipt(mut receipt: fabrials_agent_host::receipts::Receipt) -> (u16, Value) 
 }
 
 impl Publications {
-    pub fn new(host: &Arc<HostState>, directory: &Path, public_key: &str) -> Result<Self, String> {
+    pub fn new(
+        host: &Arc<HostState>,
+        directory: &Path,
+        public_key: &str,
+        web_origin: &str,
+    ) -> Result<Self, String> {
+        fabrials_agent_host::origin::validate_hosted_web_origin(web_origin)
+            .map_err(|_| "publication_origin_invalid")?;
         fabrials_agent_host::instance::ensure_private_directory(directory)
             .map_err(|_| "publication_state_not_private")?;
         let bytes = crate::direct_notifications::private_read(directory, FILE, 4 * 1024 * 1024)?;
@@ -192,6 +228,18 @@ impl Publications {
                 !id(key)
                     || !crate::opaque(&row.session_id)
                     || (!row.upload_token.is_empty() && !token(&row.upload_token))
+                    || (!row.revoke_token.is_empty() && !token(&row.revoke_token))
+                    || (!row.generation.is_empty() && !id(&row.generation))
+                    || row.pending_upload.as_ref().is_some_and(|pending| {
+                        pending.entry_hashes.len() > 10_000
+                            || pending.ordinals.len() != pending.entry_hashes.len()
+                            || pending.revision != row.revision.saturating_add(1)
+                            || pending.request_digest.len() != 64
+                            || !pending
+                                .request_digest
+                                .bytes()
+                                .all(|byte| byte.is_ascii_hexdigit())
+                    })
                     || row.entry_hashes.len() > 10_000
                     || row.ordinals.len() != row.entry_hashes.len()
                     || row.image_hashes.len() > 8
@@ -233,6 +281,8 @@ impl Publications {
             directory: directory.into(),
             public_key: public_key.into(),
             api: API.into(),
+            exchange: EXCHANGE.into(),
+            web_origin: web_origin.into(),
             client: reqwest::Client::builder()
                 .https_only(true)
                 .no_proxy()
@@ -270,6 +320,9 @@ impl Publications {
         if status.is_success() {
             return Ok(body);
         }
+        if status.is_server_error() {
+            return Err("publication_response_unknown".into());
+        }
         let code = body
             .get("error")
             .and_then(Value::as_str)
@@ -292,6 +345,7 @@ impl Publications {
             .request(method, format!("{}{suffix}", self.api))
             .bearer_auth(&auth.grant)
             .header("X-Publication-Host-Key", &self.public_key)
+            .header("Origin", &self.web_origin)
     }
     fn grant(state: &State) -> Result<Authorization, String> {
         state
@@ -305,11 +359,13 @@ impl Publications {
         if access.verify_access().await.is_err() {
             return (403, json!({"error":"revoked"}));
         }
-        if body.get("protocolVersion").and_then(Value::as_u64) != Some(2)
-            || body
-                .get("requestId")
-                .and_then(Value::as_str)
-                .is_none_or(|id| !crate::opaque(id))
+        if !matches!(
+            body.get("protocolVersion").and_then(Value::as_u64),
+            Some(2 | 4)
+        ) || body
+            .get("requestId")
+            .and_then(Value::as_str)
+            .is_none_or(|id| !crate::opaque(id))
         {
             return error("invalid_request");
         }
@@ -412,10 +468,11 @@ impl Publications {
                     "https://fabrials.com/",
                     [
                         ("publication_host_key", self.public_key.as_str()),
-                        ("publication_origin", ORIGIN),
+                        ("publication_origin", self.web_origin.as_str()),
                         ("publication_challenge", challenge.as_str()),
                         ("publication_nonce", nonce.as_str()),
                         ("publication_label", "Spanreed computer"),
+                        ("publication_return_path", "/"),
                     ],
                 )
                 .map_err(|_| "publication_url_invalid")?;
@@ -452,7 +509,7 @@ impl Publications {
                     state.pending = None;
                     self.persist(&state)?;
                 }
-                let response=self.request(self.client.post(format!("{}/exchange",self.api)).json(&json!({"code":code,"nonce":nonce,"verifier":pending.verifier,"hostPublicKey":self.public_key,"clientOrigin":ORIGIN}))).await?;
+                let response=self.request(self.client.post(&self.exchange).header("Origin", &self.web_origin).json(&json!({"code":code,"nonce":nonce,"verifier":pending.verifier,"hostPublicKey":self.public_key,"clientOrigin":self.web_origin,"returnPath":"/"}))).await?;
                 let grant = response["grant"]
                     .as_str()
                     .filter(|value| token(value))
@@ -485,6 +542,19 @@ impl Publications {
             }
             Operation::StopPublication { publication_id } => self.stop(&publication_id).await,
             Operation::ResumePublication { publication_id } => {
+                {
+                    let state = self.state.lock().await;
+                    let row = state
+                        .publications
+                        .get(&publication_id)
+                        .ok_or("publication_unknown")?;
+                    if matches!(row.phase.as_str(), "revoked" | "pendingDelete" | "expired")
+                        || row.expires_at <= now()
+                    {
+                        return Err("publication_expired".into());
+                    }
+                }
+                self.reconcile(&publication_id).await?;
                 let mut state = self.state.lock().await;
                 Self::grant(&state)?;
                 let row = state
@@ -632,7 +702,7 @@ impl Publications {
         let auth = Self::grant(&state)?;
         drop(state);
         let response = self
-            .request(self.authorized(reqwest::Method::POST, "", &auth))
+            .request(self.authorized(reqwest::Method::POST, "/create", &auth))
             .await?;
         let publication_id = response["id"]
             .as_str()
@@ -644,15 +714,35 @@ impl Publications {
             .filter(|value| token(value))
             .ok_or("publication_response_unknown")?
             .to_owned();
+        let revoke_token = response["revokeToken"]
+            .as_str()
+            .filter(|value| token(value))
+            .ok_or("publication_response_unknown")?
+            .to_owned();
+        let generation = response["generation"]
+            .as_str()
+            .filter(|value| id(value))
+            .ok_or("publication_response_unknown")?
+            .to_owned();
+        if response["revision"].as_u64() != Some(0)
+            || response["publicationUrl"]
+                != format!("https://publications.fabrials.com/#{publication_id}")
+        {
+            return Err("publication_response_unknown".into());
+        }
         let expires_at = response["expiresAt"]
             .as_u64()
             .and_then(|value| value.checked_mul(1000))
+            .filter(|expires| *expires > now() && *expires <= now() + 7 * 86_400_000)
             .ok_or("publication_response_unknown")?;
         let row = Publication {
             session_id: session_id.into(),
             workspace: path,
             title,
             upload_token,
+            revoke_token,
+            generation,
+            pending_upload: None,
             phase: "active".into(),
             expires_at,
             revision: 0,
@@ -678,7 +768,7 @@ impl Publications {
             .get(&publication_id)
             .ok_or("publication_unknown")?;
         Ok(
-            json!({"outcome":"publicationCreated","id":publication_id,"url":format!("https://fabrials.com/share/grok/{publication_id}"),"expiresAt":row.expires_at}),
+            json!({"outcome":"publicationCreated","id":publication_id,"url":format!("https://publications.fabrials.com/#{publication_id}"),"expiresAt":row.expires_at}),
         )
     }
     async fn stop(&self, publication_id: &str) -> Result<Value, String> {
@@ -695,15 +785,24 @@ impl Publications {
         row.phase = "pendingDelete".into();
         row.error = None;
         self.persist(&state)?;
-        let auth = Self::grant(&state)?;
+        let row = state
+            .publications
+            .get(publication_id)
+            .ok_or("publication_unknown")?;
+        let revoke_token = zeroize::Zeroizing::new(row.revoke_token.clone());
+        let request = if token(&revoke_token) {
+            self.client
+                .post(format!("{}/revoke", self.api))
+                .header("X-Publication-Id", publication_id)
+                .header("X-Publication-Revoke-Token", revoke_token.as_str())
+                .header("Origin", &self.web_origin)
+        } else {
+            let auth = Self::grant(&state)?;
+            self.authorized(reqwest::Method::DELETE, "/withdraw", &auth)
+                .header("X-Publication-Id", publication_id)
+        };
         drop(state);
-        let response = self
-            .request(self.authorized(
-                reqwest::Method::DELETE,
-                &format!("/{publication_id}"),
-                &auth,
-            ))
-            .await;
+        let response = self.request(request).await;
         let response = match response {
             Ok(value) => value,
             Err(error) => {
@@ -730,13 +829,15 @@ impl Publications {
             .ok_or("publication_unknown")?;
         row.phase = "revoked".into();
         row.upload_token.zeroize();
+        row.revoke_token.zeroize();
+        row.pending_upload = None;
         row.entry_hashes.clear();
         row.ordinals.clear();
         row.fingerprint.clear();
         row.image_hashes.clear();
         self.persist(&state)?;
         Ok(
-            json!({"outcome":"publicationStopped","accessRevoked":true,"keysDestroyed":true,"storageCleanup":response["storageCleanup"]}),
+            json!({"outcome":"publicationStopped","accessRevoked":true,"keysDestroyed":true,"metadataCleanup":response["metadataCleanup"],"storageCleanup":response["storageCleanup"]}),
         )
     }
     async fn upload(
@@ -775,24 +876,42 @@ impl Publications {
         let ordinals: Vec<u64> = (1..=hashes.len() as u64).collect();
         let high = row.high_water.max(hashes.len() as u64);
         document["ordinals"] = json!(ordinals);
-        row.revision = row
+        let revision = row
             .revision
             .checked_add(1)
             .ok_or("publication_revision_exhausted")?;
-        row.next_attempt = now() + 60_000;
-        let revision = row.revision;
-        let upload_token = zeroize::Zeroizing::new(row.upload_token.clone());
-        row.phase = "uploading".into();
-        row.high_water = high;
-        row.source_length = exported.source_length;
-        row.source_fingerprint = exported.source_fingerprint;
-        self.persist(&state)?;
-        drop(state);
         let bytes = serde_json::to_vec(&json!({"revision":revision,"document":document}))
             .map_err(|_| "publication_document_invalid")?;
+        if bytes.len() > 10 * 1024 * 1024 {
+            return Err("publication_document_too_large".into());
+        }
+        let pending = PendingUpload {
+            revision,
+            request_digest: digest(&bytes),
+            fingerprint,
+            entry_hashes: hashes,
+            ordinals,
+            high_water: high,
+            source_length: exported.source_length,
+            source_fingerprint: exported.source_fingerprint,
+        };
+        row.next_attempt = now() + 60_000;
+        let previous_revision = row.revision;
+        let generation = row.generation.clone();
+        if !id(&generation) {
+            return Err("publication_new_share_required".into());
+        }
+        let upload_token = zeroize::Zeroizing::new(row.upload_token.clone());
+        row.phase = "uploading".into();
+        row.pending_upload = Some(pending.clone());
+        self.persist(&state)?;
+        drop(state);
         let response = self
             .request(
-                self.authorized(reqwest::Method::PUT, &format!("/{publication_id}"), &auth)
+                self.authorized(reqwest::Method::PUT, "/upload", &auth)
+                    .header("X-Publication-Id", publication_id)
+                    .header("X-Publication-Generation", &generation)
+                    .header("X-Publication-Revision", previous_revision)
                     .header("X-Publication-Upload-Token", upload_token.as_str())
                     .header("Content-Type", "application/json")
                     .header("Content-Length", bytes.len())
@@ -805,36 +924,78 @@ impl Publications {
             .get_mut(publication_id)
             .ok_or("publication_unknown")?;
         match response {
-            Ok(response)
-                if response["revision"].as_u64() == Some(revision)
-                    && response["expiresAt"]
-                        .as_u64()
-                        .is_some_and(|value| value <= u64::MAX / 1000) =>
-            {
-                row.phase = "active".into();
-                row.fingerprint = fingerprint;
-                row.entry_hashes = hashes;
-                row.ordinals = ordinals;
-                row.high_water = high;
-                row.expires_at = response["expiresAt"].as_u64().unwrap() * 1000;
-                row.error = None;
+            Ok(response) if Self::acknowledged(row, &pending, &response) => {
+                Self::commit_upload(row, pending, &response);
                 self.persist(&state)
             }
             response => {
                 let error = response
                     .err()
                     .unwrap_or_else(|| "publication_response_unknown".into());
-                row.phase = if error == "publication_response_unknown" {
-                    "needsReview"
-                } else {
-                    "paused"
+                let uncertain = error == "publication_response_unknown"
+                    || error.contains("revision")
+                    || error.contains("generation");
+                row.phase = if uncertain { "needsReview" } else { "paused" }.into();
+                if !uncertain {
+                    row.pending_upload = None;
                 }
-                .into();
                 row.error = Some(error.clone());
                 self.persist(&state)?;
                 Err(error)
             }
         }
+    }
+    fn acknowledged(row: &Publication, pending: &PendingUpload, response: &Value) -> bool {
+        response["generation"].as_str() == Some(row.generation.as_str())
+            && response["revision"].as_u64() == Some(pending.revision)
+            && response["requestDigest"].as_str() == Some(pending.request_digest.as_str())
+            && response["expiresAt"]
+                .as_u64()
+                .and_then(|value| value.checked_mul(1000))
+                .is_some_and(|expires| expires > now() && expires <= now() + 7 * 86_400_000)
+    }
+    fn commit_upload(row: &mut Publication, pending: PendingUpload, response: &Value) {
+        row.phase = "active".into();
+        row.revision = pending.revision;
+        row.fingerprint = pending.fingerprint;
+        row.entry_hashes = pending.entry_hashes;
+        row.ordinals = pending.ordinals;
+        row.high_water = pending.high_water;
+        row.source_length = pending.source_length;
+        row.source_fingerprint = pending.source_fingerprint;
+        row.expires_at = response["expiresAt"].as_u64().expect("acknowledged expiry") * 1000;
+        row.pending_upload = None;
+        row.error = None;
+    }
+    async fn reconcile(&self, publication_id: &str) -> Result<(), String> {
+        let state = self.state.lock().await;
+        let row = state
+            .publications
+            .get(publication_id)
+            .ok_or("publication_unknown")?;
+        let Some(pending) = row.pending_upload.clone() else {
+            return Ok(());
+        };
+        let auth = Self::grant(&state)?;
+        drop(state);
+        let response = self
+            .request(
+                self.authorized(reqwest::Method::GET, "/status", &auth)
+                    .header("X-Publication-Id", publication_id),
+            )
+            .await?;
+        let mut state = self.state.lock().await;
+        let row = state
+            .publications
+            .get_mut(publication_id)
+            .ok_or("publication_unknown")?;
+        if response["id"].as_str() != Some(publication_id)
+            || !Self::acknowledged(row, &pending, &response)
+        {
+            return Err("publication_upload_unconfirmed".into());
+        }
+        Self::commit_upload(row, pending, &response);
+        self.persist(&state)
     }
     pub async fn sync(&self) -> Result<(), String> {
         self.sync_at(&fabrials_agent_host::session_catalog::grok_home())
@@ -937,43 +1098,61 @@ mod tests {
         Router,
         body::Bytes,
         extract::State as HttpState,
-        http::{HeaderMap, Method, StatusCode},
+        http::{HeaderMap, Method, StatusCode, Uri},
         routing::any,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
     struct Requests {
-        seen: Mutex<Vec<(Method, HeaderMap, Value)>>,
+        seen: Mutex<Vec<(Method, HeaderMap, Value, String)>>,
         reject: AtomicBool,
+        lose_reply: AtomicBool,
+        committed: Mutex<Value>,
     }
     async fn backend(
         HttpState(state): HttpState<Arc<Requests>>,
         method: Method,
+        uri: Uri,
         headers: HeaderMap,
         bytes: Bytes,
     ) -> (StatusCode, axum::Json<Value>) {
         let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        state
-            .seen
-            .lock()
-            .await
-            .push((method.clone(), headers, body.clone()));
+        state.seen.lock().await.push((
+            method.clone(),
+            headers.clone(),
+            body.clone(),
+            uri.to_string(),
+        ));
         if state.reject.load(Ordering::Relaxed) {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
                 axum::Json(json!({"error":"publication_paused_account_ingress_day","paused":true})),
             );
         }
-        let result = match method {
-            Method::POST => {
+        let result = match (method, uri.path()) {
+            (Method::POST, "/exchange") => {
                 json!({"grant":"g".repeat(43),"expiresAt":now()/1000+86400,"scope":"publications:write"})
             }
-            Method::PUT => {
-                json!({"revision":body["revision"],"expiresAt":now()/1000+604800,"highWater":body["document"]["ordinals"].as_array().and_then(|items|items.last())})
+            (Method::PUT, "/v1/upload") => {
+                let result = json!({"id":ID,"generation":headers["x-publication-generation"].to_str().unwrap(),"revision":body["revision"],"requestDigest":digest(&bytes),"expiresAt":now()/1000+604800,"highWater":body["document"]["ordinals"].as_array().and_then(|items|items.last())});
+                *state.committed.lock().await = result.clone();
+                if state.lose_reply.load(Ordering::Relaxed) {
+                    return (
+                        StatusCode::BAD_GATEWAY,
+                        axum::Json(json!({"error":"backend_unavailable"})),
+                    );
+                }
+                result
             }
-            Method::DELETE => {
-                json!({"accessRevoked":true,"keysDestroyed":true,"storageCleanup":"pending"})
+            (Method::GET, "/v1/status") => state.committed.lock().await.clone(),
+            (Method::POST, "/v1/revoke") | (Method::DELETE, "/v1/withdraw") => {
+                return (
+                    StatusCode::ACCEPTED,
+                    axum::Json(
+                        json!({"accessRevoked":true,"keysDestroyed":true,"metadataCleanup":"pending","storageCleanup":"pending"}),
+                    ),
+                );
             }
             _ => Value::Null,
         };
@@ -994,17 +1173,22 @@ mod tests {
             )
             .unwrap(),
         ));
-        let mut service =
-            Publications::new(&host, &temporary.path().join("state"), &"a".repeat(64)).unwrap();
+        let mut service = Publications::new(
+            &host,
+            &temporary.path().join("state"),
+            &"a".repeat(64),
+            "https://desktop.grok.me",
+        )
+        .unwrap();
         let requests = Arc::new(Requests {
             seen: Mutex::new(Vec::new()),
             reject: AtomicBool::new(false),
+            lose_reply: AtomicBool::new(false),
+            committed: Mutex::new(Value::Null),
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        service.api = format!(
-            "http://{}/api/spanreed/publications",
-            listener.local_addr().unwrap()
-        );
+        service.api = format!("http://{}/v1", listener.local_addr().unwrap());
+        service.exchange = format!("http://{}/exchange", listener.local_addr().unwrap());
         service.client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(2))
@@ -1031,6 +1215,9 @@ mod tests {
                 workspace: PathBuf::from("/synthetic"),
                 title: "Session".into(),
                 upload_token: "u".repeat(43),
+                revoke_token: "r".repeat(43),
+                generation: ID.into(),
+                pending_upload: None,
                 phase: "active".into(),
                 expires_at: now() + 300_000,
                 revision: 0,
@@ -1142,6 +1329,11 @@ mod tests {
         assert!(sent[0].1.contains_key("content-length"));
         assert_eq!(sent[0].1["x-publication-host-key"], "a".repeat(64));
         assert_eq!(sent[0].1["x-publication-upload-token"], "u".repeat(43));
+        assert_eq!(sent[0].1["x-publication-id"], ID);
+        assert_eq!(sent[0].1["x-publication-generation"], ID);
+        assert_eq!(sent[0].1["x-publication-revision"], "0");
+        assert_eq!(sent[0].1["origin"], "https://desktop.grok.me");
+        assert_eq!(sent[0].3, "/v1/upload");
         drop(sent);
         service
             .upload(ID, document(&["one", "two", "three"]))
@@ -1227,20 +1419,139 @@ mod tests {
             state.publications.get_mut(ID).unwrap().phase = "uploading".into();
             service.persist(&state).unwrap();
         }
-        let resumed = Publications::new(&host, &dir.path().join("state"), &"a".repeat(64)).unwrap();
+        let mut resumed = Publications::new(
+            &host,
+            &dir.path().join("state"),
+            &"a".repeat(64),
+            "https://desktop.grok.me",
+        )
+        .unwrap();
+        resumed.api = service.api.clone();
+        resumed.client = service.client.clone();
         assert_eq!(
             resumed.state.lock().await.publications[ID].phase,
             "needsReview"
         );
         resumed.state.lock().await.authorization = None;
+        assert_eq!(resumed.stop(ID).await.unwrap()["keysDestroyed"], true);
+        assert_eq!(resumed.state.lock().await.publications[ID].phase, "revoked");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn lost_upload_response_reconciles_exact_digest_without_reuploading() {
+        let (_dir, _host, service, requests, server) = service().await;
+        seed(&service).await;
+        requests.lose_reply.store(true, Ordering::Relaxed);
         assert_eq!(
-            resumed.stop(ID).await.unwrap_err(),
-            "publication_authorization_required"
+            service.upload(ID, document(&["one"])).await.unwrap_err(),
+            "publication_response_unknown"
         );
+        assert_eq!(service.state.lock().await.publications[ID].revision, 0);
         assert_eq!(
-            resumed.state.lock().await.publications[ID].phase,
-            "pendingDelete"
+            service.state.lock().await.publications[ID].phase,
+            "needsReview"
         );
+        service
+            .mutate(
+                "browser",
+                Operation::ResumePublication {
+                    publication_id: ID.into(),
+                },
+            )
+            .await
+            .unwrap();
+        let state = service.state.lock().await;
+        assert_eq!(state.publications[ID].revision, 1);
+        assert!(state.publications[ID].pending_upload.is_none());
+        drop(state);
+        let sent = requests.seen.lock().await;
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[1].0, Method::GET);
+        assert_eq!(sent[1].3, "/v1/status");
+        assert_eq!(sent[1].1["x-publication-id"], ID);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn uncertain_upload_never_adopts_other_content_or_generation() {
+        for field in ["requestDigest", "generation", "id", "revision"] {
+            let (_dir, _host, service, requests, server) = service().await;
+            seed(&service).await;
+            requests.lose_reply.store(true, Ordering::Relaxed);
+            service.upload(ID, document(&["one"])).await.unwrap_err();
+            requests.committed.lock().await[field] = json!("different");
+            assert_eq!(
+                service
+                    .mutate(
+                        "browser",
+                        Operation::ResumePublication {
+                            publication_id: ID.into()
+                        }
+                    )
+                    .await
+                    .unwrap_err(),
+                "publication_upload_unconfirmed"
+            );
+            assert_eq!(service.state.lock().await.publications[ID].revision, 0);
+            assert!(
+                service.state.lock().await.publications[ID]
+                    .pending_upload
+                    .is_some()
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_grant_cannot_prevent_revocation_and_token_never_reaches_browser() {
+        let (_dir, _host, service, requests, server) = service().await;
+        seed(&service).await;
+        service.state.lock().await.authorization = None;
+        let result = service.stop(ID).await.unwrap();
+        assert_eq!(result["keysDestroyed"], true);
+        assert_eq!(result["metadataCleanup"], "pending");
+        assert!(!result.to_string().contains(&"r".repeat(43)));
+        let sent = requests.seen.lock().await;
+        assert_eq!(sent[0].3, "/v1/revoke");
+        assert!(!sent[0].1.contains_key("authorization"));
+        assert!(!sent[0].1.contains_key("cookie"));
+        assert_eq!(sent[0].1["x-publication-revoke-token"], "r".repeat(43));
+        assert_eq!(sent[0].1["x-publication-id"], ID);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn qualification_origin_is_bound_into_pkce_and_exchange() {
+        let (_dir, _host, mut service, requests, server) = service().await;
+        service.web_origin = "https://grok.fabrials.com".into();
+        let begin = service
+            .mutate("browser", Operation::BeginPublicationAuthorization)
+            .await
+            .unwrap();
+        let url = reqwest::Url::parse(begin["url"].as_str().unwrap()).unwrap();
+        let fragment = reqwest::Url::parse(&format!(
+            "https://fabrials.com/?{}",
+            url.fragment().unwrap()
+        ))
+        .unwrap();
+        assert!(fragment.query_pairs().any(
+            |(key, value)| key == "publication_origin" && value == "https://grok.fabrials.com"
+        ));
+        service
+            .mutate(
+                "browser",
+                Operation::CompletePublicationAuthorization {
+                    code: "c".repeat(43),
+                    nonce: begin["nonce"].as_str().unwrap().into(),
+                },
+            )
+            .await
+            .unwrap();
+        let sent = requests.seen.lock().await;
+        assert_eq!(sent[0].1["origin"], "https://grok.fabrials.com");
+        assert_eq!(sent[0].2["clientOrigin"], "https://grok.fabrials.com");
+        assert_eq!(sent[0].2["returnPath"], "/");
         server.abort();
     }
 

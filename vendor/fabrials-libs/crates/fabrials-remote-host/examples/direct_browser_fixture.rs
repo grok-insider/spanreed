@@ -79,6 +79,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         queued: Vec::new(),
         opened_at_ms: fabrials_agent_host::now_ms(),
     })?;
+    let restored = fabrials_agent_host::session_catalog::rehydrate_session_async(
+        workspace.clone(),
+        "synthetic-direct-session".into(),
+    )
+    .await;
+    host.emit_event(
+        fabrials_agent_host::session_catalog::snapshot_from_rehydrate_with_runtime(
+            &grok_home,
+            Some(&workspace),
+            "synthetic-direct-session".into(),
+            restored,
+            Vec::new(),
+        ),
+        None,
+    )
+    .await;
+    let agent = if std::env::var("DIRECT_BROWSER_QA_ACP").as_deref() == Ok("1") {
+        let program = std::env::current_exe()?
+            .parent()
+            .ok_or("fixture location")?
+            .join(format!(
+                "fake_multiwriter_agent{}",
+                std::env::consts::EXE_SUFFIX
+            ));
+        let mut command = fabrials_agent_host::acp::AgentCommand::new(program.to_string_lossy())
+            .with_mode(fabrials_agent_host::acp::AgentMode::Shared);
+        command
+            .env
+            .push(("FAKE_MULTIWRITER_CATALOGUE".into(), "1".into()));
+        let (agent, events) = fabrials_agent_host::acp::AgentHandle::spawn(&command)?;
+        agent.initialize().await?;
+        let before = host.journal.lock().await.emitted_through();
+        host.attach_agent(agent.clone(), events);
+        tokio::time::timeout(Duration::from_secs(10),async {
+            loop {
+                if matches!(host.journal.lock().await.replay_after(before),fabrials_agent_host::journal::ReplayOutcome::Replay(events) if events.iter().any(|event|matches!(event.event,fabrials_agent_host::protocol::Event::WorkspacesChanged))) {break;}
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await?;
+        Some(agent)
+    } else {
+        None
+    };
     let listeners = fabrials_agent_host::server::bind(&host.origin).await?;
     let nonce = host
         .pairing
@@ -93,6 +136,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let serving = tokio::spawn(fabrials_agent_host::server::serve(listeners, host.clone()));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1800);
     while !directory.join("stop").exists() && tokio::time::Instant::now() < deadline {
+        if directory.join("pair-next").exists() {
+            std::fs::remove_file(directory.join("pair-next"))?;
+            let nonce = host
+                .pairing
+                .lock()
+                .await
+                .mint_nonce(fabrials_agent_host::now_ms())?;
+            write_private_json(
+                &directory,
+                "pair-next.json",
+                &json!({"endpoint":"https://direct-fixture.test","installationId":identity.install_id,"hostPublicKey":host_key,"nonce":nonce.expose(),"label":"Synthetic second client"}),
+            )?;
+        }
+        if let Some(agent) = &agent {
+            for (name, method) in [
+                ("release-turn", "test/release"),
+                ("disable-models", "test/disable_models"),
+            ] {
+                if let Ok(session_id) = std::fs::read_to_string(directory.join(name)) {
+                    std::fs::remove_file(directory.join(name))?;
+                    if session_id.trim().len() > 512 {
+                        return Err("invalid synthetic session".into());
+                    }
+                    agent
+                        .request(method, json!({"sessionId":session_id.trim()}))
+                        .await?;
+                }
+            }
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     host.request_shutdown();

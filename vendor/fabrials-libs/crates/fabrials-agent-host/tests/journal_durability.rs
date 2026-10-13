@@ -9,6 +9,7 @@
 use fabrials_agent_host::journal::{
     BeginOutcome, EffectState, InterruptCause, JOURNAL_FILE_NAME, Journal,
 };
+use fabrials_agent_host::protocol::Event;
 
 fn state_dir() -> tempfile::TempDir {
     tempfile::tempdir().expect("tempdir")
@@ -181,9 +182,35 @@ fn a_journal_from_an_unknown_version_is_not_guessed_at() {
     )
     .expect("write");
 
-    let journal = Journal::open(root.path()).expect("open");
-    assert!(journal.pending_reviews().is_empty());
-    assert_eq!(journal.effect_state("k-1"), None);
+    assert!(Journal::open(root.path()).is_err());
+    assert!(
+        std::fs::read_to_string(root.path().join(JOURNAL_FILE_NAME))
+            .unwrap()
+            .contains("99")
+    );
+}
+
+#[test]
+fn observation_epoch_survives_restarts_without_persisting_every_event() {
+    let root = state_dir();
+    let mut first = Journal::open(root.path()).unwrap();
+    for _ in 0..250 {
+        first.record_event(Event::WorkspacesChanged, None);
+    }
+    let first_epoch = first.observation_epoch();
+    assert_eq!(first_epoch, 1);
+    drop(first);
+    let mut second = Journal::open(root.path()).unwrap();
+    let event = second.record_event(Event::WorkspacesChanged, None);
+    assert_eq!(event.observation_epoch, first_epoch + 1);
+    assert_eq!(event.event_sequence, 1);
+}
+
+#[test]
+fn exhausted_observation_epoch_refuses_to_start() {
+    let root = state_dir();
+    std::fs::write(root.path().join(JOURNAL_FILE_NAME),r#"{"version":1,"observationEpoch":9007199254740991,"nextRecord":0,"effects":[],"interrupted":[]}"#).unwrap();
+    assert!(Journal::open(root.path()).is_err());
 }
 
 #[test]

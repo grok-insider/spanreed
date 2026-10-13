@@ -68,6 +68,9 @@ async fn the_loop_separates_responses_from_notifications() {
         tokio::time::timeout(std::time::Duration::from_secs(2), events.recv()).await
     {
         match event {
+            AgentEvent::Barrier(sender) => {
+                let _ = sender.send(());
+            }
             AgentEvent::Update(params) => {
                 if let Some(chunk) = params
                     .pointer("/update/content/text")
@@ -111,6 +114,9 @@ async fn a_permission_request_is_projected_and_answered_natively() {
         tokio::time::timeout(std::time::Duration::from_secs(3), events.recv()).await
     {
         match event {
+            AgentEvent::Barrier(sender) => {
+                let _ = sender.send(());
+            }
             AgentEvent::PermissionRequest { request_id, params } => {
                 let offered: Vec<String> = params
                     .get("options")

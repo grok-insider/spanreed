@@ -13,6 +13,8 @@ use crate::review::ChangeMode;
 pub const PROTOCOL_VERSION: u32 = 2;
 #[allow(missing_docs)]
 pub const CONTENT_PROTOCOL_VERSION: u32 = 3;
+#[allow(missing_docs)]
+pub const MULTI_WRITER_PROTOCOL_VERSION: u32 = 4;
 
 /// WebSocket subprotocol carrying the same version.
 pub const WS_SUBPROTOCOL: &str = "light.local.v1";
@@ -50,6 +52,59 @@ pub enum ProtocolError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Operation {
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    GetSessionExecution { session_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    GetSessionModels { session_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SetSessionConfiguration {
+        session_id: String,
+        expected_config_revision: u64,
+        #[serde(default)]
+        model_id: Option<String>,
+        #[serde(default)]
+        reasoning_effort: Option<String>,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SetQueuePaused {
+        session_id: String,
+        paused: bool,
+        expected_queue_revision: u64,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ClearQueuedPrompts {
+        session_id: String,
+        expected_queue_revision: u64,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    CancelSessionTurn {
+        session_id: String,
+        expected_turn_id: String,
+        queue_disposition: QueueDisposition,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ReviewUncertainTurn {
+        session_id: String,
+        expected_turn_id: String,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    InterruptAndEnqueue {
+        session_id: String,
+        expected_turn_id: String,
+        expected_queue_revision: u64,
+        text: String,
+        #[serde(default)]
+        image_ids: Vec<String>,
+    },
+
     #[allow(missing_docs)]
     #[serde(rename_all = "camelCase")]
     ReadImageChunk {
@@ -322,6 +377,14 @@ pub enum Operation {
     },
 }
 
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QueueDisposition {
+    Pause,
+    Continue,
+}
+
 impl Operation {
     /// Whether this operation can produce a side effect outside the host.
     ///
@@ -331,7 +394,13 @@ impl Operation {
     pub const fn has_side_effect(&self) -> bool {
         matches!(
             self,
-            Self::EnrollRemoteProject { .. }
+            Self::SetSessionConfiguration { .. }
+                | Self::SetQueuePaused { .. }
+                | Self::ClearQueuedPrompts { .. }
+                | Self::CancelSessionTurn { .. }
+                | Self::ReviewUncertainTurn { .. }
+                | Self::InterruptAndEnqueue { .. }
+                | Self::EnrollRemoteProject { .. }
                 | Self::RequestControlTransfer
                 | Self::CancelControlTransfer { .. }
                 | Self::ApproveControlTransfer { .. }
@@ -356,7 +425,13 @@ impl Operation {
     pub const fn requires_control(&self) -> bool {
         matches!(
             self,
-            Self::EnrollRemoteProject { .. }
+            Self::SetSessionConfiguration { .. }
+                | Self::SetQueuePaused { .. }
+                | Self::ClearQueuedPrompts { .. }
+                | Self::CancelSessionTurn { .. }
+                | Self::ReviewUncertainTurn { .. }
+                | Self::InterruptAndEnqueue { .. }
+                | Self::EnrollRemoteProject { .. }
                 | Self::ApproveControlTransfer { .. }
                 | Self::AnswerInteraction { .. }
                 | Self::Prompt { .. }
@@ -388,6 +463,14 @@ impl Operation {
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::GetSessionExecution { .. } => "GetSessionExecution",
+            Self::GetSessionModels { .. } => "GetSessionModels",
+            Self::SetSessionConfiguration { .. } => "SetSessionConfiguration",
+            Self::SetQueuePaused { .. } => "SetQueuePaused",
+            Self::ClearQueuedPrompts { .. } => "ClearQueuedPrompts",
+            Self::CancelSessionTurn { .. } => "CancelSessionTurn",
+            Self::ReviewUncertainTurn { .. } => "ReviewUncertainTurn",
+            Self::InterruptAndEnqueue { .. } => "InterruptAndEnqueue",
             Self::ReadImageChunk { .. } => "ReadImageChunk",
             Self::StartImageUpload { .. } => "StartImageUpload",
             Self::AppendImageUpload { .. } => "AppendImageUpload",
@@ -439,7 +522,15 @@ impl Operation {
 /// Used to turn a name read back from disk into the same `'static` string the
 /// running host uses, so a stored record cannot introduce an operation this
 /// build does not have.
-pub const OPERATION_NAMES: [&str; 42] = [
+pub const OPERATION_NAMES: [&str; 50] = [
+    "GetSessionExecution",
+    "GetSessionModels",
+    "SetSessionConfiguration",
+    "SetQueuePaused",
+    "ClearQueuedPrompts",
+    "CancelSessionTurn",
+    "ReviewUncertainTurn",
+    "InterruptAndEnqueue",
     "ReadImageChunk",
     "StartImageUpload",
     "AppendImageUpload",
@@ -532,6 +623,7 @@ impl CommandEnvelope {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.protocol_version != PROTOCOL_VERSION
             && self.protocol_version != CONTENT_PROTOCOL_VERSION
+            && self.protocol_version != MULTI_WRITER_PROTOCOL_VERSION
         {
             return Err(ProtocolError::UnsupportedVersion);
         }
@@ -539,16 +631,49 @@ impl CommandEnvelope {
         if let Some(key) = &self.idempotency_key {
             check_id(key, "idempotencyKey")?;
         }
-        if self.operation.has_side_effect() && self.idempotency_key.is_none() {
+        if (self.operation.has_side_effect()
+            || self.protocol_version == MULTI_WRITER_PROTOCOL_VERSION
+                && matches!(self.operation, Operation::RemoveQueued { .. }))
+            && self.idempotency_key.is_none()
+        {
             return Err(ProtocolError::MissingIdempotencyKey);
         }
-        if self.operation.requires_control() && self.controller_epoch.is_none() {
+        if self.protocol_version != MULTI_WRITER_PROTOCOL_VERSION
+            && self.operation.requires_control()
+            && self.controller_epoch.is_none()
+        {
             return Err(ProtocolError::MissingControllerEpoch);
         }
         if self.deadline_ms.is_some_and(|ms| ms > MAX_DEADLINE_MS) {
             return Err(ProtocolError::DeadlineTooLarge);
         }
         match &self.operation {
+            Operation::GetSessionExecution { session_id }
+            | Operation::GetSessionModels { session_id }
+            | Operation::SetSessionConfiguration { session_id, .. }
+            | Operation::SetQueuePaused { session_id, .. }
+            | Operation::ClearQueuedPrompts { session_id, .. }
+            | Operation::CancelSessionTurn { session_id, .. }
+            | Operation::ReviewUncertainTurn { session_id, .. }
+            | Operation::InterruptAndEnqueue { session_id, .. } => {
+                if self.protocol_version != MULTI_WRITER_PROTOCOL_VERSION {
+                    return Err(ProtocolError::UnsupportedVersion);
+                }
+                check_id(session_id, "sessionId")?;
+                match &self.operation {
+                    Operation::CancelSessionTurn {
+                        expected_turn_id, ..
+                    }
+                    | Operation::ReviewUncertainTurn {
+                        expected_turn_id, ..
+                    }
+                    | Operation::InterruptAndEnqueue {
+                        expected_turn_id, ..
+                    } => check_id(expected_turn_id, "expectedTurnId")?,
+                    _ => {}
+                }
+            }
+
             Operation::ReadImageChunk {
                 session_id, sha256, ..
             } => {
@@ -732,7 +857,9 @@ impl CommandEnvelope {
     }
 
     fn require_content_version(&self) -> Result<(), ProtocolError> {
-        if self.protocol_version == CONTENT_PROTOCOL_VERSION {
+        if self.protocol_version == CONTENT_PROTOCOL_VERSION
+            || self.protocol_version == MULTI_WRITER_PROTOCOL_VERSION
+        {
             Ok(())
         } else {
             Err(ProtocolError::UnsupportedVersion)
@@ -757,6 +884,12 @@ fn check_id(value: &str, field: &'static str) -> Result<(), ProtocolError> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Event {
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SessionModelsChanged { session_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SessionExecutionChanged { session_id: String },
     #[allow(missing_docs)]
     #[serde(rename_all = "camelCase")]
     MessageImage {
@@ -1240,6 +1373,9 @@ pub struct CommandProjection {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventEnvelope {
+    #[allow(missing_docs)]
+    #[serde(default)]
+    pub observation_epoch: u64,
     /// Wire version.
     pub protocol_version: u32,
     /// Monotonic sequence within a connection lineage.
@@ -1302,7 +1438,7 @@ mod tests {
     #[test]
     fn wrong_version_is_rejected() {
         let mut env = envelope(Operation::Bootstrap);
-        env.protocol_version = super::CONTENT_PROTOCOL_VERSION + 1;
+        env.protocol_version = super::MULTI_WRITER_PROTOCOL_VERSION + 1;
         assert_eq!(env.validate(), Err(ProtocolError::UnsupportedVersion));
     }
 
@@ -1496,6 +1632,7 @@ mod tests {
     #[test]
     fn event_envelope_round_trips() {
         let env = EventEnvelope {
+            observation_epoch: 3,
             protocol_version: PROTOCOL_VERSION,
             event_sequence: 9,
             session_revision: Some(2),

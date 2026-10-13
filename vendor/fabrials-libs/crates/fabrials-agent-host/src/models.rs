@@ -1,9 +1,4 @@
-//! Grok-only model catalog projection for Light.
-//!
-//! Reads the user's `models_cache.json` under GROK_HOME (same store the CLI
-//! uses) and projects only models Light may offer: Grok / xAI / SpaceXAI /
-//! grok-build family. Never third-party providers. Credentials in the cache
-//! are never projected.
+#![allow(missing_docs)]
 
 use std::fs;
 use std::path::Path;
@@ -13,6 +8,207 @@ use serde_json::Value;
 
 use crate::bounds::MAX_MODELS;
 use crate::session_catalog::grok_home;
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionModelState {
+    pub revision: u64,
+    pub source: &'static str,
+    pub current_model: Option<String>,
+    pub selectable_models: Vec<ModelProjection>,
+    pub current_effort: Option<String>,
+    pub effort_options: Vec<EffortOption>,
+    pub can_set_model: bool,
+    pub can_set_effort: bool,
+    pub uncertain: bool,
+    #[serde(skip)]
+    pub use_model_config: bool,
+}
+
+impl Default for SessionModelState {
+    fn default() -> Self {
+        Self {
+            revision: 0,
+            source: "unavailable",
+            current_model: None,
+            selectable_models: Vec::new(),
+            current_effort: None,
+            effort_options: Vec::new(),
+            can_set_model: false,
+            can_set_effort: false,
+            uncertain: false,
+            use_model_config: false,
+        }
+    }
+}
+
+fn live_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control))
+        .map(str::to_owned)
+}
+
+fn live_options(value: Option<&Value>, limit: usize) -> Vec<EffortOption> {
+    let mut values = Vec::new();
+    if let Some(options) = value.and_then(Value::as_array) {
+        for option in options.iter().take(limit) {
+            let choices = option
+                .get("options")
+                .and_then(Value::as_array)
+                .map_or_else(|| std::slice::from_ref(option), Vec::as_slice);
+            for choice in choices.iter().take(limit) {
+                let Some(id) = live_string(choice.get("value")) else {
+                    continue;
+                };
+                if values.iter().any(|old: &EffortOption| old.id == id) {
+                    continue;
+                }
+                let label = live_string(choice.get("name")).unwrap_or_else(|| id.clone());
+                values.push(EffortOption { id, label });
+                if values.len() >= limit {
+                    return values;
+                }
+            }
+        }
+    }
+    values
+}
+
+#[allow(missing_docs)]
+impl SessionModelState {
+    pub fn capture(&mut self, value: &Value) -> bool {
+        let previous = self.clone();
+        if let Some(available) = value
+            .pointer("/models/availableModels")
+            .and_then(Value::as_array)
+        {
+            self.selectable_models.clear();
+            for entry in available.iter().take(128) {
+                let Some(id) = live_string(entry.get("modelId")) else {
+                    continue;
+                };
+                if self.selectable_models.iter().any(|model| model.id == id) {
+                    continue;
+                }
+                self.selectable_models.push(ModelProjection {
+                    name: live_string(entry.get("name")).unwrap_or_else(|| id.clone()),
+                    id,
+                    supports_reasoning_effort: false,
+                    reasoning_efforts: Vec::new(),
+                    default_effort: None,
+                });
+            }
+            self.source = "live";
+            self.can_set_model = !self.selectable_models.is_empty();
+        }
+        if let Some(model) = live_string(
+            value
+                .pointer("/_meta/x.ai~1sessionDetail/currentModelId")
+                .or_else(|| value.pointer("/models/currentModelId")),
+        ) {
+            if self.current_model.as_ref() != Some(&model) {
+                self.current_effort = None;
+                self.effort_options.clear();
+                self.can_set_effort = false;
+            }
+            self.current_model = Some(model);
+        }
+        if let Some(options) = value.get("configOptions").and_then(Value::as_array) {
+            self.use_model_config = false;
+            self.uncertain = false;
+            self.current_effort = None;
+            self.effort_options.clear();
+            self.can_set_effort = false;
+            for option in options.iter().take(64) {
+                match option.get("id").and_then(Value::as_str) {
+                    Some("model") => {
+                        self.use_model_config = true;
+                        if let Some(model) = live_string(option.get("currentValue")) {
+                            self.current_model = Some(model);
+                        }
+                        let models = live_options(option.get("options"), 128);
+                        self.selectable_models = models
+                            .into_iter()
+                            .map(|option| ModelProjection {
+                                id: option.id,
+                                name: option.label,
+                                supports_reasoning_effort: false,
+                                reasoning_efforts: Vec::new(),
+                                default_effort: None,
+                            })
+                            .collect();
+                        self.source = "live";
+                        self.can_set_model = !self.selectable_models.is_empty();
+                    }
+                    Some("reasoning_effort") => {
+                        self.current_effort = live_string(option.get("currentValue"));
+                        self.effort_options = live_options(option.get("options"), 64);
+                        self.can_set_effort = !self.effort_options.is_empty();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for model in &mut self.selectable_models {
+            let current = Some(&model.id) == self.current_model.as_ref();
+            model.supports_reasoning_effort = current && self.can_set_effort;
+            model.reasoning_efforts = if current {
+                self.effort_options.clone()
+            } else {
+                Vec::new()
+            };
+            model.default_effort = None;
+        }
+        if *self != previous {
+            self.revision = previous.revision.saturating_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn capture_update(&mut self, value: &Value) -> bool {
+        let update = value.get("update").unwrap_or(value);
+        match update.get("sessionUpdate").and_then(Value::as_str) {
+            Some("config_option_update") => self.capture(update),
+            Some("model_changed") => {
+                let Some(model) = live_string(
+                    update
+                        .get("model_id")
+                        .or_else(|| update.get("currentModelId")),
+                ) else {
+                    return false;
+                };
+                let previous = self.clone();
+                if self.current_model.as_ref() != Some(&model) {
+                    self.effort_options.clear();
+                    self.can_set_effort = false;
+                }
+                self.current_model = Some(model);
+                self.current_effort = live_string(update.get("reasoning_effort"));
+                self.uncertain = false;
+                for model in &mut self.selectable_models {
+                    let current = Some(&model.id) == self.current_model.as_ref();
+                    model.supports_reasoning_effort = current && self.can_set_effort;
+                    model.reasoning_efforts = if current {
+                        self.effort_options.clone()
+                    } else {
+                        Vec::new()
+                    };
+                }
+                if *self != previous {
+                    self.revision = previous.revision.saturating_add(1);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+}
 
 /// One selectable model as the browser may see it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -189,6 +385,55 @@ mod tests {
     use super::{is_grok_model_id, list_models_in};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn live_catalogue_preserves_custom_models_and_only_current_efforts() {
+        let mut state = super::SessionModelState::default();
+        let response = serde_json::json!({"models":{"currentModelId":"relay/custom","availableModels":[{"modelId":"grok-live","name":"Grok"},{"modelId":"relay/custom","name":"Custom"},{"modelId":"relay/custom","name":"Duplicate"}]},"configOptions":[{"id":"reasoning_effort","currentValue":"balanced","options":[{"group":"custom","options":[{"value":"balanced","name":"Balanced"},{"value":"high","name":"High"}]}]}]});
+        assert!(state.capture(&response));
+        assert_eq!(state.selectable_models.len(), 2);
+        assert_eq!(state.current_model.as_deref(), Some("relay/custom"));
+        assert_eq!(state.effort_options.len(), 2);
+        assert!(!state.selectable_models[0].supports_reasoning_effort);
+        assert!(state.selectable_models[1].supports_reasoning_effort);
+        let revision = state.revision;
+        assert!(!state.capture(&response));
+        assert_eq!(state.revision, revision);
+        assert!(state.capture_update(
+            &serde_json::json!({"update":{"sessionUpdate":"model_changed","model_id":"grok-live"}})
+        ));
+        assert!(state.current_effort.is_none());
+        assert!(state.effort_options.is_empty());
+        assert!(
+            state
+                .selectable_models
+                .iter()
+                .all(|model| model.reasoning_efforts.is_empty())
+        );
+    }
+
+    #[test]
+    fn advertised_empty_model_options_remove_the_previous_selectable_catalogue() {
+        let mut state = super::SessionModelState::default();
+        state.capture(&serde_json::json!({"configOptions":[{"id":"model","currentValue":"custom/model","options":[{"value":"custom/model","name":"Live custom"}]}]}));
+        assert!(state.use_model_config && state.can_set_model);
+        state.capture(&serde_json::json!({"configOptions":[{"id":"model","currentValue":"custom/model","options":[]}]}));
+        assert!(!state.can_set_model);
+        assert!(state.selectable_models.is_empty());
+        assert_eq!(state.current_model.as_deref(), Some("custom/model"));
+    }
+
+    #[test]
+    fn bounded_live_catalogue_never_projects_credentials_or_invalid_identifiers() {
+        let mut state = super::SessionModelState::default();
+        let mut models: Vec<_> = (0..150).map(|index| serde_json::json!({"modelId":format!("provider/{index}"),"apiKey":"synthetic-secret"})).collect();
+        models[0]["modelId"] = serde_json::json!("invalid\nvalue");
+        state.capture(&serde_json::json!({"models":{"availableModels":models}}));
+        assert_eq!(state.selectable_models.len(), 127);
+        let wire = serde_json::to_string(&state).unwrap();
+        assert!(!wire.contains("synthetic-secret"));
+        assert!(!wire.contains("invalid"));
+    }
 
     #[test]
     fn grok_ids_pass_and_foreign_fail() {

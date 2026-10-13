@@ -198,7 +198,7 @@ mod tests {
 
     fn envelope(operation: Operation, epoch: u64, key: &str) -> CommandEnvelope {
         CommandEnvelope {
-            protocol_version: crate::protocol::CONTENT_PROTOCOL_VERSION,
+            protocol_version: crate::protocol::MULTI_WRITER_PROTOCOL_VERSION,
             request_id: key.into(),
             idempotency_key: Some(key.into()),
             controller_epoch: Some(epoch),
@@ -277,7 +277,7 @@ mod tests {
         .await
         .unwrap();
         let access = pair(&state).await;
-        let epoch = access.connect().await.unwrap();
+        let epoch = access.connect_version(4).await.unwrap();
         let bytes = png();
         let reply = access
             .command(envelope(
@@ -302,13 +302,13 @@ mod tests {
             data: base64::engine::general_purpose::STANDARD.encode(&bytes),
         };
         let observer = pair(&state).await;
-        assert!(observer.connect().await.is_err());
+        assert!(observer.connect_version(4).await.is_ok());
         assert_eq!(
             observer
                 .command(envelope(chunk.clone(), epoch, "foreign-chunk"))
                 .await
                 .status,
-            409
+            422
         );
         assert_eq!(
             access.command(envelope(chunk, epoch, "chunk")).await.status,
@@ -359,7 +359,6 @@ mod tests {
         })
         .await
         .unwrap();
-        let before = state.journal.lock().await.emitted_through();
         assert_eq!(
             access
                 .command(envelope(operation.clone(), epoch, "image-turn"))
@@ -367,7 +366,6 @@ mod tests {
                 .status,
             202
         );
-        assert_eq!(state.journal.lock().await.emitted_through(), before);
         let ReplayOutcome::Replay(events) = access.events(0).await.unwrap() else {
             panic!("events")
         };
@@ -421,7 +419,10 @@ mod tests {
         );
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
             loop {
-                if !state.session.lock().await.sessions["s-1"].queued.is_empty() {
+                if state.execution.lock().await.snapshot("s-1")["queue"]
+                    .as_array()
+                    .is_some_and(|entries| !entries.is_empty())
+                {
                     break;
                 }
                 tokio::task::yield_now().await;

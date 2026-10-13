@@ -66,7 +66,15 @@ impl Running {
     fn events_url(&self) -> String {
         // Connect via 127.0.0.1: Windows CI does not resolve `*.localhost` to
         // loopback (WSAHOST_NOT_FOUND). Host header still carries the origin.
-        format!("ws://127.0.0.1:{}/events", self.port)
+        format!(
+            "ws://127.0.0.1:{}/events{}",
+            self.port,
+            if self.state.agent_mode == AgentMode::Shared {
+                "?protocolVersion=4"
+            } else {
+                ""
+            }
+        )
     }
 }
 
@@ -343,7 +351,7 @@ async fn command_response(
             request
                 .body(Body::from(
                     json!({
-                        "protocolVersion": PROTOCOL_VERSION,
+                        "protocolVersion": if running.state.agent_mode==AgentMode::Shared {4}else{PROTOCOL_VERSION},
                         "requestId": key,
                         "idempotencyKey": key,
                         "controllerEpoch": epoch,
@@ -370,364 +378,130 @@ async fn command_response(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shared_observer_receives_events_but_cannot_borrow_control() {
+async fn two_shared_websockets_are_writable_and_reconnecting_does_not_reset_the_other() {
     let running = start_mode(AgentMode::Shared).await;
-    let grant = pair_grant(&running).await;
-    let cookie = format!("gl_session={}", grant.session_token.expose());
-    let mut owner = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
+    let phone = pair_grant(&running).await;
+    let desktop = pair_grant(&running).await;
+    let cookie = |grant: &PairedBrowser| format!("gl_session={}", grant.session_token.expose());
+    let mut first = connect(&running, Some(&cookie(&phone)), Some(WS_SUBPROTOCOL))
         .await
-        .expect("owner");
-    let (epoch, token) = control(&frame(&mut owner).await);
-    let mut observer = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
-        .await
-        .expect("observer");
-    let hello = frame(&mut observer).await;
-    assert_eq!(hello["event"]["state"], "watching");
-    assert!(hello["event"].get("controllerToken").is_none());
-    observer
-        .send(Message::Text("heartbeat".into()))
-        .await
-        .expect("observer heartbeat");
-    let emitted = running
-        .state
-        .emit_event(Event::WorkspacesChanged, None)
-        .await;
-    loop {
-        let received = frame(&mut observer).await;
-        assert!(received["event"].get("controllerToken").is_none());
-        if received["eventSequence"] == emitted.event_sequence {
-            assert_eq!(received["event"]["kind"], "workspacesChanged");
-            break;
-        }
-    }
-    for borrowed in [
-        None,
-        Some("conn-1"),
-        Some("remote-1"),
-        Some("wrong-controller"),
-    ] {
-        assert_eq!(
-            command(
-                &running,
-                &grant,
-                epoch,
-                borrowed,
-                json!({"kind":"openWorkspacePicker"}),
-                "denied"
-            )
-            .await,
-            StatusCode::CONFLICT
-        );
-        assert!(!running.state.session.lock().await.picker_open);
-    }
-    let other_grant = pair_grant(&running).await;
-    assert_eq!(
-        command(
-            &running,
-            &other_grant,
-            epoch,
-            Some(&token),
-            json!({"kind":"openWorkspacePicker"}),
-            "foreign-session"
-        )
-        .await,
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        command(
-            &running,
-            &grant,
-            epoch,
-            None,
-            json!({"kind":"listWorkspaces"}),
-            "read"
-        )
-        .await,
-        StatusCode::ACCEPTED
-    );
-    assert_eq!(
-        command(
-            &running,
-            &grant,
-            epoch,
-            Some(&token),
-            json!({"kind":"openWorkspacePicker"}),
-            "owner"
-        )
-        .await,
-        StatusCode::ACCEPTED
-    );
-    drop(observer);
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert_eq!(running.state.lease.lock().await.epoch(), epoch);
-    assert_eq!(
-        running.state.lease.lock().await.state(now_ms()),
-        LeaseState::Held
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shared_observer_reconnects_for_control_with_new_epoch_and_token() {
-    let running = start_mode(AgentMode::Shared).await;
-    let grant = pair_grant(&running).await;
-    let cookie = format!("gl_session={}", grant.session_token.expose());
-    let mut owner = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
-        .await
-        .expect("owner");
-    let (old_epoch, old_token) = control(&frame(&mut owner).await);
-    let mut observer = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
-        .await
-        .expect("observer");
-    assert_eq!(frame(&mut observer).await["event"]["state"], "watching");
+        .unwrap();
+    assert_eq!(frame(&mut first).await["event"]["state"], "writable");
     running
         .state
-        .journal
-        .lock()
-        .await
-        .begin("inflight", "Prompt", Some("session"));
-    drop(owner);
-    tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        while running.state.lease.lock().await.state(now_ms()) != LeaseState::Vacant {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("lease released");
-    assert!(
-        running
-            .state
-            .journal
-            .lock()
-            .await
-            .pending_reviews()
-            .is_empty()
-    );
-    let emitted = running
-        .state
-        .emit_event(Event::WorkspacesChanged, None)
+        .emit_event(
+            Event::MessageDelta {
+                session_id: "one".into(),
+                text: "live".into(),
+            },
+            None,
+        )
         .await;
+    let before = running.state.journal.lock().await.emitted_through();
+    let mut second = connect(&running, Some(&cookie(&desktop)), Some(WS_SUBPROTOCOL))
+        .await
+        .unwrap();
+    let hello = frame(&mut second).await;
+    assert_eq!(hello["event"]["state"], "writable");
+    assert!(hello["event"].get("controllerToken").is_none());
+    let mut snapshots = 0;
     loop {
-        let received = frame(&mut observer).await;
-        assert!(received["event"].get("controllerToken").is_none());
-        if received["eventSequence"] == emitted.event_sequence {
+        let event = frame(&mut second).await;
+        if event["event"]["kind"] == "sessionSnapshot" {
+            snapshots += 1;
+            assert_eq!(event["event"]["messages"][0]["text"], "live");
+        }
+        if event["event"]["kind"] == "workspacesChanged" {
             break;
         }
     }
-    drop(observer);
-    let mut next = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
+    assert_eq!(snapshots, 1);
+    assert_eq!(running.state.journal.lock().await.emitted_through(), before);
+    assert_eq!(
+        running.state.lease.lock().await.state(now_ms()),
+        LeaseState::Vacant
+    );
+    drop(first);
+    second
+        .send(Message::Text("heartbeat".into()))
         .await
-        .expect("handover");
-    let (epoch, token) = control(&frame(&mut next).await);
-    assert!(epoch > old_epoch);
-    assert_ne!(token, old_token);
-    for (candidate_epoch, candidate_token) in [
-        (old_epoch, old_token.as_str()),
-        (epoch, old_token.as_str()),
-        (old_epoch, token.as_str()),
-    ] {
-        assert_eq!(
-            command(
-                &running,
-                &grant,
-                candidate_epoch,
-                Some(candidate_token),
-                json!({"kind":"openWorkspacePicker"}),
-                "stale"
-            )
-            .await,
-            StatusCode::CONFLICT
-        );
-    }
+        .unwrap();
     assert_eq!(
         command(
             &running,
-            &grant,
-            epoch,
-            Some(&token),
-            json!({"kind":"openWorkspacePicker"}),
-            "new-owner"
+            &desktop,
+            0,
+            None,
+            json!({"kind":"bootstrap"}),
+            "after-disconnect"
         )
         .await,
         StatusCode::ACCEPTED
     );
+    running.state.request_shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn revoking_a_shared_observer_closes_its_socket_without_releasing_owner() {
+async fn revoking_one_shared_writer_closes_only_its_socket() {
     let running = start_mode(AgentMode::Shared).await;
-    let grant = pair_grant(&running).await;
-    let observer_grant = pair_grant(&running).await;
-    let cookie = format!("gl_session={}", grant.session_token.expose());
-    let observer_cookie = format!("gl_session={}", observer_grant.session_token.expose());
-    let mut owner = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
+    let owner = pair_grant(&running).await;
+    let revoked = pair_grant(&running).await;
+    let cookie = |grant: &PairedBrowser| format!("gl_session={}", grant.session_token.expose());
+    let mut first = connect(&running, Some(&cookie(&owner)), Some(WS_SUBPROTOCOL))
         .await
-        .expect("owner");
-    let (epoch, token) = control(&frame(&mut owner).await);
-    let mut observer = connect(&running, Some(&observer_cookie), Some(WS_SUBPROTOCOL))
+        .unwrap();
+    let mut second = connect(&running, Some(&cookie(&revoked)), Some(WS_SUBPROTOCOL))
         .await
-        .expect("observer");
-    assert_eq!(frame(&mut observer).await["event"]["state"], "watching");
+        .unwrap();
+    assert_eq!(frame(&mut first).await["event"]["state"], "writable");
+    assert_eq!(frame(&mut second).await["event"]["state"], "writable");
     assert_eq!(
         command(
             &running,
-            &grant,
-            epoch,
-            Some(&token),
-            json!({"kind":"revokeBrowserPairing", "sessionId":observer_grant.session_id}),
+            &owner,
+            0,
+            None,
+            json!({"kind":"revokeBrowserPairing","sessionId":revoked.session_id}),
             "revoke"
         )
         .await,
         StatusCode::ACCEPTED
     );
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        while let Some(Ok(message)) = observer.next().await {
+        while let Some(Ok(message)) = second.next().await {
             if matches!(message, Message::Close(_)) {
                 break;
             }
         }
     })
     .await
-    .expect("revoked observer closed");
-    assert_eq!(running.state.lease.lock().await.epoch(), epoch);
-    assert_eq!(
-        running.state.lease.lock().await.state(now_ms()),
-        LeaseState::Held
-    );
+    .unwrap();
     assert_eq!(
         command(
             &running,
-            &observer_grant,
-            epoch,
+            &revoked,
+            0,
             None,
-            json!({"kind":"listWorkspaces"}),
+            json!({"kind":"bootstrap"}),
             "revoked-read"
         )
         .await,
         StatusCode::FORBIDDEN
     );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn private_transfer_targets_tokens_and_preserves_both_sockets() {
-    for mode in [AgentMode::Shared] {
-        let running = start_configuration(
-            mode,
-            fabrials_agent_host::remote_management::RemoteExperiments {
-                control_transfer: true,
-                device_panel: true,
-                projects: false,
-            },
-        )
-        .await;
-        let grant = pair_grant(&running).await;
-        let cookie = format!("gl_session={}", grant.session_token.expose());
-        let mut owner = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
-            .await
-            .unwrap();
-        let (epoch, owner_token) = control(&frame(&mut owner).await);
-        let mut observer = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
-            .await
-            .unwrap();
-        let hello = frame(&mut observer).await;
-        assert_eq!(hello["event"]["state"], "watching");
-        let observer_token = hello["event"]["controllerToken"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        assert_ne!(observer_token, owner_token);
-        let (status, requested) = command_response(
+    assert_eq!(
+        command(
             &running,
-            &grant,
+            &owner,
             0,
-            Some(&observer_token),
-            json!({"kind":"requestControlTransfer"}),
-            "request-transfer",
+            None,
+            json!({"kind":"bootstrap"}),
+            "owner-read"
         )
-        .await;
-        assert_eq!(status, StatusCode::ACCEPTED, "{requested}");
-        let request_id = requested["result"]["request"]["requestId"]
-            .as_str()
-            .unwrap();
-        assert_eq!(
-            command(
-                &running,
-                &grant,
-                epoch,
-                Some(&owner_token),
-                json!({"kind":"approveControlTransfer","requestId":request_id}),
-                "approve-transfer"
-            )
-            .await,
-            StatusCode::ACCEPTED
-        );
-        loop {
-            let received = frame(&mut owner).await;
-            if received["event"]["kind"] == "hostStatus" {
-                assert_eq!(received["event"]["state"], "watching");
-                assert_eq!(received["event"]["controllerToken"], owner_token);
-                assert!(!received.to_string().contains(&observer_token));
-                break;
-            }
-        }
-        loop {
-            let received = frame(&mut observer).await;
-            if received["event"]["kind"] == "hostStatus" {
-                let (new_epoch, new_token) = control(&received);
-                assert_eq!(new_epoch, epoch + 1);
-                assert_eq!(new_token, observer_token);
-                assert!(!received.to_string().contains(&owner_token));
-                break;
-            }
-        }
-        assert_eq!(
-            command(
-                &running,
-                &grant,
-                epoch + 1,
-                Some(&owner_token),
-                json!({"kind":"openWorkspacePicker"}),
-                "borrow-epoch"
-            )
-            .await,
-            StatusCode::CONFLICT
-        );
-        owner.send(Message::Text("heartbeat".into())).await.unwrap();
-        running
-            .state
-            .journal
-            .lock()
-            .await
-            .begin("in-flight-transfer", "Prompt", Some("session"));
-        drop(owner);
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert!(
-            running
-                .state
-                .journal
-                .lock()
-                .await
-                .pending_reviews()
-                .is_empty()
-        );
-        assert_eq!(
-            running.state.lease.lock().await.state(now_ms()),
-            LeaseState::Held
-        );
-        assert_eq!(
-            command(
-                &running,
-                &grant,
-                epoch + 1,
-                Some(&observer_token),
-                json!({"kind":"openWorkspacePicker"}),
-                "new-controller"
-            )
-            .await,
-            StatusCode::ACCEPTED
-        );
-        drop(observer);
-        running.state.request_shutdown();
-    }
+        .await,
+        StatusCode::ACCEPTED
+    );
+    first.send(Message::Text("heartbeat".into())).await.unwrap();
+    running.state.request_shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -806,7 +580,7 @@ async fn network_command(
     key: &str,
 ) -> (StatusCode, Value) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let body = json!({"protocolVersion":PROTOCOL_VERSION,"requestId":key,"idempotencyKey":key,"controllerEpoch":epoch,"operation":operation}).to_string();
+    let body = json!({"protocolVersion":if running.state.agent_mode==AgentMode::Shared {4}else{PROTOCOL_VERSION},"requestId":key,"idempotencyKey":key,"controllerEpoch":epoch,"operation":operation}).to_string();
     let request = format!(
         "POST /command HTTP/1.1\r\nHost: {}\r\nOrigin: {}\r\nCookie: gl_session={}\r\n{}: {}\r\n{}: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         running.host(),
@@ -850,174 +624,74 @@ async fn network_command(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fifty_real_http_websocket_transfers_preserve_authority_and_meet_latency_gate() {
-    let running = start_configuration(
-        AgentMode::Shared,
-        fabrials_agent_host::remote_management::RemoteExperiments {
-            control_transfer: true,
-            device_panel: true,
-            projects: false,
-        },
-    )
-    .await;
-    let mut owner_grant = pair_grant(&running).await;
-    let mut observer_grant = pair_grant(&running).await;
-    let owner_cookie = format!("gl_session={}", owner_grant.session_token.expose());
-    let observer_cookie = format!("gl_session={}", observer_grant.session_token.expose());
-    let mut owner = connect(&running, Some(&owner_cookie), Some(WS_SUBPROTOCOL))
+async fn fifty_http_enqueues_from_two_writers_have_one_queue_without_takeover() {
+    let running = start_mode(AgentMode::Shared).await;
+    running
+        .state
+        .session
+        .lock()
         .await
+        .open_session(fabrials_agent_host::dispatch::LiveSession {
+            id: "one".into(),
+            workspace_id: "w".into(),
+            workspace_name: "test".into(),
+            running: false,
+            queued: vec![],
+            opened_at_ms: 1,
+        })
         .unwrap();
-    let (mut epoch, mut owner_token) = control(&frame(&mut owner).await);
-    let mut observer = connect(&running, Some(&observer_cookie), Some(WS_SUBPROTOCOL))
-        .await
-        .unwrap();
-    let mut observer_token = frame(&mut observer).await["event"]["controllerToken"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let phone = pair_grant(&running).await;
+    let desktop = pair_grant(&running).await;
+    let mut sockets = Vec::new();
+    for grant in [&phone, &desktop] {
+        let cookie = format!("gl_session={}", grant.session_token.expose());
+        let mut socket = connect(&running, Some(&cookie), Some(WS_SUBPROTOCOL))
+            .await
+            .unwrap();
+        assert_eq!(frame(&mut socket).await["event"]["state"], "writable");
+        sockets.push(socket);
+    }
     let mut samples = Vec::new();
     for trial in 0..50 {
-        let (status, requested) = network_command(
+        let grant = if trial % 2 == 0 { &phone } else { &desktop };
+        let start = std::time::Instant::now();
+        let (status,accepted)=network_command(&running,grant,0,"",json!({"kind":"prompt","sessionId":"one","text":format!("message {trial}"),"bash":false}),&format!("send-{trial}")).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+        let (_, snapshot) = network_command(
             &running,
-            &observer_grant,
+            grant,
             0,
-            &observer_token,
-            json!({"kind":"requestControlTransfer"}),
-            &format!("request-{trial}"),
+            "",
+            json!({"kind":"getSessionExecution","sessionId":"one"}),
+            "read",
         )
         .await;
-        assert_eq!(status, StatusCode::ACCEPTED);
-        let request_id = requested["result"]["request"]["requestId"]
-            .as_str()
-            .unwrap();
-        let started = std::time::Instant::now();
-        let (status, approved) = network_command(
-            &running,
-            &owner_grant,
-            epoch,
-            &owner_token,
-            json!({"kind":"approveControlTransfer","requestId":request_id}),
-            &format!("approve-{trial}"),
-        )
-        .await;
-        assert_eq!(status, StatusCode::ACCEPTED);
-        assert!(approved["result"].get("epoch").is_none());
-        assert!(!approved.to_string().contains(&observer_token));
-        loop {
-            let received = frame(&mut owner).await;
-            if received["event"]["kind"] == "hostStatus" {
-                assert_eq!(received["event"]["state"], "watching");
-                assert_eq!(received["event"]["controllerToken"], owner_token);
-                assert!(!received.to_string().contains(&observer_token));
-                break;
-            }
-        }
-        loop {
-            let received = frame(&mut observer).await;
-            if received["event"]["kind"] == "hostStatus" {
-                assert_eq!(control(&received), (epoch + 1, observer_token.clone()));
-                assert!(!received.to_string().contains(&owner_token));
-                break;
-            }
-        }
-        samples.push(started.elapsed().as_secs_f64() * 1000.0);
+        assert_eq!(snapshot["result"]["queue"].as_array().unwrap().len(), 1);
+        let entry = accepted["result"]["entryId"].as_str().unwrap();
         assert_eq!(
             network_command(
                 &running,
-                &owner_grant,
-                epoch + 1,
-                &owner_token,
-                json!({"kind":"openWorkspacePicker"}),
-                &format!("old-connection-{trial}")
+                grant,
+                0,
+                "",
+                json!({"kind":"removeQueued","sessionId":"one","entryId":entry}),
+                &format!("remove-{trial}")
             )
             .await
             .0,
-            StatusCode::CONFLICT
+            StatusCode::ACCEPTED
         );
-        assert_eq!(
-            network_command(
-                &running,
-                &observer_grant,
-                epoch,
-                &observer_token,
-                json!({"kind":"openWorkspacePicker"}),
-                &format!("stale-epoch-{trial}")
-            )
-            .await
-            .0,
-            StatusCode::CONFLICT
-        );
-        std::mem::swap(&mut owner, &mut observer);
-        std::mem::swap(&mut owner_grant, &mut observer_grant);
-        std::mem::swap(&mut owner_token, &mut observer_token);
-        epoch += 1;
+        samples.push(start.elapsed().as_secs_f64() * 1000.0);
     }
-    let (_, pending) = network_command(
-        &running,
-        &observer_grant,
-        0,
-        &observer_token,
-        json!({"kind":"requestControlTransfer"}),
-        "request-before-revoke",
-    )
-    .await;
-    let request_id = pending["result"]["request"]["requestId"].as_str().unwrap();
-    assert_eq!(
-        network_command(
-            &running,
-            &owner_grant,
-            epoch,
-            &owner_token,
-            json!({"kind":"revokeBrowserPairing","sessionId":observer_grant.session_id}),
-            "revoke-observer"
-        )
-        .await
-        .0,
-        StatusCode::ACCEPTED
-    );
-    assert_eq!(
-        network_command(
-            &running,
-            &owner_grant,
-            epoch,
-            &owner_token,
-            json!({"kind":"approveControlTransfer","requestId":request_id}),
-            "approve-revoked"
-        )
-        .await
-        .0,
-        StatusCode::UNPROCESSABLE_ENTITY
-    );
-    assert_eq!(
-        network_command(
-            &running,
-            &observer_grant,
-            epoch,
-            &observer_token,
-            json!({"kind":"bootstrap"}),
-            "revoked-read"
-        )
-        .await
-        .0,
-        StatusCode::FORBIDDEN
-    );
-    let mut ordered = samples.clone();
-    ordered.sort_by(f64::total_cmp);
-    let p95 = ordered[47];
+    samples.sort_by(f64::total_cmp);
     assert!(
-        p95 <= 2000.0,
-        "control transfer p95 exceeded two seconds: {p95}"
+        samples[47] < 2000.0,
+        "loopback enqueue/remove p95 {}ms",
+        samples[47]
     );
-    if let Some(path) = std::env::var_os("FABRIALS_TRANSFER_EVIDENCE") {
-        use std::io::Write as _;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .unwrap();
-        file.write_all(serde_json::to_string_pretty(&json!({"scope":"real loopback HTTP and WebSocket, ephemeral shared ACP host, no relay or browser","samplesMs":samples,"p95Ms":p95,"transfers":50,"staleEpochRefusals":50,"staleConnectionRefusals":50,"revokedTargetRejected":true,"thresholdMs":2000,"gatePassed":true})).unwrap().as_bytes()).unwrap();
-    }
-    drop(owner);
-    drop(observer);
+    assert_eq!(
+        running.state.lease.lock().await.state(now_ms()),
+        LeaseState::Vacant
+    );
     running.state.request_shutdown();
 }

@@ -2,7 +2,9 @@
 
 use fabrials_agent_host::acp::{AgentCommand, AgentHandle, AgentMode};
 use fabrials_agent_host::dispatch::{LiveSession, Workspace};
-use fabrials_agent_host::protocol::{CommandEnvelope, Event, Operation, PROTOCOL_VERSION};
+use fabrials_agent_host::protocol::{
+    CommandEnvelope, Event, MULTI_WRITER_PROTOCOL_VERSION, Operation,
+};
 use fabrials_agent_host::remote::RemoteAccess;
 use fabrials_agent_host::server::HostState;
 use std::sync::Arc;
@@ -10,7 +12,7 @@ use std::time::{Duration, Instant};
 
 fn command(operation: Operation, epoch: u64, key: &str) -> CommandEnvelope {
     CommandEnvelope {
-        protocol_version: PROTOCOL_VERSION,
+        protocol_version: MULTI_WRITER_PROTOCOL_VERSION,
         request_id: key.into(),
         idempotency_key: Some(key.into()),
         controller_epoch: Some(epoch),
@@ -23,7 +25,7 @@ fn command(operation: Operation, epoch: u64, key: &str) -> CommandEnvelope {
 #[tokio::test]
 async fn loading_an_already_live_session_does_not_erase_the_streamed_transcript() {
     let (state, agent, access, _, _, _directory) = setup().await;
-    let epoch = access.connect().await.unwrap();
+    let epoch = access.connect_version(4).await.unwrap();
     state
         .emit_event(
             Event::MessageDelta {
@@ -142,7 +144,7 @@ async fn setup() -> (
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn turn_finishes_after_browser_disconnect_and_retry_never_repeats_output() {
     let (state, agent, access, token, csrf, _directory) = setup().await;
-    let epoch = access.connect().await.unwrap();
+    let epoch = access.connect_version(4).await.unwrap();
     let operation = Operation::Prompt {
         session_id: "s-1".into(),
         text: "slow".into(),
@@ -158,7 +160,7 @@ async fn turn_finishes_after_browser_disconnect_and_retry_never_repeats_output()
     let resumed = RemoteAccess::authenticate(state.clone(), token, csrf)
         .await
         .unwrap();
-    let next = resumed.connect().await.unwrap();
+    let next = resumed.connect_version(4).await.unwrap();
     let status = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             let response = resumed
@@ -170,7 +172,10 @@ async fn turn_finishes_after_browser_disconnect_and_retry_never_repeats_output()
                     "status",
                 ))
                 .await;
-            if response.body["result"]["state"] != "running" {
+            if !matches!(
+                response.body["result"]["state"].as_str(),
+                Some("running" | "queued")
+            ) {
                 break response;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -194,11 +199,16 @@ async fn turn_finishes_after_browser_disconnect_and_retry_never_repeats_output()
             .count(),
         1
     );
-    let prompts: Vec<_> = events.iter().filter(|event| matches!(
-        &event.event,
-        Event::PromptSent { session_id, text, idempotency_key, .. }
-            if session_id == "s-1" && text == "slow" && idempotency_key.as_deref() == Some("slow-turn")
-    )).collect();
+    let prompts: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.event,
+                Event::PromptSent { session_id, text, idempotency_key, .. }
+                    if session_id == "s-1" && text == "slow" && idempotency_key.is_none()
+            )
+        })
+        .collect();
     assert_eq!(prompts.len(), 1);
     let first_reply = events
         .iter()
@@ -211,7 +221,7 @@ async fn turn_finishes_after_browser_disconnect_and_retry_never_repeats_output()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn typed_question_is_answered_once_with_original_rpc_id() {
     let (state, agent, access, _, _, _directory) = setup().await;
-    let epoch = access.connect().await.unwrap();
+    let epoch = access.connect_version(4).await.unwrap();
     let receipt = access
         .command(command(
             Operation::Prompt {
@@ -286,7 +296,7 @@ async fn typed_question_is_answered_once_with_original_rpc_id() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn terminal_user_text_is_visible_and_the_browser_echo_is_suppressed() {
     let (state, agent, access, _, _, _directory) = setup().await;
-    let epoch = access.connect().await.unwrap();
+    let epoch = access.connect_version(4).await.unwrap();
     access
         .command(command(
             Operation::Prompt {
@@ -335,7 +345,7 @@ async fn terminal_user_text_is_visible_and_the_browser_echo_is_suppressed() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn captured_terminal_turn_requires_echo_opt_in_and_replays_once_in_order() {
     let (state, agent, access, token, csrf, directory) = setup().await;
-    access.connect().await.unwrap();
+    access.connect_version(4).await.unwrap();
     agent.load_session("s-1", directory.path()).await.unwrap();
     let raw = include_str!("fixtures/terminal_turn_1_0_50.json")
         .replace("01a129d4-ce4b-7991-945d-5400d4b5eee4", "s-1");
@@ -378,7 +388,7 @@ async fn captured_terminal_turn_requires_echo_opt_in_and_replays_once_in_order()
     let resumed = RemoteAccess::authenticate(state, token, csrf)
         .await
         .unwrap();
-    resumed.connect().await.unwrap();
+    resumed.connect_version(4).await.unwrap();
     let replay = match resumed.events(0).await.unwrap() {
         fabrials_agent_host::journal::ReplayOutcome::Replay(events) => events,
         _ => panic!("unexpected reset"),
@@ -399,7 +409,7 @@ async fn captured_terminal_turn_requires_echo_opt_in_and_replays_once_in_order()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn identical_external_prompts_are_not_confused_with_the_pending_browser_prompt() {
     let (state, agent, access, _, _, _directory) = setup().await;
-    let epoch = access.connect().await.unwrap();
+    let epoch = access.connect_version(4).await.unwrap();
     agent.request("test/replay", serde_json::json!({"events":[{
         "jsonrpc":"2.0", "method":"_x.ai/queue/changed", "params":{
             "sessionId":"s-1", "entries":[], "runningPromptId":"terminal-before-request", "runningKind":"prompt", "runningText":"echo-identity"
@@ -556,7 +566,7 @@ async fn broken_approval_pipe_restarts_adapter_and_reloads_without_resending() {
     })
     .await
     .unwrap();
-    let epoch = access.connect().await.unwrap();
+    let epoch = access.connect_version(4).await.unwrap();
     let decision = |id: String| Operation::DecidePermission {
         session_id: "s-1".into(),
         request_id: id,
@@ -637,11 +647,11 @@ async fn broken_approval_pipe_restarts_adapter_and_reloads_without_resending() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn observers_are_notified_when_sessions_open_and_close() {
     let (state, agent, owner, token, csrf, _directory) = setup().await;
-    let epoch = owner.connect().await.unwrap();
+    let epoch = owner.connect_version(4).await.unwrap();
     let observer = RemoteAccess::authenticate(state.clone(), token, csrf)
         .await
         .unwrap();
-    assert_eq!(observer.connect().await, Err("controller_held"));
+    assert_eq!(observer.connect_version(4).await, Ok(0));
     for (key, operation) in [
         (
             "close-first",

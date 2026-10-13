@@ -83,6 +83,9 @@ pub enum AcpError {
     /// The request exceeded its deadline.
     #[error("agent request timed out")]
     Timeout,
+    #[error("agent rejected the model id")]
+    #[allow(missing_docs)]
+    InvalidModel,
     /// A caller attempted to pass a forbidden flag.
     #[error("refused to pass a forbidden flag to the agent")]
     ForbiddenFlag,
@@ -101,13 +104,20 @@ pub const METHOD_NOT_FOUND: i64 = -32601;
 /// A missing or non-integer code becomes `0`, which matches no known code and
 /// so is never mistaken for a meaningful one.
 fn agent_error(error: &Value) -> AcpError {
+    if error.get("code").and_then(Value::as_i64) == Some(-32602)
+        && error.get("data").and_then(Value::as_str) == Some("unknown model id")
+    {
+        return AcpError::InvalidModel;
+    }
     AcpError::Agent {
         code: error.get("code").and_then(Value::as_i64).unwrap_or(0),
         message: error
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("unknown")
-            .to_owned(),
+            .chars()
+            .take(1024)
+            .collect(),
     }
 }
 
@@ -277,6 +287,8 @@ pub const SESSION_UPDATE: &str = "session/update";
 #[derive(Debug)]
 pub enum AgentEvent {
     #[allow(missing_docs)]
+    Barrier(oneshot::Sender<()>),
+    #[allow(missing_docs)]
     InteractionRequest {
         method: String,
         request_id: Value,
@@ -314,6 +326,7 @@ pub enum AgentEvent {
 #[derive(Debug)]
 pub struct AgentHandle {
     stdin: Mutex<ChildStdin>,
+    events: mpsc::Sender<AgentEvent>,
     transport_closed: watch::Sender<bool>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
     echoes: Arc<Mutex<HashMap<u64, PromptEcho>>>,
@@ -389,6 +402,7 @@ impl AgentHandle {
 
         let handle = Arc::new(Self {
             stdin: Mutex::new(stdin),
+            events: events_tx.clone(),
             transport_closed,
             pending: Arc::clone(&pending),
             echoes: Arc::clone(&echoes),
@@ -400,6 +414,20 @@ impl AgentHandle {
 
         tokio::spawn(read_loop(stdout, pending, echoes, events_tx, closed_rx));
         Ok((handle, events_rx))
+    }
+
+    #[allow(missing_docs)]
+    pub async fn flush_events(&self) -> Result<(), AcpError> {
+        timeout(REQUEST_TIMEOUT, async {
+            let (ack, received) = oneshot::channel();
+            self.events
+                .send(AgentEvent::Barrier(ack))
+                .await
+                .map_err(|_| AcpError::Closed)?;
+            received.await.map_err(|_| AcpError::Closed)
+        })
+        .await
+        .map_err(|_| AcpError::Timeout)?
     }
 
     /// Send a JSON-RPC request and await its response.
@@ -417,6 +445,17 @@ impl AgentHandle {
         method: &str,
         params: Value,
         deadline: Option<Duration>,
+    ) -> Result<Value, AcpError> {
+        self.request_with_timeout_started(method, params, deadline, None)
+            .await
+    }
+
+    async fn request_with_timeout_started(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: Option<Duration>,
+        started: Option<oneshot::Sender<()>>,
     ) -> Result<Value, AcpError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let (tx, rx) = oneshot::channel();
@@ -455,6 +494,9 @@ impl AgentHandle {
             self.pending.lock().await.remove(&id);
             self.echoes.lock().await.remove(&id);
             return Err(error);
+        }
+        if let Some(started) = started {
+            let _ = started.send(());
         }
 
         let response = match deadline {
@@ -609,9 +651,6 @@ impl AgentHandle {
         text: &str,
         images: &[crate::media::PromptImage],
     ) -> Result<Value, AcpError> {
-        crate::media::validate_prompt_images(images).map_err(|_| AcpError::OversizedMessage)?;
-        let mut content = vec![serde_json::json!({"type": "text", "text": text})];
-        content.extend(images.iter().map(crate::media::PromptImage::acp_block));
         let mut random = [0_u8; 16];
         getrandom::fill(&mut random)
             .map_err(|error| AcpError::Transport(std::io::Error::other(error)))?;
@@ -626,12 +665,48 @@ impl AgentHandle {
             &hex[16..20],
             &hex[20..]
         );
+        self.prompt_target(session_id, &prompt_id, text, images)
+            .await
+    }
+
+    #[allow(missing_docs)]
+    pub async fn prompt_target(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        text: &str,
+        images: &[crate::media::PromptImage],
+    ) -> Result<Value, AcpError> {
+        self.prompt_target_with_started(session_id, prompt_id, text, images, None)
+            .await
+    }
+
+    #[allow(missing_docs)]
+    pub async fn prompt_target_with_started(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        text: &str,
+        images: &[crate::media::PromptImage],
+        started: Option<oneshot::Sender<()>>,
+    ) -> Result<Value, AcpError> {
+        if prompt_id.is_empty()
+            || prompt_id.len() > 128
+            || !prompt_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(AcpError::Malformed);
+        }
+        crate::media::validate_prompt_images(images).map_err(|_| AcpError::OversizedMessage)?;
+        let mut content = vec![serde_json::json!({"type": "text", "text": text})];
+        content.extend(images.iter().map(crate::media::PromptImage::acp_block));
         let params = serde_json::json!({
             "sessionId": session_id,
             "prompt": content,
             "_meta": { "promptId": prompt_id },
         });
-        self.request_with_timeout("session/prompt", params, None)
+        self.request_with_timeout_started("session/prompt", params, None, started)
             .await
     }
 
@@ -656,6 +731,40 @@ impl AgentHandle {
         self.request("session/set_model", params).await
     }
 
+    #[allow(missing_docs)]
+    pub async fn set_reasoning_effort(
+        &self,
+        session_id: &str,
+        effort: &str,
+    ) -> Result<Value, AcpError> {
+        self.request(
+            "session/set_config_option",
+            serde_json::json!({
+                "sessionId": session_id,
+                "configId": "reasoning_effort",
+                "value": effort,
+            }),
+        )
+        .await
+    }
+
+    #[allow(missing_docs)]
+    pub async fn set_model_config(
+        &self,
+        session_id: &str,
+        model_id: &str,
+    ) -> Result<Value, AcpError> {
+        self.request(
+            "session/set_config_option",
+            serde_json::json!({
+                "sessionId": session_id,
+                "configId": "model",
+                "value": model_id,
+            }),
+        )
+        .await
+    }
+
     /// Ask the agent to cancel the in-flight turn.
     ///
     /// # Errors
@@ -668,6 +777,22 @@ impl AgentHandle {
             "params": { "sessionId": session_id },
         });
         self.write_line(&payload).await
+    }
+
+    #[allow(missing_docs)]
+    pub async fn cancel_target(&self, session_id: &str, prompt_id: &str) -> Result<(), AcpError> {
+        if prompt_id.is_empty()
+            || prompt_id.len() > 128
+            || !prompt_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(AcpError::Malformed);
+        }
+        self.write_line(&serde_json::json!({
+            "jsonrpc": "2.0", "method": "session/cancel",
+            "params": {"sessionId": session_id, "_meta": {"promptId": prompt_id, "rewindIfNoOutput": true, "cancelTrigger": "dashboard_stop", "cancelSubagents": false}}
+        })).await
     }
 
     async fn write_line(&self, payload: &Value) -> Result<(), AcpError> {

@@ -12,9 +12,7 @@
 
 use std::collections::VecDeque;
 
-use crate::bounds::{
-    MAX_EVENT_QUEUE_DEPTH, MAX_IDEMPOTENCY_RECORDS, MAX_INTERRUPTED_RECORDS, MAX_REPLAY_EVENTS,
-};
+use crate::bounds::{MAX_EVENT_QUEUE_DEPTH, MAX_IDEMPOTENCY_RECORDS, MAX_INTERRUPTED_RECORDS};
 use crate::protocol::{Event, EventEnvelope, PROTOCOL_VERSION};
 
 /// Errors produced by the journal.
@@ -155,6 +153,8 @@ pub const JOURNAL_FILE_NAME: &str = "journal.json";
 #[serde(rename_all = "camelCase")]
 struct StoredJournal {
     version: u32,
+    #[serde(default)]
+    observation_epoch: u64,
     next_record: u64,
     effects: Vec<StoredEffect>,
     interrupted: Vec<StoredInterrupted>,
@@ -205,6 +205,10 @@ impl EffectState {
 /// Per-installation journal of intents, events, and review records.
 #[derive(Debug, Default)]
 pub struct Journal {
+    observation_epoch: u64,
+    snapshots: crate::event_snapshot::Snapshots,
+    activity: crate::notification_activity::Activity,
+    restoring: std::collections::BTreeSet<String>,
     effects: VecDeque<EffectRecord>,
     events: VecDeque<EventEnvelope>,
     interrupted: VecDeque<InterruptedRecord>,
@@ -238,13 +242,24 @@ impl Journal {
     pub fn open(directory: &std::path::Path) -> Result<Self, JournalError> {
         let path = directory.join(JOURNAL_FILE_NAME);
         let mut journal = match std::fs::read_to_string(&path) {
-            Ok(raw) => Self::from_stored(
-                serde_json::from_str::<StoredJournal>(&raw).map_err(|_| JournalError::Storage)?,
-            ),
+            Ok(raw) => {
+                let stored = serde_json::from_str::<StoredJournal>(&raw)
+                    .map_err(|_| JournalError::Storage)?;
+                if stored.version != STORED_VERSION {
+                    return Err(JournalError::Storage);
+                }
+                Self::from_stored(stored)
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(_) => return Err(JournalError::Storage),
         };
         journal.store = Some(path);
+        journal.observation_epoch = journal
+            .observation_epoch
+            .checked_add(1)
+            .filter(|epoch| *epoch <= 9_007_199_254_740_991)
+            .ok_or(JournalError::Storage)?;
+        journal.activity = crate::notification_activity::Activity::open(directory)?;
         journal.reconcile_after_restart();
         journal.flush()?;
         Ok(journal)
@@ -284,6 +299,7 @@ impl Journal {
             })
             .collect();
         Self {
+            observation_epoch: stored.observation_epoch,
             effects,
             interrupted,
             next_record: stored.next_record,
@@ -352,6 +368,7 @@ impl Journal {
 
         let stored = StoredJournal {
             version: STORED_VERSION,
+            observation_epoch: self.observation_epoch,
             next_record: self.next_record,
             effects: self
                 .effects
@@ -403,9 +420,10 @@ impl Journal {
         // The rename itself has to reach the disk, otherwise a power loss can
         // leave the directory entry behind and lose an intent the host has
         // already told the agent to act on.
-        if let Ok(handle) = std::fs::File::open(directory) {
-            let _ = handle.sync_all();
-        }
+        #[cfg(unix)]
+        std::fs::File::open(directory)
+            .and_then(|handle| handle.sync_all())
+            .map_err(|_| JournalError::Storage)?;
         Ok(())
     }
 
@@ -551,11 +569,89 @@ impl Journal {
         self.flush()
     }
 
+    pub(crate) fn begin_restore(&mut self, id: &str) -> Option<Event> {
+        let previous = self.snapshots.current(id);
+        self.restoring.insert(id.into());
+        self.snapshots.clear_session(id);
+        previous
+    }
+
+    pub(crate) fn restored_running(&self, id: &str) -> Option<bool> {
+        self.snapshots.running(id)
+    }
+
+    pub(crate) fn is_restoring(&self, id: &str) -> bool {
+        self.restoring.contains(id)
+    }
+
+    pub(crate) fn finish_restore(&mut self, fallback: Event) {
+        let Some(id) = crate::event_snapshot::session_id(&fallback).map(str::to_owned) else {
+            return;
+        };
+        let snapshot = self.snapshots.restore(fallback);
+        self.restoring.remove(&id);
+        self.record_event(snapshot, None);
+        for event in self.snapshots.pending_for(&id) {
+            self.record_event(event, None);
+        }
+    }
+
+    pub(crate) fn abandon_restore(&mut self, id: &str) {
+        self.restoring.remove(id);
+        self.snapshots.clear_session(id);
+    }
+
+    #[allow(missing_docs)]
+    pub fn notification_activity(&self) -> Result<Option<(u64, u64)>, JournalError> {
+        self.activity.latest()
+    }
+
+    #[allow(missing_docs)]
+    #[must_use]
+    pub const fn observation_epoch(&self) -> u64 {
+        self.observation_epoch
+    }
+
+    pub(crate) fn snapshot_frames(&self) -> (u64, Vec<EventEnvelope>) {
+        let mut events: Vec<_> = self
+            .snapshots
+            .events()
+            .into_iter()
+            .map(|event| EventEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                observation_epoch: self.observation_epoch,
+                event_sequence: 0,
+                session_revision: None,
+                event,
+            })
+            .collect();
+        events.push(EventEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            observation_epoch: self.observation_epoch,
+            event_sequence: self.next_sequence,
+            session_revision: None,
+            event: Event::WorkspacesChanged,
+        });
+        (self.next_sequence, events)
+    }
+
     /// Append an event and assign it the next monotonic sequence.
     pub fn record_event(&mut self, event: Event, session_revision: Option<u64>) -> EventEnvelope {
+        self.snapshots.absorb(&event);
+        if crate::event_snapshot::session_id(&event).is_some_and(|id| self.restoring.contains(id)) {
+            return EventEnvelope {
+                protocol_version: PROTOCOL_VERSION,
+                observation_epoch: self.observation_epoch,
+                event_sequence: 0,
+                session_revision,
+                event,
+            };
+        }
+        self.activity.observe(&event);
         self.next_sequence = self.next_sequence.saturating_add(1);
         let envelope = EventEnvelope {
             protocol_version: PROTOCOL_VERSION,
+            observation_epoch: self.observation_epoch,
             event_sequence: self.next_sequence,
             session_revision,
             event,
@@ -590,12 +686,6 @@ impl Journal {
             return Err(JournalError::AcknowledgementAhead);
         }
         self.acked_through = self.acked_through.max(through_sequence);
-        self.events.retain(|event| {
-            event.event_sequence
-                > self
-                    .acked_through
-                    .saturating_sub(u64::try_from(MAX_REPLAY_EVENTS).unwrap_or(u64::MAX))
-        });
         Ok(())
     }
 
@@ -649,7 +739,6 @@ impl Journal {
 #[cfg(test)]
 mod tests {
     use super::{BeginOutcome, EffectState, InterruptCause, Journal, JournalError, ReplayOutcome};
-    use crate::bounds::MAX_REPLAY_EVENTS;
     use crate::protocol::Event;
 
     fn delta(text: &str) -> Event {
@@ -875,10 +964,9 @@ mod tests {
     #[test]
     fn an_expired_cursor_requires_a_snapshot() {
         let mut journal = Journal::new();
-        for index in 0..(MAX_REPLAY_EVENTS + 200) {
+        for index in 0..(crate::bounds::MAX_EVENT_QUEUE_DEPTH + 200) {
             journal.record_event(delta(&format!("e{index}")), None);
         }
-        // Acknowledge near the head so the retention window drops old events.
         let head = journal.emitted_through();
         journal.acknowledge(head).expect("ack");
         assert_eq!(journal.replay_after(1), ReplayOutcome::SnapshotRequired);
@@ -895,5 +983,22 @@ mod tests {
     fn an_empty_journal_replays_nothing() {
         let journal = Journal::new();
         assert_eq!(journal.replay_after(0), ReplayOutcome::Replay(Vec::new()));
+    }
+    #[test]
+    fn snapshots_are_private_and_watermark_covers_only_the_captured_state() {
+        let mut journal = Journal::new();
+        journal.record_event(delta("before"), None);
+        let (watermark, frames) = journal.snapshot_frames();
+        assert_eq!(journal.emitted_through(), watermark);
+        assert_eq!(frames.last().unwrap().event_sequence, watermark);
+        journal.record_event(delta("after"), None);
+        assert!(frames.iter().any(|frame|matches!(&frame.event,Event::SessionSnapshot {messages,..} if messages[0].text=="before")));
+        let ReplayOutcome::Replay(tail) = journal.replay_after(watermark) else {
+            panic!("tail");
+        };
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].event, delta("after"));
+        journal.acknowledge(journal.emitted_through()).unwrap();
+        assert!(matches!(journal.replay_after(0),ReplayOutcome::Replay(events) if events.len()==2));
     }
 }

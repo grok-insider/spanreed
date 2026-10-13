@@ -48,6 +48,8 @@ pub mod cli_matrix;
 pub mod context;
 pub mod control;
 pub mod dispatch;
+mod event_snapshot;
+mod execution;
 pub mod host;
 pub mod instance;
 pub mod integrations;
@@ -60,6 +62,7 @@ mod live_media;
 pub mod media;
 mod media_commands;
 pub mod models;
+mod multiwriter;
 pub mod origin;
 pub mod pairing;
 pub mod permission;
@@ -80,6 +83,7 @@ pub mod repair;
 pub mod review;
 pub mod server;
 pub mod session_catalog;
+mod session_models;
 pub mod session_runtime;
 pub mod state;
 pub mod state_dir;
@@ -113,3 +117,5 @@ pub fn now_ms() -> u64 {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
 }
+
+mod notification_activity;

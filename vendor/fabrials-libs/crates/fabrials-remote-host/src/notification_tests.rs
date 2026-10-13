@@ -182,7 +182,7 @@ impl Fixture {
 }
 
 fn command(operation: Value) -> Value {
-    json!({"protocolVersion":2,"requestId":"synthetic-request","idempotencyKey":"synthetic-key","operation":operation})
+    json!({"protocolVersion":4,"requestId":"synthetic-request","idempotencyKey":"synthetic-key","operation":operation})
 }
 
 fn permission(id: &str) -> Event {
