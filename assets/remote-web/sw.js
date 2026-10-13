@@ -1,11 +1,17 @@
-const SHELL = ["index.html","manifest.webmanifest","theme-init.js","icon-192.png","icon-512.png","third-party-notices.txt","crypto/f585e4ce86fe11dca440/fabrials_remote_noise.js","crypto/f585e4ce86fe11dca440/fabrials_remote_noise_bg.wasm","assets/index-jrE2fKnr.js","assets/ibm-plex-mono-cyrillic-400-normal-BSMlKf0J.woff2","assets/ibm-plex-mono-cyrillic-400-normal-CEL4l2ZJ.woff","assets/ibm-plex-mono-cyrillic-500-normal-Ael50iVv.woff","assets/ibm-plex-mono-cyrillic-500-normal-Bq9vWWag.woff2","assets/ibm-plex-mono-cyrillic-600-normal-CTOM6hUh.woff2","assets/ibm-plex-mono-cyrillic-600-normal-fLZuRloM.woff","assets/ibm-plex-mono-cyrillic-ext-400-normal-DMdlQ8Kv.woff","assets/ibm-plex-mono-cyrillic-ext-400-normal-xuaO2J-f.woff2","assets/ibm-plex-mono-cyrillic-ext-500-normal-BIfNGwUT.woff","assets/ibm-plex-mono-cyrillic-ext-500-normal-BqneJy0T.woff2","assets/ibm-plex-mono-cyrillic-ext-600-normal-9HEixskS.woff","assets/ibm-plex-mono-cyrillic-ext-600-normal-V-xxqcpd.woff2","assets/ibm-plex-mono-latin-400-normal-CvHOgSBP.woff","assets/ibm-plex-mono-latin-400-normal-DMJ8VG8y.woff2","assets/ibm-plex-mono-latin-500-normal-CB9ihrfo.woff","assets/ibm-plex-mono-latin-500-normal-DSY6xOcd.woff2","assets/ibm-plex-mono-latin-600-normal-BgSNZQsw.woff2","assets/ibm-plex-mono-latin-600-normal-DWFSQ4vo.woff","assets/ibm-plex-mono-latin-ext-400-normal-BmRBH3aV.woff2","assets/ibm-plex-mono-latin-ext-400-normal-D3D2R8hC.woff","assets/ibm-plex-mono-latin-ext-500-normal-CAhNIIs5.woff2","assets/ibm-plex-mono-latin-ext-500-normal-CZ70TYgx.woff","assets/ibm-plex-mono-latin-ext-600-normal-D38SheWl.woff2","assets/ibm-plex-mono-latin-ext-600-normal-DmB0ttJJ.woff","assets/ibm-plex-mono-vietnamese-400-normal-BulugwFq.woff2","assets/ibm-plex-mono-vietnamese-400-normal-DDuiU_S-.woff","assets/ibm-plex-mono-vietnamese-500-normal-C8zxqsMH.woff","assets/ibm-plex-mono-vietnamese-500-normal-DZ4AoWbu.woff2","assets/ibm-plex-mono-vietnamese-600-normal-D2EvbN8M.woff2","assets/ibm-plex-mono-vietnamese-600-normal-iLQfcSjf.woff","assets/ibm-plex-sans-cyrillic-ext-wght-normal-d45eAU9y.woff2","assets/ibm-plex-sans-cyrillic-wght-normal-BAAhND-U.woff2","assets/ibm-plex-sans-greek-wght-normal-CmyJS8uq.woff2","assets/ibm-plex-sans-latin-ext-wght-normal-CIII54If.woff2","assets/ibm-plex-sans-latin-wght-normal-IvpUvPa2.woff2","assets/ibm-plex-sans-vietnamese-wght-normal-Dg1JeJN0.woff2","assets/index-2oFlYdY5.css"];
+const SHELL = ["index.html","manifest.webmanifest","theme-init.js","icon-192.png","icon-512.png","third-party-notices.txt","crypto/f585e4ce86fe11dca440/fabrials_remote_noise.js","crypto/f585e4ce86fe11dca440/fabrials_remote_noise_bg.wasm","assets/index-DpDoWcjC.js","assets/ibm-plex-mono-cyrillic-400-normal-BSMlKf0J.woff2","assets/ibm-plex-mono-cyrillic-400-normal-CEL4l2ZJ.woff","assets/ibm-plex-mono-cyrillic-500-normal-Ael50iVv.woff","assets/ibm-plex-mono-cyrillic-500-normal-Bq9vWWag.woff2","assets/ibm-plex-mono-cyrillic-600-normal-CTOM6hUh.woff2","assets/ibm-plex-mono-cyrillic-600-normal-fLZuRloM.woff","assets/ibm-plex-mono-cyrillic-ext-400-normal-DMdlQ8Kv.woff","assets/ibm-plex-mono-cyrillic-ext-400-normal-xuaO2J-f.woff2","assets/ibm-plex-mono-cyrillic-ext-500-normal-BIfNGwUT.woff","assets/ibm-plex-mono-cyrillic-ext-500-normal-BqneJy0T.woff2","assets/ibm-plex-mono-cyrillic-ext-600-normal-9HEixskS.woff","assets/ibm-plex-mono-cyrillic-ext-600-normal-V-xxqcpd.woff2","assets/ibm-plex-mono-latin-400-normal-CvHOgSBP.woff","assets/ibm-plex-mono-latin-400-normal-DMJ8VG8y.woff2","assets/ibm-plex-mono-latin-500-normal-CB9ihrfo.woff","assets/ibm-plex-mono-latin-500-normal-DSY6xOcd.woff2","assets/ibm-plex-mono-latin-600-normal-BgSNZQsw.woff2","assets/ibm-plex-mono-latin-600-normal-DWFSQ4vo.woff","assets/ibm-plex-mono-latin-ext-400-normal-BmRBH3aV.woff2","assets/ibm-plex-mono-latin-ext-400-normal-D3D2R8hC.woff","assets/ibm-plex-mono-latin-ext-500-normal-CAhNIIs5.woff2","assets/ibm-plex-mono-latin-ext-500-normal-CZ70TYgx.woff","assets/ibm-plex-mono-latin-ext-600-normal-D38SheWl.woff2","assets/ibm-plex-mono-latin-ext-600-normal-DmB0ttJJ.woff","assets/ibm-plex-mono-vietnamese-400-normal-BulugwFq.woff2","assets/ibm-plex-mono-vietnamese-400-normal-DDuiU_S-.woff","assets/ibm-plex-mono-vietnamese-500-normal-C8zxqsMH.woff","assets/ibm-plex-mono-vietnamese-500-normal-DZ4AoWbu.woff2","assets/ibm-plex-mono-vietnamese-600-normal-D2EvbN8M.woff2","assets/ibm-plex-mono-vietnamese-600-normal-iLQfcSjf.woff","assets/ibm-plex-sans-cyrillic-ext-wght-normal-d45eAU9y.woff2","assets/ibm-plex-sans-cyrillic-wght-normal-BAAhND-U.woff2","assets/ibm-plex-sans-greek-wght-normal-CmyJS8uq.woff2","assets/ibm-plex-sans-latin-ext-wght-normal-CIII54If.woff2","assets/ibm-plex-sans-latin-wght-normal-IvpUvPa2.woff2","assets/ibm-plex-sans-vietnamese-wght-normal-Dg1JeJN0.woff2","assets/index-DrJqpB8R.css"];
 const PUSH_ONLY = new URL(self.registration.scope).pathname.startsWith("/push/");
-const CACHE = "grok-shell-a3612b47d5994d28";
+const CACHE = "grok-shell-fe9e3a52d2d36034";
 const SHARE_TARGET = "disabled" === "enabled";
 const shareInboxApi = null;
 const pushWorkerApi = (() => {const PUSH_ACCOUNT_ORIGIN = "https://fabrials.com";
 const PUSH_DATABASE = "grok-remote-push.v1";
 const PUSH_EVENT_LIMIT = 256;
+const DIRECT_NOTICE_TTL = 15 * 60_000;
+
+function parseDirectPushNotice(value, now = Date.now()) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join(",") !== "expiresAt,kind,notificationId,sequence,version" || value.version !== 1 || value.kind !== "remoteActivity" || typeof value.notificationId !== "string" || !/^[a-f0-9]{32}$/.test(value.notificationId) || !Number.isSafeInteger(value.sequence) || value.sequence < 1 || !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= now || value.expiresAt > now + DIRECT_NOTICE_TTL) return null;
+  return {version: 1, kind: "remoteActivity", notificationId: value.notificationId, sequence: value.sequence, expiresAt: value.expiresAt};
+}
 
 function parsePushNotice(value, now = Date.now()) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join(",") !== "eventId,expiresAt,kind" || value.kind !== "remote_attention" || typeof value.eventId !== "string" || !/^[a-f0-9]{32}$/.test(value.eventId) || !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= now || value.expiresAt > now + 60_000) return null;
@@ -33,7 +39,7 @@ async function claimPushNotice(notice, indexed = indexedDB, now = Date.now()) {
         let live = 0;
         let duplicate = false;
         for (const row of request.result) {
-          if (!Number.isSafeInteger(row.expiresAt) || row.expiresAt <= now || row.expiresAt > now + 60_000) store.delete(row.eventId);
+          if (!Number.isSafeInteger(row.expiresAt) || row.expiresAt <= now || row.expiresAt > now + DIRECT_NOTICE_TTL) store.delete(row.eventId);
           else {live++;if (row.eventId === notice.eventId) duplicate = true;}
         }
         if (!duplicate && live < PUSH_EVENT_LIMIT && notice.expiresAt > now) {store.put(notice);accepted=true;}
@@ -70,6 +76,13 @@ function installRemotePushWorker(scope) {
         const text = event.data?.text();
         if (typeof text !== "string" || text.length > 1024 || new TextEncoder().encode(text).length > 1024) return;
         const data = JSON.parse(text);
+        const direct = parseDirectPushNotice(data);
+        if (direct) {
+          const notice = {eventId: `direct:${scope.registration.scope}:${direct.notificationId}`, expiresAt: direct.expiresAt};
+          if (!await claimPushNotice(notice, scope.indexedDB) || !parseDirectPushNotice(direct)) return;
+          await scope.registration.showNotification("Grok", {body:"There is activity on your computer.", tag:"grok-direct-activity", data:direct, renotify:false});
+          return;
+        }
         if (data && typeof data === "object" && Object.keys(data).sort().join(",") === "kind,version" && data.version === 1 && data.kind === "remoteActivity") {
           await scope.registration.showNotification("Grok", {body:"There is activity on your computer.",tag:"grok-direct-activity",data:{version:1,kind:"remoteActivity"},renotify:false});
           return;
