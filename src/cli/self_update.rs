@@ -28,6 +28,11 @@ pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
         }
     }
 
+    if !check_only && let Some(why) = updates::apply_blocked_reason(ctx) {
+        eprintln!("self-update: {why}");
+        return ExitCode::FAILURE;
+    }
+
     if updates::offline(ctx) {
         eprintln!("self-update: SPANREED_OFFLINE=1 — not checking GitHub");
         return ExitCode::FAILURE;
@@ -72,12 +77,6 @@ pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
 
     if !result.newer {
         return ExitCode::SUCCESS;
-    }
-
-    if !dry_run && !updates::can_apply_self_update(ctx) {
-        let why = updates::apply_blocked_reason(ctx).unwrap_or("self-update apply is disabled");
-        eprintln!("self-update: {why}");
-        return ExitCode::FAILURE;
     }
 
     if !yes && !dry_run && !confirm_apply(&result) {

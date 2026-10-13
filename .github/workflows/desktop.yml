@@ -2,7 +2,7 @@ name: Desktop builds
 
 on:
   pull_request:
-    paths: ['desktop/**', 'src/**', 'crates/**', 'vendor/**', 'Cargo.*', '.gitattributes', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'src/**', 'crates/**', 'vendor/**', 'Cargo.*', '.gitattributes', 'assets/**', '.cargo/**', '.github/workflows/desktop.yml']
   workflow_dispatch:
     inputs:
       pr_number:
@@ -60,6 +60,7 @@ jobs:
         run: |
           test "$GITHUB_SHA" = "$EXPECTED_SHA"
           python scripts/release.py validate-pr --pr "$PR_NUMBER" --sha "$EXPECTED_SHA"
+      - run: python scripts/remote-assets.py check
       - uses: dtolnay/rust-toolchain@stable
       - uses: oven-sh/setup-bun@v2
         with:

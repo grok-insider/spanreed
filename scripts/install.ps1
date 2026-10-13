@@ -41,16 +41,43 @@ function Stop-SpanreedCapture {
     Start-Sleep -Milliseconds 400
 }
 
+function Assert-InstallDestination {
+    param([string]$Destination)
+    $DestinationItem = Get-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+    if ($DestinationItem -and ($DestinationItem.PSIsContainer -or ($DestinationItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint))) {
+        throw 'Install destination must be a regular file or absent'
+    }
+}
+
 function Copy-SpanreedBinary {
     param([string]$Source, [string]$Destination)
-    Stop-SpanreedCapture
+    $SourceItem = Get-Item -LiteralPath $Source -Force
+    if ($SourceItem.PSIsContainer -or ($SourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw 'Install source must be a regular file'
+    }
+    Assert-InstallDestination -Destination $Destination
+    $Staged = Join-Path (Split-Path -Parent $Destination) (".spanreed-install-" + [guid]::NewGuid().ToString('n'))
+    $Backup = "$Staged.previous"
     try {
-        Copy-Item -LiteralPath $Source -Destination $Destination -Force
-    } catch {
-        # Windows may still hold a handle briefly; retry once.
-        Start-Sleep -Milliseconds 500
+        [System.IO.File]::Copy($Source, $Staged, $false)
+        if ((Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $Staged -Algorithm SHA256).Hash) {
+            throw 'Staged binary differs from the verified source'
+        }
+        Assert-InstallDestination -Destination $Destination
         Stop-SpanreedCapture
-        Copy-Item -LiteralPath $Source -Destination $Destination -Force
+        if (Test-Path -LiteralPath $Destination) {
+            [System.IO.File]::Replace($Staged, $Destination, $Backup)
+        } else {
+            [System.IO.File]::Move($Staged, $Destination)
+        }
+        Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
+    } catch {
+        if (-not (Test-Path -LiteralPath $Destination) -and (Test-Path -LiteralPath $Backup)) {
+            [System.IO.File]::Move($Backup, $Destination)
+        }
+        throw
+    } finally {
+        Remove-Item -LiteralPath $Staged -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -66,7 +93,9 @@ if ($FromPath) {
     if ($Tag -eq "latest") {
         $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
         $ResolvedTag = $rel.tag_name
-        if (-not $ResolvedTag) { throw "could not resolve latest release tag for $Repo" }
+        if ($rel.draft -or $rel.prerelease -or $ResolvedTag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw 'Latest release did not provide a stable version tag; retry later'
+        }
     }
     $Version = $ResolvedTag.TrimStart("v")
     $Asset = "spanreed-$Version-x86_64-pc-windows-msvc.zip"
@@ -77,10 +106,19 @@ if ($FromPath) {
         $Zip = Join-Path $Tmp $Asset
         Write-Host "Downloading $Url"
         Invoke-WebRequest -Uri $Url -OutFile $Zip
-        Expand-Archive -LiteralPath $Zip -DestinationPath $Tmp -Force
-        $Bin = Get-ChildItem -Path $Tmp -Recurse -Filter "spanreed.exe" | Select-Object -First 1
-        if (-not $Bin) { throw "archive did not contain spanreed.exe" }
-        Copy-SpanreedBinary -Source $Bin.FullName -Destination $Dest
+        $SumPath = "$Zip.sha256"
+        Invoke-WebRequest -Uri "$Url.sha256" -OutFile $SumPath
+        $Fields = (Get-Content -LiteralPath $SumPath -Raw).Trim() -split '\s+'
+        if ($Fields.Count -ne 2 -or $Fields[0] -notmatch '^[a-fA-F0-9]{64}$' -or $Fields[1] -cne $Asset) {
+            throw "checksum file does not describe $Asset"
+        }
+        $Actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Zip).Hash
+        if ($Actual -ine $Fields[0]) { throw "checksum mismatch for $Asset" }
+        $Unpacked = Join-Path $Tmp 'unpacked'
+        Expand-Archive -LiteralPath $Zip -DestinationPath $Unpacked
+        $Bin = Join-Path $Unpacked 'spanreed.exe'
+        if (-not (Test-Path -LiteralPath $Bin -PathType Leaf)) { throw 'Archive did not contain spanreed.exe at its root' }
+        Copy-SpanreedBinary -Source $Bin -Destination $Dest
         Write-Host "Installed $Dest (release $ResolvedTag)"
     } finally {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Tmp

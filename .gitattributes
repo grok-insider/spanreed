@@ -5,3 +5,5 @@
 # Vendored UI distributions are hash-verified. Leave every byte as committed,
 # including JavaScript and CSS, so Windows checkout does not rewrite endings.
 desktop/vendor/** -text
+
+assets/** -text

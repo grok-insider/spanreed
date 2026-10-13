@@ -54,6 +54,7 @@ must stay empty.
 | `crates/spanreed-app/src/app/` | The facade used by the CLI, the tray, the desktop host and the local API. Each area owns its DTOs and its port: `usage` (`UsageStore`, `PricingSource`), `accounts` (`AccountStore`, `DeviceLogins`), `routing` (`RoutingStore`), `notifications` (settings, delivery, OS notifier), `sharing`, `sync`, `fabrials` (HTTP), `migration`, `clients` (`ClientConfigurator`), `proxy`/`agent` (in-process runtimes), `capture` and `setup` (`Installer`: OS service managers), `updates`, `window` (`DesktopBridge`), `addons`, `profiles`, `local_api`. `desktop_contracts.rs` generates the renderer types. |
 | `crates/spanreed-adapters/src/services.rs` | One implementation per port and `standard()`, the production `Services`. |
 | `crates/spanreed-adapters/src/*` | The adapters: the rest of this table. |
+| `crates/spanreed-remote` | Remote CLI composition library, compiled into the single `spanreed` executable; managed/private host lifecycle, enrollment and current-user service definitions. |
 | `crates/spanreed-tray` | `spanreed tray` (feature `tray`; empty without it, so workspace builds need no GTK): `menu`, `state`, `actions`, `visual`, `popover`, `platform`. Nix package builds this; musl GH zips do not. |
 | `desktop/` | Tauri + React local console (`src-tauri/src/{main,commands,notifications,shell}.rs`); `main.rs` composes the `AppContext`; commands include `agent_status`/`agent_start`/`agent_stop` (`AgentStatus` in `src/contracts.ts`) and the app tray menu has a Start/Stop agent host entry. Shared styles/components from `@fabrials/ui`. |
 | `privacy.rs` | Independent, default-off metrics publication and history synchronization consent. |
@@ -273,7 +274,7 @@ SPANREED_OFFLINE=1 cargo test --all
   (`release-plz-manual-v…` → `master`). Both flows use `scripts/release.py`.
 - Do **not** hand-edit `CHANGELOG.md` outside a Release PR.
 - No crates.io publication. Release orchestration uses `gh` with `GITHUB_TOKEN`; no personal token fallback.
-- Publish from the exact release merge SHA on `master`, after all four builds pass. Keep the release draft until all eight assets and checksums verify.
+- Publish from the exact release merge SHA on `master`, after all seven native builders and the corresponding-source producer pass. Keep the release draft until all sixteen artifacts (binaries/installers, source archive and checksums) verify.
 - Operations and recovery: `docs/release-automation.md`.
 
 ### Distribution (install vs binaries vs share)
@@ -281,10 +282,12 @@ SPANREED_OFFLINE=1 cargo test --all
 | Surface | Role |
 |---------|------|
 | **GitHub flake (stable)** | Linux gnu+tray: pin the **release tag** — `nix run` / `nix profile install github:grok-insider/spanreed/vX.Y.Z` and `homeManagerModules.default`. The tag is created **with** the GitHub Release. Floating `github:grok-insider/spanreed` follows `master` and is **not** stable. Org rule: [`../AGENTS.md`](../AGENTS.md). |
-| **GitHub Releases** | Binaries + `.sha256` + release notes only. **No** `install.sh` / `install.ps1` assets. |
+| **GitHub Releases** | Binaries, corresponding-source archive, `.sha256` sidecars and release notes. **No** `install.sh` / `install.ps1` assets. |
 | **fabrials.com** | Canonical install UX and one-liners (`/install/spanreed.sh` · `.ps1`). |
 | **`scripts/install.*` in this repo** | Dev/`--from-path` and source of truth copied into the web `public/install/` tree. |
 | **fabrials.com/api/spanreed** | Opt-in **authenticated share** (`share login` + Bearer `POST /v1/usage/snapshots`) into the public Usage AI pool. Not install hosting. |
+
+Remote and its embedded Portable PWA ship inside the same `spanreed` executable; no adjacent companion is needed. `assets/remote-web.source.json` records content hashes and honest source identities. Refresh and validate with `scripts/remote-assets.py`; release checks require committed inputs. Private and managed user-service setup: `docs/remote.md`. The standalone relay is the separate Nix package `spanreed-remote-relay`.
 
 Do not re-attach install scripts to GH Releases. Keep public one-liners pointing at
 the website.

@@ -5,20 +5,21 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
+from source_fixture import SHA, write_source
 
 SPEC = importlib.util.spec_from_file_location("release", Path(__file__).parents[1] / "release.py")
 release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 ROOT = Path(__file__).resolve().parents[2]
-SHA = "a" * 40
 BUILDER_JOBS = [("cli / cli (", "ubuntu-24.04, x86_64-unknown-linux-musl)"),
                 ("cli / cli (", "windows-latest, x86_64-pc-windows-msvc)"),
                 ("cli / cli (", "macos-latest, aarch64-apple-darwin)"),
                 ("cli / cli (", "macos-latest, x86_64-apple-darwin)"),
                 ("cli / macos-universal", ""),
-                ("desktop / desktop (", "linux)"), ("desktop / desktop (", "windows)")]
+                ("desktop / desktop (", "linux)"), ("desktop / desktop (", "windows)"), ("source", "")]
 
 
 @contextlib.contextmanager
@@ -40,12 +41,15 @@ def checkout():
 
 def artifacts(root, version="0.3.1", sha=SHA):
     import hashlib
-    names = release.binary_assets(version)
+    names = release.primary_assets(version)
     for index, name in enumerate(names):
         directory = root / str(index)
         directory.mkdir()
-        (directory / name).write_bytes(name.encode())
-        (directory / (name + ".sha256")).write_text(hashlib.sha256(name.encode()).hexdigest() + "  " + name + "\n")
+        if name == release.source_asset(version):
+            write_source(directory / name, version)
+        else:
+            (directory / name).write_bytes(name.encode())
+            (directory / (name + ".sha256")).write_text(hashlib.sha256(name.encode()).hexdigest() + "  " + name + "\n")
         (directory / "release-provenance.json").write_text(json.dumps({
             "sha": sha, "version": version, "assets": [name, name + ".sha256"],
         }))
@@ -177,6 +181,42 @@ class ArtifactTests(unittest.TestCase):
             next(root.rglob("*.exe")).unlink()
             with self.assertRaisesRegex(ValueError, "exactly one"):
                 release.verify_assets(root, "0.3.1", SHA)
+
+    def test_source_archive_cannot_be_omitted_or_rehashed_after_tampering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifacts(root)
+            archive_path = next(root.rglob(release.source_asset("0.3.1")))
+            with tarfile.open(archive_path, "r:gz") as archive:
+                entries = {member.name: (archive.extractfile(member).read(), member.mode) for member in archive}
+            archive_path.unlink()
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                release.verify_assets(root, "0.3.1", SHA)
+            entries["portable/apps/web/src/main.ts"] = (b"tampered", 0o644)
+            record = json.loads(entries["source-bundle.json"][0])
+            record["files"] = {name: {"sha256": release.source_bundle.sha256(data), "mode": mode}
+                               for name, (data, mode) in entries.items() if name != "source-bundle.json"}
+            entries["source-bundle.json"] = (release.source_bundle.encoded(record), 0o644)
+            release.source_bundle.write_archive(archive_path, entries)
+            archive_path.with_name(archive_path.name + ".sha256").write_text(
+                release.source_bundle.sha256(archive_path.read_bytes()) + "  " + archive_path.name + "\n")
+            with self.assertRaisesRegex(ValueError, "Git commit"):
+                release.verify_assets(root, "0.3.1", SHA)
+
+    def test_recovery_requires_successful_source_producer(self):
+        for source_jobs in ([], [{"name": "source", "conclusion": "failure"}]):
+            with self.subTest(source_jobs=source_jobs):
+                def api(path):
+                    if '/jobs?' in path:
+                        return {"jobs": [{"name": prefix + target, "conclusion": "success"}
+                                         for prefix, target in BUILDER_JOBS if prefix != "source"] + source_jobs}
+                    return {"head_sha": SHA, "event": "push", "path": ".github/workflows/release.yml", "status": "completed"}
+                with patch.object(release, "validate_source", return_value="0.3.1"), \
+                        patch.object(release, "api", side_effect=api), patch.object(release, "run") as run, \
+                        patch.dict(os.environ, {"GITHUB_RUN_ID": "other"}):
+                    with self.assertRaisesRegex(ValueError, "corresponding-source"):
+                        release.publish(SHA, "123")
+                    run.assert_not_called()
 
     def test_draft_resume_and_public_noop_never_clobber(self):
         with tempfile.TemporaryDirectory() as directory:

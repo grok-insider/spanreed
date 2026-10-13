@@ -16,6 +16,7 @@ mod list;
 mod privacy;
 mod probe;
 mod profile;
+mod remote;
 mod self_update;
 mod serve;
 mod setup;
@@ -42,6 +43,7 @@ const COMMANDS: &[(&str, Handler)] = &[
     ("history", history::run),
     ("capture", capture::run),
     ("agent", agent::run),
+    ("remote", remote::run),
     ("grok-proxy", grok_proxy::run),
     ("setup", setup::run),
     ("auth", auth::run),
@@ -89,6 +91,10 @@ pub fn run_cli() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if agent::invoked_as_legacy_bridge(&argv0) {
         return agent::cmd(&args);
+    }
+    if args.len() == 1 && matches!(args[0].as_str(), "--version" | "-V") {
+        println!("spanreed {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
     }
     dispatch(&crate::compose::context(), &args)
 }
