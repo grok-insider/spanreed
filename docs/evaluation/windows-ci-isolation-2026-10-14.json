@@ -3,7 +3,7 @@
   "vm": "win11-qa (qemu:///system)",
   "platform": "Windows 11 build 26200",
   "files": {
-    "scripts/run-windows-tests.ps1": "3f7f67afac4e095d39b3e0c7141083f11a0cf98eef138950de2586a7d160e470",
+    "scripts/run-windows-tests.ps1": "e12e0f195eb64ae6c1085c85b6cda1344200b6c7875a8a4494ce17a0a4d5837b",
     "scripts/windows-test-process.cs": "c67442300bd7d2deadccdd29958eb698304f989d940cb91b76c0cf8e201d18e3"
   },
   "normalProbe": {
@@ -67,5 +67,43 @@
     "checkoutCommit": "9be5ff95e9c91136b85bfd3de96542bf6e0f15f4",
     "jobId": 115597417543
   },
-  "evidenceArchiveFile": "cargo-cwd-final-evidence.zip"
+  "evidenceArchiveFile": "cargo-cwd-final-evidence.zip",
+  "cargoNativeProbe": {
+    "evidence": "spanreed-limited-evidence-513f40702f194616bc68f9b4e8d325f8",
+    "commands": [
+      "cargo metadata --locked --offline --no-deps --format-version 1",
+      "cargo run --locked --offline --quiet"
+    ],
+    "toolchain": "Cargo 1.95.0 x86_64-pc-windows-msvc",
+    "compiler": "MSVC 14.44.35207 Hostx64/x64, discovered using vswhere and VsDevCmd",
+    "exitCode": 0,
+    "compilationPerformed": true,
+    "nativeExecutableExecuted": true,
+    "nativeWorkingDirectoryMatchesSource": true,
+    "sourceReadOnly": true,
+    "administratorRoleActive": false,
+    "parentEnvironmentExcluded": true,
+    "accountRemoved": true,
+    "privateRootRemoved": true,
+    "cleanupErrors": []
+  },
+  "secondHostedCiRun": {
+    "headCommit": "49506b6",
+    "outcome": "failed",
+    "cause": "Native compiler setup was absent from the new account; PATH resolved Git link.exe",
+    "fixedBy": "Explicit MSVC compiler environment and absolute Cargo target linker; compiled native probe"
+  },
+  "nativeEvidenceArchiveFile": "cargo-msvc-evidence.zip",
+  "nativeEvidenceArchiveSha256": "5a10beb091a7d957a165a53d95664609a4649268906ebd3c95a5141f91ff758d",
+  "cleanupRetry": {
+    "limitMilliseconds": 10000,
+    "reason": "Windows WebCache temporarily retained V01.log after profile removal during first compiled probe",
+    "firstCompiledProbeExitCode": 1,
+    "firstCompiledProbeRustChecksExitCodes": [
+      0,
+      0
+    ],
+    "previousRootRemoved": true,
+    "finalProbeExitCode": 0
+  }
 }

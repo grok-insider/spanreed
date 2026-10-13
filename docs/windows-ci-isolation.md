@@ -13,7 +13,11 @@ writable target, Cargo registry, profile, temporary files and logs. Only Cargo's
 registry cache and index are copied; credentials and configuration are excluded.
 The installed toolchain receives a temporary read/execute grant, removed during
 cleanup. The child receives an explicit Windows/compiler environment and none
-of the parent's other environment variables.
+of the parent's other environment variables. MSVC is discovered with `vswhere`;
+`VsDevCmd` initializes an x64 compiler environment, from which only explicit
+compiler variables are copied. The MSVC linker directory precedes Git in PATH,
+and Cargo receives the absolute native linker path. The full developer
+environment is never printed or passed to the test user.
 
 The child verifies its SID, inactive administrator role, actual ownership of a
 new directory, rejection of writes to the source snapshot and absence of a
@@ -22,7 +26,9 @@ kill-on-close Windows Job, then resumes it. The default lifetime limit is 40
 minutes. Completion, failures and timeouts close that Job and remove the account,
 loaded profile after unload, toolchain grant and private working directory.
 Cleanup failures fail the job. Cleanup waits for an empty Job and an unloaded
-profile with separate five-second bounds. Evidence is retained separately for
+profile with separate five-second bounds. Removing the private directory retries
+for up to ten seconds for transient Windows WebCache locks, then fails if the
+directory remains. Evidence is retained separately for
 one day on non-PR jobs; PR jobs print their reports without uploading artifacts.
 
 The `cross` suite runs the existing default and tray checks/tests and the
@@ -42,8 +48,8 @@ setup requires an elevated Windows CI process. It does not alter any existing
 account or its memberships. It is a correctness fixture for trusted CI source,
 not a sandbox for hostile Cargo build scripts.
 
-The PowerShell/C# wrapper was tested in Windows 11 `win11-qa` without
-compiling Rust: a successful probe and an expected-failure two-second timeout.
+The PowerShell/C# lifetime wrapper was tested in Windows 11 `win11-qa`: a
+successful probe and an expected-failure two-second timeout.
 Both used newly created non-administrator accounts, proved file ownership and
 source/environment isolation, terminated a sleeping descendant and removed
 their accounts and private roots without cleanup errors. The temporary task
@@ -58,10 +64,21 @@ The `cargo-probe` suite uses the same command runner to execute real Cargo
 `metadata --locked --offline --no-deps --format-version 1` against a synthetic
 read-only package, checking its reported manifest and workspace paths. This
 passes under a new limited account with Cargo 1.95.0; removing the working
-directory assignment reproduces the original failure. It compiles no source
-and copies no registry cache.
+directory assignment reproduces the original failure. It copies no registry cache.
+
+The second hosted run reached compilation but selected Git's `link.exe`, because
+the new account had no Visual Studio compiler setup. The wrapper now initializes
+that setup explicitly. `cargo-probe` also compiles and executes a dependency-free
+native binary via `cargo run --locked --offline --quiet`, checking its actual
+working directory. Both commands passed with Rust 1.95.0 and MSVC 14.44.35207
+under a fresh non-administrator account; account, profile and private directory
+cleanup passed. The first compiled probe exposed the transient WebCache cleanup
+lock; its Rust commands passed, but the wrapper correctly failed cleanup. The
+remaining directory was removed and the complete probe passed with bounded
+cleanup retries. No mutation substituting Git's linker was run in this guest,
+which has no Git installation.
 
 The complete Cargo suites have not yet passed through this wrapper. Only
-their subsequent CI results can establish that the native compiler setup,
+their subsequent CI results can establish that the hosted compiler setup,
 dependencies and all tests work under the new account. These probes do not
 qualify a Windows release or enable the closed Windows self-update gate.

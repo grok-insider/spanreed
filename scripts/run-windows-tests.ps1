@@ -46,7 +46,7 @@ if ($Child) {
             } elseif ($config.suite -eq 'desktop') {
                 @(@('test','--locked','--features','contracts'), @('test','--locked','--lib','secret::platform::tests::credential_roundtrip','--','--ignored','--exact'))
             } else {
-                ,@('metadata','--locked','--offline','--no-deps','--format-version','1')
+                @(@('metadata','--locked','--offline','--no-deps','--format-version','1'), @('run','--locked','--offline','--quiet'))
             })
             $index = 0
             foreach ($arguments in $commands) {
@@ -71,10 +71,15 @@ if ($Child) {
                 $process.Dispose()
                 $report.checks += @{command=('cargo ' + ($arguments -join ' '));exitCode=$code;log=[IO.Path]::GetFileName($log)}
                 if ($code -ne 0) { throw ('Cargo check failed; see ' + [IO.Path]::GetFileName($log)) }
-                if ($config.suite -eq 'cargo-probe') {
+                if ($config.suite -eq 'cargo-probe' -and $index -eq 0) {
                     $metadata = $output | ConvertFrom-Json
                     if ($metadata.workspace_root -ne $config.source -or @($metadata.packages).Count -ne 1 -or $metadata.packages[0].manifest_path -ne (Join-Path $config.source 'Cargo.toml')) { throw 'Native Cargo did not execute in the isolated source directory' }
                     $report.nativeWorkingDirectory = $metadata.workspace_root
+                }
+                if ($config.suite -eq 'cargo-probe' -and $index -eq 1) {
+                    if ($output.Trim() -ne $config.source) { throw 'The compiled native executable did not run in the isolated source directory' }
+                    $report.nativeExecutableWorkingDirectory = $output.Trim()
+                    $report.nativeLinker = $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER
                 }
                 $index++
             }
@@ -101,6 +106,7 @@ $rng.Dispose()
 $account = $null
 $process = $null
 $toolchain = $null
+$compilerEnvironment = @{}
 $exitCode = 1
 try {
     New-Item -ItemType Directory -Path $root,$evidence | Out-Null
@@ -121,9 +127,9 @@ try {
     if ($Suite -in @('cross','desktop','cargo-probe')) {
         if ($Suite -eq 'cargo-probe') {
             $fixture = Join-Path $root 'source'
-            Set-Content -LiteralPath (Join-Path $fixture 'Cargo.toml') -Encoding ascii -Value "[package]`nname = `"windows-ci-cwd-probe`"`nversion = `"0.0.0`"`nedition = `"2024`"`n[lib]`npath = `"lib.rs`""
+            Set-Content -LiteralPath (Join-Path $fixture 'Cargo.toml') -Encoding ascii -Value "[package]`nname = `"windows-ci-cwd-probe`"`nversion = `"0.0.0`"`nedition = `"2024`"`n[[bin]]`nname = `"native-probe`"`npath = `"main.rs`""
             Set-Content -LiteralPath (Join-Path $fixture 'Cargo.lock') -Encoding ascii -Value "version = 4`n[[package]]`nname = `"windows-ci-cwd-probe`"`nversion = `"0.0.0`""
-            Set-Content -LiteralPath (Join-Path $fixture 'lib.rs') -Encoding ascii -Value ''
+            Set-Content -LiteralPath (Join-Path $fixture 'main.rs') -Encoding ascii -Value 'fn main() { println!("{}", std::env::current_dir().unwrap().display()); }'
         } else {
             $commit = (& git -C $source rev-parse HEAD).Trim()
             if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[a-f0-9]{40}$') { throw 'Cannot identify checkout commit' }
@@ -134,6 +140,40 @@ try {
         }
         $cargo = (& rustup which cargo).Trim()
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cargo)) { throw 'Cannot locate installed Cargo' }
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Visual Studio Installer discovery is required' }
+        $installation = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
+        if ($LASTEXITCODE -ne 0 -or -not $installation) { throw 'Cannot locate installed MSVC build tools' }
+        $developerCommand = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
+        if (-not (Test-Path -LiteralPath $developerCommand)) { throw 'Cannot locate the Visual Studio developer command' }
+        $compilerStart = New-Object Diagnostics.ProcessStartInfo
+        $compilerStart.FileName = $env:ComSpec
+        $compilerStart.Arguments = '/d /s /c ""' + $developerCommand + '" -no_logo -arch=x64 -host_arch=x64 >nul && set"'
+        $compilerStart.UseShellExecute = $false
+        $compilerStart.CreateNoWindow = $true
+        $compilerStart.RedirectStandardOutput = $true
+        $compilerStart.RedirectStandardError = $true
+        $compilerProcess = New-Object Diagnostics.Process
+        $compilerProcess.StartInfo = $compilerStart
+        try {
+            if (-not $compilerProcess.Start()) { throw 'Cannot start the Visual Studio developer command' }
+            $compilerOutput = $compilerProcess.StandardOutput.ReadToEndAsync()
+            $compilerError = $compilerProcess.StandardError.ReadToEndAsync()
+            if (-not $compilerProcess.WaitForExit(60000)) { $compilerProcess.Kill(); throw 'Visual Studio compiler discovery timed out' }
+            if ($compilerProcess.ExitCode -ne 0) { throw 'Visual Studio compiler environment initialization failed' }
+            $compilerNames = @('PATH','INCLUDE','LIB','LIBPATH','VCINSTALLDIR','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','UniversalCRTSdkDir','UCRTVersion','VSCMD_ARG_TGT_ARCH','VSCMD_ARG_HOST_ARCH','WindowsSdkBinPath','WindowsSdkVerBinPath','VCToolsRedistDir')
+            foreach ($line in ($compilerOutput.GetAwaiter().GetResult() -split "`r?`n")) {
+                $pair = $line -split '=',2
+                if ($pair.Length -eq 2 -and $pair[0] -in $compilerNames) { $compilerEnvironment[$pair[0]]=$pair[1] }
+            }
+            $null = $compilerError.GetAwaiter().GetResult()
+        } finally { $compilerProcess.Dispose() }
+        if (-not $compilerEnvironment.VCToolsInstallDir -or -not $compilerEnvironment.INCLUDE -or -not $compilerEnvironment.LIB -or $compilerEnvironment.VSCMD_ARG_TGT_ARCH -ne 'x64') { throw 'The explicit MSVC environment is incomplete' }
+        $compilerDirectory = Join-Path $compilerEnvironment.VCToolsInstallDir 'bin\Hostx64\x64'
+        $linker = Join-Path $compilerDirectory 'link.exe'
+        if (-not (Test-Path -LiteralPath $linker) -or -not (Test-Path -LiteralPath (Join-Path $compilerDirectory 'cl.exe'))) { throw 'Cannot locate the native MSVC compiler and linker' }
+        $compilerEnvironment.PATH = $compilerDirectory + ';' + $compilerEnvironment.PATH
+        $compilerEnvironment.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = $linker
         $toolchain = Split-Path -Parent (Split-Path -Parent $cargo)
         & icacls.exe $toolchain /grant $readGrant | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Cannot grant read access to the installed toolchain' }
@@ -152,11 +192,12 @@ try {
     $configurationPath = Join-Path $root 'configuration.json'
     @{sid=$sid;suite=$Suite;source=(Join-Path $root 'source');sourceCommit=$commit;logs=(Join-Path $root 'logs');cargo=$cargo} | ConvertTo-Json | Set-Content -LiteralPath $configurationPath -Encoding utf8
     $variables = @{}
-    foreach ($name in @('SystemRoot','WINDIR','ComSpec','OS','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','ProgramFiles','ProgramFiles(x86)','ProgramW6432','INCLUDE','LIB','LIBPATH','VCINSTALLDIR','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','UniversalCRTSdkDir','UCRTVersion','VSCMD_ARG_TGT_ARCH')) {
+    foreach ($name in @('SystemRoot','WINDIR','ComSpec','OS','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','ProgramFiles','ProgramFiles(x86)','ProgramW6432')) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) { $variables[$name]=$value }
     }
-    $variables.PATH = if ($cargo) { (Split-Path -Parent $cargo) + ';' + $env:PATH } else { $env:PATH }
+    foreach ($entry in $compilerEnvironment.GetEnumerator()) { $variables[$entry.Name]=$entry.Value }
+    $variables.PATH = if ($cargo) { (Split-Path -Parent $cargo) + ';' + $compilerEnvironment.PATH } else { $env:PATH }
     $variables.USERPROFILE = Join-Path $root 'profile'
     $variables.HOME = $variables.USERPROFILE
     $variables.TEMP = Join-Path $root 'temp'
@@ -181,7 +222,7 @@ try {
     $exitCode = [int]$process.ExitCode
     if ($exitCode -eq 0) {
         $completed = Get-Content -LiteralPath (Join-Path $root 'logs\report.json') -Raw | ConvertFrom-Json
-        $expected = if ($Suite -eq 'cross') { 5 } elseif ($Suite -eq 'desktop') { 2 } else { 1 }
+        $expected = if ($Suite -eq 'cross') { 5 } elseif ($Suite -in @('desktop','cargo-probe')) { 2 } else { 1 }
         if ($completed.result -ne 'passed' -or $completed.sid -ne $sid -or $completed.createdOwner -ne $sid -or $completed.administratorRoleActive -ne $false -or $completed.sourceCommit -ne $commit -or @($completed.checks).Count -ne $expected -or @($completed.checks | Where-Object exitCode -ne 0).Count) { throw 'Windows test report did not prove the complete requested suite' }
     }
 } finally {
@@ -205,7 +246,14 @@ try {
         } catch { $cleanupErrors.Add($_.Exception.Message) }
     }
     $password.Dispose()
-    try { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } } catch { $cleanupErrors.Add($_.Exception.Message) }
+    $rootWait = [Diagnostics.Stopwatch]::StartNew()
+    while (Test-Path -LiteralPath $root) {
+        try { Remove-Item -LiteralPath $root -Recurse -Force }
+        catch {
+            if ($rootWait.ElapsedMilliseconds -ge 10000) { $cleanupErrors.Add($_.Exception.Message); break }
+            Start-Sleep -Milliseconds 100
+        }
+    }
     if ($Suite -in @('probe','timeout-probe')) {
         Start-Sleep -Milliseconds 3500
         if (Test-Path -LiteralPath (Join-Path $evidence 'descendant-escaped')) { $cleanupErrors.Add('A descendant escaped its Job') }
