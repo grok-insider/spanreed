@@ -156,6 +156,7 @@ def validate_pr(number, sha, release_only=False, wait_for_head=False):
     if release_only or base == "master":
         if base != "master" or not head.startswith(PREFIXES):
             raise ValueError("Only release branches may target master")
+        check_stable_origin(git("show", f"{sha}:assets/remote-web/index.html"))
     elif base != "dev" or not head.startswith(("sync-master-", "release-plz-")):
         raise ValueError("Unexpected dispatched integration PR")
     return pr
@@ -172,11 +173,23 @@ def dispatch(number, sha):
     print(f"Dispatched {len(workflows)} workflows for PR #{number} at {sha}")
 
 
+def check_stable_origin(index):
+    origins = re.findall(r'<meta name="grok-app-origin" content="([^"]+)">', index)
+    if origins != ["https://desktop.grok.me"]:
+        raise ValueError("Stable release requires an embedded PWA built for https://desktop.grok.me; rebuild and commit the production bundle before preparing a release")
+
+
+def verify_stable_source(path, version, sha):
+    _, entries = source_bundle.verify(path, version, sha, include_files=True)
+    check_stable_origin(entries["spanreed/assets/remote-web/index.html"][0].decode())
+
+
 def validate_source(sha):
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("release_sha must be a full commit SHA")
     if git("rev-parse", "HEAD") != sha:
         raise ValueError("Checkout differs from requested release SHA")
+    check_stable_origin(git("show", f"{sha}:assets/remote-web/index.html"))
     git("merge-base", "--is-ancestor", sha, "origin/master")
     prs = api(f"commits/{sha}/pulls")
     if not any(p.get("merged_at") and p.get("merge_commit_sha") == sha
@@ -213,7 +226,7 @@ def verify_assets(root, version, sha):
             expected = files[name + ".sha256"].read_text().split()
             if expected != [hashlib.sha256(path.read_bytes()).hexdigest(), name]:
                 raise ValueError(f"Checksum mismatch: {name}")
-    source_bundle.verify(files[source_asset(version)], version, sha)
+    verify_stable_source(files[source_asset(version)], version, sha)
     return files
 
 
@@ -243,7 +256,7 @@ def published_complete(sha, version):
             digest = hashlib.sha256((root / name).read_bytes()).hexdigest()
             if (root / (name + ".sha256")).read_text().split() != [digest, name]:
                 raise ValueError("Published release checksum mismatch")
-        source_bundle.verify(root / source_asset(version), version, sha)
+        verify_stable_source(root / source_asset(version), version, sha)
     return True
 
 
@@ -323,6 +336,7 @@ def prepare(bump, force, dry_run):
     version = next_version(base, bump)
     git("fetch", "origin", "dev", "master", "--tags")
     git("checkout", "-B", "prepare-release", "origin/dev")
+    check_stable_origin(git("show", "HEAD:assets/remote-web/index.html"))
     if subprocess.run(["git", "merge-base", "--is-ancestor", latest["tag_name"], "HEAD"]).returncode:
         raise ValueError("dev lacks the latest release; merge the master-to-dev synchronization PR first")
     if package_version() != base:

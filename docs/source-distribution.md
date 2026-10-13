@@ -36,9 +36,37 @@ would still be tracked source: normal secret scanning and review remain required
 2. Finish and commit Portable. Rebuild `assets/remote-web` using this Portable
    checkout and the same clean library revision as the Spanreed pin, then commit
    the bundle and its source manifest in Spanreed.
+   For a stable release, explicitly set
+   `FABRIALS_REMOTE_ORIGIN=https://desktop.grok.me` for that rebuild. A bundle
+   committed for `grok.fabrials.com` is a qualification candidate and must be
+   replaced with a reviewed, committed production bundle before releasing.
 3. Prepare and merge the normal release PR. The source job checks out Portable
    by its recorded commit. It needs no private library credentials. Seven native
    builders and the source producer must all succeed before publication.
+
+Release preparation and PR validation reject a qualification shell before
+pushing a stable release branch or passing its master guard. Stable release
+validation reads the application-origin marker from the exact release Git
+commit. Publication and recovery also check it inside the verified
+corresponding-source archive. Missing, ambiguous or qualification-origin markers
+stop publication before release writes. PR builds and source archives for the
+qualification environment remain supported; the release workflow never rebuilds
+or retargets an embedded shell silently.
+
+Merge the library and Portable changes with merge commits that preserve the
+reviewed source revisions. Do not squash or rebase revisions already named by a
+qualified bundle. The library pin can remain on the reviewed commit after its
+merge into `master`; it does not have to name the merge commit when the source
+tree is unchanged. If a different library revision is selected, use the canonical
+subtree sync script and rebuild the embed and source archive. Never edit the
+recorded pin or manifests to imitate the new revision.
+
+The Portable checkout used to package or deploy must be its recorded revision,
+not a later `dev` merge commit with an identical tree. Preserve a reference to
+that reviewed revision while preparing the artifact. Any rebase, new source
+revision or changed integration tree requires a new source chain and candidate;
+source verification deliberately rejects exchanging commits based only on an
+apparently equivalent diff.
 
 For a local check from clean release inputs, use an output outside the checkout:
 

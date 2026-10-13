@@ -15,7 +15,7 @@ def identity(entries):
     return {"head": source.object_hash("commit", commit).hex(), "commit": base64.b64encode(commit).decode()}
 
 
-def fixtures(version="0.3.1"):
+def fixtures(version="0.3.1", origin="https://desktop.grok.me"):
     portable = {name: (body, 0o644) for name, body in {
         "package.json": b'{"packageManager":"pnpm@10.33.2"}',
         "pnpm-lock.yaml": b"lockfileVersion: 9.0\n",
@@ -46,7 +46,8 @@ def fixtures(version="0.3.1"):
         manifest["sources"][name] = {"repository": repo, "head": revision["head"], "dirty": False,
                                      "files": files, "treeSha256": source.sha256(source.encoded(files))}
     shell = {
-        "index.html": ('<!doctype html><meta name="grok-shell-build" content="' + "a" * 64 + '">').encode(),
+        "index.html": ('<!doctype html><meta name="grok-app-origin" content="' + origin
+                       + '"><meta name="grok-shell-build" content="' + "a" * 64 + '">').encode(),
         "manifest.webmanifest": b'{"start_url":"/","scope":"/"}',
         "sw.js": b"const shell=[];",
         "third-party-notices.txt": b"Synthetic dependency notices\n",
@@ -73,7 +74,7 @@ def fixtures(version="0.3.1"):
 SHA = fixtures()[2]["spanreed"]["head"]
 
 
-def write_source(path, version="0.3.1"):
-    spanreed, portable, identities = fixtures(version)
+def write_source(path, version="0.3.1", origin="https://desktop.grok.me"):
+    spanreed, portable, identities = fixtures(version, origin)
     with patch.object(source, "snapshot", side_effect=[(spanreed, identities["spanreed"]), (portable, identities["portable"])]):
         source.build(Path("spanreed"), Path("portable"), path, version, identities["spanreed"]["head"])
