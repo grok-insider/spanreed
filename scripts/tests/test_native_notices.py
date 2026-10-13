@@ -5,6 +5,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('native_notices', ROOT / 'scripts/native-notices.py')
@@ -13,6 +14,40 @@ spec.loader.exec_module(notices)
 
 
 class NativeNoticesTests(unittest.TestCase):
+    def test_original_rust_source_identity_and_nested_bytes_are_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / 'rust.tar.gz'
+            files = {name: b'Original stdlib notice\r\n' for name in ['LICENSE-MIT', 'LICENSE-APACHE', 'COPYRIGHT', 'LICENSES/Unicode-3.0.txt', 'library/compiler-builtins/LICENSE.txt', 'library/compiler-builtins/libm/LICENSE.txt']}
+            files['version'] = b'1.2.3 (abcdef123 2026-01-01)\n'
+            with tarfile.open(archive, 'w:gz') as stream:
+                for name, value in files.items():
+                    member = tarfile.TarInfo('rustc-1.2.3-src/' + name)
+                    member.size = len(value)
+                    stream.addfile(member, io.BytesIO(value))
+            sections, provenance = notices.source_toolchain_notices(archive, 'rustc 1.2.3 (abcdef123 2026-01-01)')
+            self.assertEqual(len(sections), 6)
+            self.assertTrue(all(value == b'Original stdlib notice\r\n' for _, _, value in sections))
+            self.assertTrue(all(p['source'] == 'rustc-source-sha256:' + notices.sha(archive.read_bytes()) for p in provenance))
+            with self.assertRaisesRegex(ValueError, 'version differs'):
+                notices.source_toolchain_notices(archive, 'rustc 1.2.3 (abcdef124 2026-01-01)')
+
+    def test_offline_inputs_never_fetch_and_reject_changed_originals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root / 'LICENSE'
+            original.write_bytes(b'Original\r\n')
+            index = root / 'inputs.json'
+            index.write_text(json.dumps({'https://example.com/LICENSE': {'file': str(original), 'sha256': notices.sha(original.read_bytes())}}))
+            with patch.dict('os.environ', {'SPANREED_NOTICE_INPUTS': str(index)}), patch.object(notices.urllib.request, 'urlopen') as network:
+                self.assertEqual(notices.fetch('https://example.com/LICENSE', 100), b'Original\r\n')
+                with self.assertRaises(notices.urllib.error.HTTPError) as failure:
+                    notices.fetch('https://example.com/missing', 100)
+                failure.exception.close()
+                original.write_bytes(b'Changed')
+                with self.assertRaisesRegex(ValueError, 'checksum'):
+                    notices.fetch('https://example.com/LICENSE', 100)
+                network.assert_not_called()
+
     def test_normal_and_build_closure_includes_macros_but_not_dev_only_packages(self):
         packages = [{'id': name, 'name': name, 'version': '1.0.0', 'source': None if name == 'root' else 'registry'} for name in ['root','normal','build','dev']]
         nodes = [{'id': 'root', 'deps': [{'pkg': name, 'dep_kinds': [{'kind': kind}]} for name,kind in [('normal',None),('build','build'),('dev','dev')]]}]

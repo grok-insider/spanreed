@@ -88,11 +88,15 @@ closure includes both CPU architectures; actual ARM desktop execution still
 requires platform verification.
 
 The desktop workflow builds the native application and a platform installer:
-Debian `.deb`, macOS `.dmg`, or Windows NSIS setup executable. It collects
-installer SHA-256 files in artifacts explicitly named `unsigned`; these are
-review artifacts, not signed releases. Signing, notarization and publication
-remain separate release requirements. A workflow definition is not evidence
-that those platforms have been tested.
+Debian `.deb` or Windows NSIS setup executable, with macOS `.dmg` opt-in only.
+It embeds original native/frontend notices and includes complete registry
+sources in the installer. Every build verifies those inputs and the executable's
+embedded bytes before collecting installer SHA-256 files. Pull requests perform
+these checks without uploading artifacts; reusable release builds and manual
+dispatches upload `spanreed-release-desktop-<OS>` with one-day retention and fail
+if uploads are unavailable. Windows installers are unsigned. A workflow
+definition is not evidence that those platforms have been tested. See
+[native distribution qualification](../docs/native-distribution.md).
 
 For a signed macOS review artifact, manually dispatch Desktop builds with
 `sign_macos=true`. After the unsigned platform jobs pass, the additional job
@@ -105,14 +109,17 @@ Configure the `desktop-signing` GitHub environment with `APPLE_CERTIFICATE`
 password) and `APPLE_TEAM_ID`. These credentials are available only to the
 signing step. Missing configuration fails rather than producing an unsigned
 artifact under a signed name. Configure environment branch/reviewer rules for
-the refs permitted to sign. This path has not yet run on a macOS runner.
+the refs permitted to sign. This path has not yet run on a macOS runner, and its
+required native notice gate stays closed until the macOS closure is qualified.
 The variables follow the official
 [Tauri signing and notarization guide](https://v2.tauri.app/distribute/sign/macos/).
-Windows signing and release publication still require their own configured
-distribution credentials and workflow.
+Windows signing remains unconfigured; the release workflow publishes only after
+all qualified Linux/Windows builders and the corresponding-source producer pass.
 
-To build an installer locally, run `bun run tauri build --bundles deb` on Linux,
-`--bundles dmg` on macOS, or `--bundles nsis` on Windows from this directory.
+For a local development installer, run `bun run tauri build --bundles deb` on
+Linux, `--bundles dmg` on macOS, or `--bundles nsis` on Windows from this directory.
+Redistribution additionally requires the notice generation, staging, required
+build environment and post-build verification used by the desktop workflow.
 Bundler tools are cached under `target/.tauri` so Windows SYSTEM builds do not
 rely on its restricted profile cache.
 The Ubuntu 24.04 Debian build requires glibc 2.39 or newer. The package declares
@@ -166,8 +173,8 @@ the preparatory macOS job with `build_macos=true` on the Desktop builds manual
 workflow; `sign_macos=true` also enables it. Neither option changes the deferred
 support status without the native evidence below.
 
-The CLI CI similarly requires manual `qualify_macos=true` for its macOS job.
-Automatic release binaries currently cover Linux x86_64 and Windows x64;
+The CLI release matrix excludes macOS entirely.
+Automatic release binaries cover Linux x86_64 and Windows x64;
 macOS and ARM artifacts remain deferred for this implementation.
 
 As of 2026-09-07, macOS/ARM qualification is deferred by product decision until a contributor with macOS hardware can help. The existing build/signing configuration is preparatory, not a verified support claim. Contributors should record their OS and architecture, source revision, build output and checksums, and native onboarding, account authorization, proxy, preferences, notifications and migration results. Universal Intel/Apple Silicon packaging, Developer ID signing, notarization and Gatekeeper verification also require real evidence before distribution is qualified. Keep credentials and signing material in their secret stores.

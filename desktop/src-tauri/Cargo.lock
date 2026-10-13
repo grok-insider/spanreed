@@ -4222,6 +4222,7 @@ dependencies = [
  "fabrials-upstreams",
  "fabrials-usage-import",
  "flate2",
+ "fs2",
  "getrandom 0.2.17",
  "jsonc-parser",
  "libc",
@@ -4240,6 +4241,7 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "toml_edit 0.20.7",
+ "windows-sys 0.59.0",
  "zip",
 ]
 

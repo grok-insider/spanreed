@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test": "bun test ./tests",
+    "test": "bun test ./tests && node --test scripts/frontend-notices.test.mjs",
     "check:vendor": "node vendor/fabrials-ui-0.8.2/verify.mjs vendor/fabrials-ui-0.8.2 vendor/fabrials-ai-ui-0.8.2",
     "tauri": "tauri"
   },

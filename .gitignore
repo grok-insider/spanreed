@@ -32,3 +32,9 @@ nohup.out
 /desktop/src-tauri/gen
 __pycache__/
 *.pyc
+
+/native-rust-sources
+/native-notices
+/desktop/native-notices
+/desktop/distribution-notices
+/desktop/src-tauri/notices.conf.json

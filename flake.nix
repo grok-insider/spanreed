@@ -29,6 +29,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           version = (lib.importTOML ./desktop/src-tauri/Cargo.toml).package.version;
+          notices = import ./nix/notices.nix { inherit pkgs; manifest = "desktop/src-tauri/Cargo.toml"; lockfile = ./desktop/src-tauri/Cargo.lock; };
           # Keep source builds independent from local node_modules, target and dist.
           source = lib.cleanSourceWith {
             src = ./.;
@@ -81,8 +82,21 @@
             ln -s ../../vendor/fabrials-ai-ui-0.8.2 desktop/node_modules/@fabrials/ai-ui
             patchShebangs desktop/node_modules
             (cd desktop && bun run build)
+            export SPANREED_NOTICE_INPUTS=${notices.inputIndex}
+            ${pkgs.python3}/bin/python3 scripts/native-notices.py generate \
+              --manifest ${notices.manifest} --package spanreed-desktop \
+              --target ${notices.target} --features tauri/custom-protocol \
+              --crate-archives ${notices.archiveIndex} --rust-source-archive ${notices.rustSource} \
+              --output "$TMPDIR/spanreed-desktop-notices"
+            export SPANREED_NATIVE_NOTICES="$TMPDIR/spanreed-desktop-notices/THIRD-PARTY-NOTICES.txt"
+            export SPANREED_NATIVE_NOTICES_REQUIRED=1
           '';
           postInstall = ''
+            mkdir -p "$out/share/spanreed-desktop/licenses"
+            cp -R "$TMPDIR/spanreed-desktop-notices/." "$out/share/spanreed-desktop/licenses/"
+            cp LICENSE "$out/share/spanreed-desktop/licenses/LICENSE"
+            cp desktop/dist/FRONTEND-NOTICES.txt "$out/share/spanreed-desktop/licenses/"
+            cp desktop/dist/frontend-notices.json "$out/share/spanreed-desktop/licenses/"
             install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/com.fabrials.spanreed.png"
             install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/spanreed-desktop.png"
             mkdir -p "$out/share/applications"
@@ -123,6 +137,7 @@
         { system, tray ? false }:
         let
           pkgs = import nixpkgs { inherit system; };
+          notices = import ./nix/notices.nix { inherit pkgs; manifest = "Cargo.toml"; lockfile = ./Cargo.lock; };
 
           # `secret-tool` (libsecret) is the only optional runtime dep: it is
           # used solely as a fallback when a provider stores its token in the
@@ -150,6 +165,19 @@
           FABRIALS_AGENT_HOST_WEB_DIST = "${./assets/remote-web}";
           preBuild = ''
             ${pkgs.python3}/bin/python3 scripts/remote-assets.py check
+            export SPANREED_NOTICE_INPUTS=${notices.inputIndex}
+            ${pkgs.python3}/bin/python3 scripts/native-notices.py generate \
+              --manifest ${notices.manifest} --target ${notices.target} \
+              ${lib.optionalString tray "--features tray"} \
+              --crate-archives ${notices.archiveIndex} --rust-source-archive ${notices.rustSource} \
+              --output "$TMPDIR/spanreed-native-notices"
+            export SPANREED_NATIVE_NOTICES="$TMPDIR/spanreed-native-notices/THIRD-PARTY-NOTICES.txt"
+            export SPANREED_NATIVE_NOTICES_REQUIRED=1
+          '';
+          postInstall = ''
+            mkdir -p "$out/share/spanreed/licenses"
+            cp -R "$TMPDIR/spanreed-native-notices/." "$out/share/spanreed/licenses/"
+            cp LICENSE "$out/share/spanreed/licenses/LICENSE"
           '';
           # Single source of truth: Cargo.toml (release-plz bumps it).
           version = (lib.importTOML ./Cargo.toml).package.version;

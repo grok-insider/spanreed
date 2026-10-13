@@ -1,0 +1,19 @@
+{
+  "https://raw.githubusercontent.com/OpenByteDev/dlopen2/cc80e4a0a90d499b677fdf7743699b4b3a43a989/LICENSE": "39fa265207450e77c62e90c5594a06c085b655d8374c7ced4bf7894b6bd95dd2",
+  "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae",
+  "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+  "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT": "2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50",
+  "https://raw.githubusercontent.com/leotaku/web-push-native/6b0a3f10377af3c9401a7c1a60b1e34d41155c5d/LICENSE-APACHE": "c95bae1d1ce0235ecccd3560b772ec1efb97f348a79f0fbe0a634f0c2ccefe2c",
+  "https://raw.githubusercontent.com/leotaku/web-push-native/6b0a3f10377af3c9401a7c1a60b1e34d41155c5d/LICENSE-MIT": "5ea65e0650efc73dc8b3612ff337f8c5dd94ffbd73e0e722a936957cf740098b",
+  "https://raw.githubusercontent.com/oconnor663/blake2_simd/47714dc3c424e82213d7f2eb4a833e3843017be5/LICENSE": "27e0387973d6b8507cb15f825f6f26e0278d4d5857082c1f56b49a7b39a90183",
+  "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+  "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+  "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-APACHE": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+  "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-MIT": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+  "https://raw.githubusercontent.com/tauri-apps/libappindicator-rs/eafd1e3682a1247f595410266091e9684021cb6f/LICENSE-APACHE": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+  "https://raw.githubusercontent.com/tauri-apps/libappindicator-rs/eafd1e3682a1247f595410266091e9684021cb6f/LICENSE-MIT": "eb227437252b2a7a9c1fc342c93ade1f3d7ce38cc6dd754f613db07d53ceff0b",
+  "https://raw.githubusercontent.com/tauri-apps/tauri/6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a/LICENSE_MIT": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d",
+  "https://raw.githubusercontent.com/wravery/webview2-rs/d3999204be85efe4c73c0406668b863b25b3946d/LICENSE": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+  "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+  "https://www.mozilla.org/media/MPL/2.0/index.txt": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04"
+}

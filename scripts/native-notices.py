@@ -86,17 +86,24 @@ def supplemental_notices(archive_path, package):
     root = f"{package['name']}-{package['version']}"
     with tarfile.open(archive_path, 'r:gz') as archive:
         manifest = tomllib.loads(archive.extractfile(root + '/Cargo.toml').read().decode())['package']
-        repository = manifest['repository'].replace('http://github.com/', 'https://github.com/').removesuffix('.git').rstrip('/')
+        pins = json.loads(read(Path(__file__).parent / 'notices/source-pins.json', MAX_NOTICE))
+        pinned = pins.get(f"{package['name']}@{package['version']}", {})
+        repository = manifest.get('repository')
+        if not repository:
+            require(pinned.get('crateSha256') == sha(read(archive_path)), 'Missing reviewed repository identity')
+            repository = pinned['repository']
+        repository = repository.replace('http://github.com/', 'https://github.com/').removesuffix('.git').rstrip('/')
         try:
             commit = json.loads(archive.extractfile(root + '/.cargo_vcs_info.json').read())['git']['sha1']
         except KeyError:
-            pins = json.loads(read(Path(__file__).parent / 'notices/source-pins.json', MAX_NOTICE))
-            pinned = pins.get(f"{package['name']}@{package['version']}", {})
             require(pinned.get('repository') == repository and pinned.get('crateSha256') == sha(read(archive_path)), 'Missing reviewed source pin')
             commit = pinned['commit']
     require(re.fullmatch(r'[a-f0-9]{40}', commit) and re.fullmatch(r'https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository), 'Missing pinned upstream notice source')
     base = repository.replace('https://github.com/', 'https://raw.githubusercontent.com/') + '/' + commit + '/'
-    return [(base + name, name) for name in ['LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'COPYING', 'LICENSE.txt', 'LICENSE.md']]
+    sources = [(base + name, name) for name in ['LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE', 'LICENSE_MIT', 'LICENSE_APACHE', 'COPYING', 'LICENSE.txt', 'LICENSE.md']]
+    if package.get('license') == 'MPL-2.0':
+        sources.append(('https://www.mozilla.org/media/MPL/2.0/index.txt', 'LICENSE-MPL-2.0'))
+    return sources
 
 
 def render(sections):
@@ -113,17 +120,74 @@ def render(sections):
 
 
 def fetch(url, limit):
+    offline = os.environ.get('SPANREED_NOTICE_INPUTS')
+    if offline:
+        inputs = json.loads(read(offline))
+        if url not in inputs:
+            raise urllib.error.HTTPError(url, 404, 'No pinned offline input', {}, None)
+        item = inputs[url]
+        content = read(item['file'], limit)
+        require(sha(content) == item['sha256'], 'Pinned offline notice checksum differs')
+        return content
     with urllib.request.urlopen(url, timeout=45) as response:
         content = response.read(limit + 1)
     require(len(content) <= limit, 'Downloaded input exceeds limit')
     return content
 
 
-def toolchain_notices(rustc, target, existing=None):
+def source_toolchain_notices(archive_path, rustc):
+    match = re.fullmatch(r'rustc (\d+\.\d+\.\d+) \(([^)]+)\)(?: \(built from a source tarball\))?', rustc)
+    require(match is not None, 'Unsupported Rust toolchain identity')
+    expected_version = f'{match[1]} ({match[2]})'
+    root = f'rustc-{match[1]}-src/'
+    archive_path = Path(archive_path)
+    require(archive_path.is_file() and not archive_path.is_symlink() and archive_path.stat().st_size <= 1024 * 1024 * 1024, 'Invalid Rust source archive')
+    hasher = hashlib.sha256()
+    with archive_path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            hasher.update(chunk)
+    origin = 'rustc-source-sha256:' + hasher.hexdigest()
+    sections, provenance, names, source_version = [], [], set(), None
+    with tarfile.open(archive_path, 'r|gz') as archive:
+        for member in archive:
+            if member.isdir() and member.name.rstrip('/') == root.rstrip('/'):
+                continue
+            require(member.name.startswith(root), 'Unexpected Rust source root')
+            name = member.name[len(root):]
+            if name == 'version':
+                require(member.isfile() and member.size <= 1024, 'Invalid Rust source version')
+                source_version = archive.extractfile(member).read().decode().strip()
+            selected = name in {'LICENSE-MIT', 'LICENSE-APACHE', 'COPYRIGHT'} or name.startswith('LICENSES/') or (name.startswith('library/') and NOTICE.fullmatch(PurePosixPath(name).name))
+            if not selected or member.isdir():
+                continue
+            relative(name)
+            require(member.isfile() and 0 < member.size <= MAX_NOTICE and name not in names, 'Invalid Rust source notice')
+            data = archive.extractfile(member).read()
+            data.decode('utf-8')
+            require(b'\0' not in data, 'Binary Rust source notice')
+            names.add(name)
+            sections.append((f'rust-toolchain@{match[1]}', name, data))
+            provenance.append({'path': name, 'source': origin, 'sha256': sha(data)})
+    require(source_version == expected_version, 'Rust source version differs from artifact toolchain')
+    required = {'LICENSE-MIT', 'LICENSE-APACHE', 'COPYRIGHT', 'LICENSES/Unicode-3.0.txt', 'library/compiler-builtins/LICENSE.txt', 'library/compiler-builtins/libm/LICENSE.txt'}
+    require(required <= names, 'Incomplete original Rust standard-library notices')
+    return sections, provenance
+
+
+def toolchain_notices(rustc, target, existing=None, source_archive=None):
     match = re.fullmatch(r'rustc (\d+\.\d+\.\d+) \(([a-f0-9]+) ([0-9-]+)\)(?: \(built from a source tarball\))?', rustc)
     require(match is not None, 'Unsupported Rust toolchain identity')
     version, commit, _ = match.groups()
     sections, provenance = [], []
+    if source_archive:
+        require(not existing, 'Choose one original Rust notice source')
+        sections, provenance = source_toolchain_notices(source_archive, rustc)
+        if target.endswith('linux-musl'):
+            url = 'https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v1.2.5'
+            content = fetch(url, MAX_NOTICE)
+            sections.append((f'rust-toolchain@{version}', 'musl-COPYRIGHT', content))
+            provenance.append({'path': 'musl-COPYRIGHT', 'source': url, 'sha256': sha(content)})
+        return sections, provenance
     if existing:
         root = Path(existing)
         descriptor = json.loads(read(root / 'wasm-notices.json', MAX_NOTICE))
@@ -187,7 +251,8 @@ def generate(args):
         require((name, version) in locked, f'Only locked crates.io sources supported: {identity}')
         digest = locked[name, version]['checksum']
         filename = f'{name}-{version}.crate'
-        archives = sorted((Path(args.cargo_home) / 'registry/cache').glob('*/' + filename))
+        archive_index = getattr(args, 'crate_archives', None)
+        archives = [Path(json.loads(read(archive_index))[filename])] if archive_index else sorted((Path(args.cargo_home) / 'registry/cache').glob('*/' + filename))
         archive = next((p for p in archives if sha(read(p)) == digest), None)
         require(archive is not None, f'Original checksum-matched cached crate is required: {identity}')
         notices = extract_notices(archive, package, required=False)
@@ -198,6 +263,7 @@ def generate(args):
                     content = fetch(url, MAX_NOTICE)
                 except urllib.error.HTTPError as error:
                     if error.code == 404:
+                        error.close()
                         continue
                     raise
                 content.decode('utf-8')
@@ -212,10 +278,10 @@ def generate(args):
         shutil.copyfile(archive, sources / filename)
         entries.append({'name': name, 'version': version, 'license': package['license'], 'source': 'crate-sources/' + filename, 'sha256': digest, 'noticePaths': [p for p, _ in notices], 'supplemental': supplemental})
     rustc = subprocess.check_output(['rustc', '--version'], text=True).strip()
-    runtime, runtime_provenance = toolchain_notices(rustc, args.target, args.rust_notices)
+    runtime, runtime_provenance = toolchain_notices(rustc, args.target, args.rust_notices, getattr(args, 'rust_source_archive', None))
     content, index = render(sections + runtime)
     (out / 'THIRD-PARTY-NOTICES.txt').write_bytes(content)
-    descriptor = {'schema': 1, 'package': args.package, 'target': args.target, 'features': sorted(filter(None, args.features.split(','))), 'cargoLockSha256': sha(lock_bytes), 'rustc': rustc, 'packages': entries, 'runtime': runtime_provenance, 'sections': index, 'noticesSha256': sha(content)}
+    descriptor = {'schema': 1, 'package': args.package, 'target': args.target, 'features': sorted(filter(None, args.features.split(','))), 'cargoLockSha256': sha(lock_bytes), 'rustc': rustc, 'packages': entries, 'runtime': runtime_provenance, 'runtimeSourceArchive': bool(getattr(args, 'rust_source_archive', None)), 'sections': index, 'noticesSha256': sha(content)}
     (out / 'inventory.json').write_text(json.dumps(descriptor, indent=2) + '\n')
     verify(out, lock_path, packages)
 
@@ -266,7 +332,14 @@ def verify(output, lock_path, expected_packages=None):
         expected_files.add(name)
     version = descriptor['rustc'].split()[1]
     runtime = {p['path']: p for p in descriptor['runtime']}
-    require({'LICENSE-MIT', 'LICENSE-APACHE', 'COPYRIGHT', 'COPYRIGHT-library.html'} <= set(runtime), 'Missing runtime notices')
+    required_runtime = {'LICENSE-MIT', 'LICENSE-APACHE', 'COPYRIGHT'}
+    if descriptor.get('runtimeSourceArchive'):
+        required_runtime |= {'LICENSES/Unicode-3.0.txt', 'library/compiler-builtins/LICENSE.txt', 'library/compiler-builtins/libm/LICENSE.txt'}
+        sources = {item['source'] for item in runtime.values() if item['path'] != 'musl-COPYRIGHT'}
+        require(len(sources) == 1 and re.fullmatch(r'rustc-source-sha256:[a-f0-9]{64}', next(iter(sources))), 'Invalid original Rust source identity')
+    else:
+        required_runtime.add('COPYRIGHT-library.html')
+    require(required_runtime <= set(runtime), 'Missing runtime notices')
     if descriptor['target'].endswith('linux-musl'):
         require('musl-COPYRIGHT' in runtime, 'Missing static libc notices')
     for record in descriptor['sections']:
@@ -286,7 +359,7 @@ def verify(output, lock_path, expected_packages=None):
         if path.is_file():
             actual.add(path.relative_to(output).as_posix())
     require(actual == expected_files, 'Unexpected or missing redistribution payload')
-    print(json.dumps({'verified': True, 'target': descriptor['target'], 'packages': len(identities), 'originalNotices': len(sections), 'registrySources': len(expected_files) - 2}))
+    print(json.dumps({'verified': True, 'target': descriptor['target'], 'packages': len(identities), 'originalNotices': len(sections), 'registrySources': sum(p['source'].startswith('crate-sources/') for p in descriptor['packages'])}))
     return descriptor
 
 
@@ -301,6 +374,8 @@ def main():
     create.add_argument('--cargo-home', default=os.environ.get('CARGO_HOME', str(Path.home() / '.cargo')))
     create.add_argument('--output', required=True)
     create.add_argument('--rust-notices')
+    create.add_argument('--rust-source-archive')
+    create.add_argument('--crate-archives')
     check = sub.add_parser('verify')
     check.add_argument('--output', required=True)
     check.add_argument('--lockfile', required=True)

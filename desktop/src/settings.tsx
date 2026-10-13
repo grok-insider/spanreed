@@ -1,7 +1,7 @@
 import * as React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ExternalLink } from "lucide-react";
-import { Button, Card, PageHeader, SectionHeader, Tabs, TabsContent, TabsList, TabsTrigger, ThemeSwitcher } from "@fabrials/ui";
+import { Button, Card, PageHeader, SectionHeader, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, ThemeSwitcher } from "@fabrials/ui";
 import { FabrialsLink } from "./fabrials-link";
 import { MigrationPage } from "./migration";
 import { NotificationSettings } from "./notifications";
@@ -17,6 +17,28 @@ const sections = [
   { id: "sharing", label: "Sharing & sync" },
   { id: "transfer", label: "Transfer accounts" },
 ] as const;
+
+function LicenseSettings() {
+  const [text, setText] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  async function show() {
+    setLoading(true);
+    setError(null);
+    try {
+      setText(await invoke<string>("licenses"));
+    } catch {
+      setError("The license notices could not be opened. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  return <Card className="sr-setting-card">
+    <SectionHeader title="Licenses" description="Spanreed is licensed under AGPL-3.0-or-later. Read its license and the original notices for included software and fonts." />
+    {text === null ? <Button variant="outline" disabled={loading} onClick={() => void show()}>{loading ? "Opening licenses…" : "View licenses"}</Button> : <Textarea aria-label="Software licenses and third-party notices" readOnly value={text} rows={14} spellCheck={false} />}
+    <ErrorAlert title="Couldn't open licenses" error={error} />
+  </Card>;
+}
 
 export function SettingsPage({ tab, theme, onThemeChange }: { tab: string | null; theme: ThemePreference; onThemeChange: (theme: ThemePreference) => void }) {
   const current = sections.some((section) => section.id === tab) ? tab! : "general";
@@ -38,6 +60,7 @@ export function SettingsPage({ tab, theme, onThemeChange }: { tab: string | null
           <SectionHeader title="Notifications" />
           <NotificationSettings />
         </Card>
+        <LicenseSettings />
       </TabsContent>
       <TabsContent value="account" className="sr-stack">
         <Card className="sr-setting-card">

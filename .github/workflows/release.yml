@@ -86,6 +86,7 @@ jobs:
           name: spanreed-release-source
           path: release-source/*
           if-no-files-found: error
+          retention-days: 1
   publish:
     needs: [validate, cli, desktop, source]
     if: ${{ !cancelled() && needs.validate.outputs.complete != 'true' && needs.validate.result == 'success' && (inputs.artifacts_run_id || (needs.cli.result == 'success' && needs.desktop.result == 'success' && needs.source.result == 'success')) }}

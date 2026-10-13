@@ -47,7 +47,7 @@ jobs:
           import os, subprocess
           target = os.environ['TARGET']
           subprocess.run(['cargo', 'fetch', '--locked', '--target', target], check=True)
-          args = ['python', 'scripts/native-notices.py', 'generate', '--target', target, '--output', 'native-notices']
+          args = ['python', 'scripts/prepare-native-notices.py', '--target', target, '--output', 'native-notices']
           if target.endswith('msvc'): args += ['--features', 'tray']
           subprocess.run(args, check=True)
       - name: Build Linux static CLI
@@ -70,6 +70,7 @@ jobs:
           "$binary" remote service print
       - name: Verify Windows CLI startup
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           ./target/x86_64-pc-windows-msvc/release/spanreed.exe --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -88,7 +89,9 @@ jobs:
           subprocess.run(['python', 'scripts/package-cli.py', 'build', '--target', target, '--binary', str(binary), '--notices', 'native-notices', '--output', 'release-cli'], check=True)
           subprocess.run(['python', 'scripts/release.py', 'provenance', '--directory', 'release-cli'], check=True)
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: spanreed-release-cli-${{ matrix.target }}
           path: release-cli/
           if-no-files-found: error
+          retention-days: 1
