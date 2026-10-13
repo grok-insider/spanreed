@@ -45,6 +45,13 @@ struct Store {
     _lock: File,
 }
 
+#[cfg(unix)]
+impl Drop for Store {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self._lock);
+    }
+}
+
 impl Store {
     fn open(destination: &Path) -> Result<Self, String> {
         validate_destination(destination)?;
@@ -617,6 +624,21 @@ mod tests {
         let first = Store::open(&fixture.destination()).unwrap();
         assert!(Store::open(&fixture.destination()).is_err());
         drop(first);
+        assert!(Store::open(&fixture.destination()).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn completed_owner_releases_lock_even_while_a_duplicate_handle_survives() {
+        let fixture = Fixture::new();
+        let first = Store::open(&fixture.destination()).unwrap();
+        let inherited = first._lock.try_clone().unwrap();
+        assert!(Store::open(&fixture.destination()).is_err());
+        drop(first);
+        let next = Store::open(&fixture.destination()).unwrap();
+        drop(inherited);
+        assert!(Store::open(&fixture.destination()).is_err());
+        drop(next);
         assert!(Store::open(&fixture.destination()).is_ok());
     }
 
