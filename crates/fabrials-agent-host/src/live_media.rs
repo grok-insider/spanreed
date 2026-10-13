@@ -129,10 +129,10 @@ impl HostState {
             .ok()
             .and_then(Result::ok);
             let mut session = state.session.lock().await;
-            if !session
+            if session
                 .sessions
                 .get(&session_id)
-                .is_some_and(|live| live.opened_at_ms == opened_at)
+                .is_none_or(|live| live.opened_at_ms != opened_at)
             {
                 return;
             }

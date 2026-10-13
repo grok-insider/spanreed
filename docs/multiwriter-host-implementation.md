@@ -77,10 +77,12 @@ and retains volume/file identity. Reparse points and root-prefix collisions are
 rejected. Windows-only tests exercise a real junction, a replaced child, root
 prefix collisions and principal ownership of directory handles.
 
-These Windows paths have not been compiled or executed in this Linux run; no
-Windows Rust standard library is installed here. The Windows remote-project
-capability remains disabled pending qualification. Linux passing tests do not
-qualify the Windows implementation.
+These paths were subsequently compiled and exercised in the Windows 11 QA VM
+under a limited user, including a real junction and a foreign-owner fixture.
+The focused native security suite passes 16 tests with no ignored tests; see
+[`windows-host-qualification.md`](windows-host-qualification.md) for its exact
+scope and limitations. The Windows remote-project capability remains disabled
+pending the remaining native end-to-end release gates.
 
 ## Verification
 

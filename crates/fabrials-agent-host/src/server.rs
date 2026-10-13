@@ -1639,7 +1639,7 @@ async fn enforce_origin(
             && (matches!(request.uri().path(), "/" | "/index.html")
                 || (assets::is_safe_path(request.uri().path())
                     && assets::is_spa_navigation_path(request.uri().path())));
-        if (!exact_origin && !hosted_origin && !(safe && origin_ref.is_none()))
+        if !(exact_origin || hosted_origin || (safe && origin_ref.is_none()))
             || (!sec_fetch_site_is_same_origin(header_str(request.headers(), "sec-fetch-site"))
                 && !public_navigation
                 && !hosted_origin)
