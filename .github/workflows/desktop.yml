@@ -82,13 +82,20 @@ jobs:
       - run: bun run build
         working-directory: desktop
       - run: cargo test --locked --features contracts
+        if: runner.os != 'Windows'
         env:
           SPANREED_OFFLINE: '1'
-      - name: Verify Windows Credential Manager roundtrip
+      - name: Test Windows and Credential Manager as a non-administrator
         if: runner.os == 'Windows'
-        run: cargo test --locked --lib secret::platform::tests::credential_roundtrip -- --ignored --exact
-        env:
-          SPANREED_OFFLINE: '1'
+        shell: pwsh
+        run: ./scripts/run-windows-tests.ps1 -Suite desktop
+      - name: Retain Windows limited-user test evidence
+        if: always() && runner.os == 'Windows' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-limited-user-evidence
+          path: ${{ runner.temp }}/spanreed-limited-evidence-*/
+          retention-days: 1
       - name: Prepare exact desktop notices and registry sources
         shell: python
         run: |

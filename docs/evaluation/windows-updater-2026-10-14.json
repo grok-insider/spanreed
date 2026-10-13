@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "startedAt": "2026-10-13T23:11:56.9650948Z",
+  "identity": "WIN11-QA\\friend",
+  "administratorRoleActive": false,
+  "platform": "Microsoft Windows NT 10.0.26200.0",
+  "files": [
+    {
+      "sha256": "48bdff4b5c2f5f01376e71757396ecfaff8b76593c94f66366bc7af85028cda5",
+      "path": "C:\\spanreed-qa\\remote-security-20261014\\target\\debug\\deps\\spanreed_adapters-e4dc9bb244f5d4ab.exe"
+    },
+    {
+      "sha256": "799ffea169ee37ee687546a7cd995592cc897c9dbf455b9ca3930c1f1ac36aa1",
+      "path": "C:\\spanreed-qa\\remote-security-20261014\\target\\debug\\examples\\update_probe_fixture.exe"
+    },
+    {
+      "sha256": "b55cd4b95eb9cc42409d6365fe53c9df362ea1adb437294717e758ba2926f61d",
+      "path": "C:\\spanreed-qa\\remote-update-20261014\\qualify-windows-updater.ps1"
+    },
+    {
+      "sha256": "6c83b49daf99fb637b3c5cb2a093974231cb82b3a4a40ab04e00a356ad28a4e4",
+      "path": "Cargo.lock"
+    },
+    {
+      "sha256": "20ecb5dd2fe411585c5ca1db149dd7c1ff2282e89c71492accd55619d6a33d2f",
+      "path": "crates/spanreed-adapters/Cargo.toml"
+    },
+    {
+      "sha256": "3faacf25f28e2ba4afd5e65d381942ce6a9c99af23754ea44cecc8f791d6f0e1",
+      "path": "crates/spanreed-adapters/src/self_update.rs"
+    },
+    {
+      "sha256": "9201750811181738f2cbaf83be599913940f3a8bb218659a80dde551ffe70096",
+      "path": "crates/spanreed-adapters/src/self_update/windows.rs"
+    },
+    {
+      "sha256": "e09efc09bcd2fa68f33a1cdb34917ea438ad2f1f5406aef4d4e54dadd3ae4e4e",
+      "path": "crates/spanreed-adapters/src/self_update/durable.rs"
+    },
+    {
+      "sha256": "bb7fdfde2a85342299dafca08c98356c4368530b706f32a1147345757f38408c",
+      "path": "crates/spanreed-adapters/src/self_update/install.rs"
+    },
+    {
+      "sha256": "6b1a5c66eab9109ed860d1ff54cdad78a4dfef51f68109ab52330a9cb28242ec",
+      "path": "crates/spanreed-adapters/examples/update_probe_fixture.rs"
+    },
+    {
+      "sha256": "35c378d586fd13a4297dda489d4b5b4f49a7bbe9266d72c4dedb60a5585772c2",
+      "path": "vendor/fabrials-libs.source"
+    }
+  ],
+  "checks": [
+    {
+      "exitCode": 0,
+      "name": "self_update",
+      "ignored": 1,
+      "passed": 26
+    },
+    {
+      "exitCode": 0,
+      "name": "native_job",
+      "ignored": 0,
+      "passed": 1
+    }
+  ],
+  "result": "passed",
+  "notQualified": [
+    "Real installed updater replacement and rollback",
+    "Power failure",
+    "Physical Windows hardware",
+    "Windows self-update release gate"
+  ],
+  "finishedAt": "2026-10-13T23:12:02.8780668Z",
+  "qualification": {
+    "sourceCommit": "8b12b86b67a0d6aceadfde3aeb4a88768335cdd0",
+    "sourceArchiveSha256": "8ce266700085c207c6d40a2dfa9e972e868b84a10f5981aaa904868cd69a083b",
+    "toolchain": "Rust/Cargo 1.95.0 x86_64-pc-windows-msvc",
+    "vm": "win11-qa (qemu:///system)",
+    "buildCommands": [
+      "cargo test --locked -p spanreed-adapters --lib --no-run --message-format=json",
+      "cargo build --locked -p spanreed-adapters --example update_probe_fixture"
+    ],
+    "buildJobs": 2,
+    "buildExitCodes": [
+      0,
+      0
+    ],
+    "ordinaryTestsPassed": 26,
+    "explicitNativeTestsPassed": 1,
+    "unexecutedIgnoredTests": 0,
+    "releaseGateEnabled": false,
+    "localEvidenceDirectory": "/tmp/remote-windows-security-20261014-8368_gnj/updater-evidence",
+    "evidenceArchiveSha256": "a97b8cec1d98213f813bb41e7cbd80418397f33d922112fb2b70eec1e3a4af88"
+  }
+}

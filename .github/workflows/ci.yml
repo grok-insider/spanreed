@@ -123,13 +123,29 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: python scripts/remote-assets.py check
       - run: cargo check --all-targets
+        if: runner.os != 'Windows'
       - run: cargo test --all
+        if: runner.os != 'Windows'
         env:
           SPANREED_OFFLINE: "1"
       - run: cargo test --locked --workspace --manifest-path vendor/fabrials-libs/Cargo.toml
+        if: runner.os != 'Windows'
         env:
           SPANREED_OFFLINE: "1"
       - run: cargo check --all-targets --features tray
+        if: runner.os != 'Windows'
       - run: cargo test --all --features tray
+        if: runner.os != 'Windows'
         env:
           SPANREED_OFFLINE: "1"
+      - name: Test Windows with a dedicated non-administrator account
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/run-windows-tests.ps1 -Suite cross
+      - name: Retain Windows limited-user test evidence
+        if: always() && runner.os == 'Windows' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cross-windows-limited-user-evidence
+          path: ${{ runner.temp }}/spanreed-limited-evidence-*/
+          retention-days: 1

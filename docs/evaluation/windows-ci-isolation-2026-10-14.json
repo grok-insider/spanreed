@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "vm": "win11-qa (qemu:///system)",
+  "platform": "Windows 11 build 26200",
+  "files": {
+    "scripts/run-windows-tests.ps1": "a5b3ae63fc45c4784f7ced1086494e0f83727b68688d20ad080ddb6122e0bcaf",
+    "scripts/windows-test-process.cs": "c67442300bd7d2deadccdd29958eb698304f989d940cb91b76c0cf8e201d18e3"
+  },
+  "normalProbe": {
+    "exitCode": 0,
+    "evidence": "spanreed-limited-evidence-3d350763c4ae4d62bf4fbb075134b556",
+    "administratorRoleActive": false,
+    "createdOwnerMatchesToken": true,
+    "sourceReadOnly": true,
+    "parentEnvironmentExcluded": true,
+    "descendantTerminated": true,
+    "accountRemoved": true,
+    "privateRootRemoved": true,
+    "cleanupErrors": []
+  },
+  "timeoutProbe": {
+    "timeoutSeconds": 2,
+    "exitCode": 1,
+    "expectedFailure": "Windows tests exceeded their process lifetime limit",
+    "evidence": "spanreed-limited-evidence-584e1f3c5c4c4b0b841b9511af936b83",
+    "administratorRoleActive": false,
+    "createdOwnerMatchesToken": true,
+    "sourceReadOnly": true,
+    "parentEnvironmentExcluded": true,
+    "descendantTerminated": true,
+    "accountRemoved": true,
+    "privateRootRemoved": true,
+    "cleanupErrors": []
+  },
+  "temporaryScheduledTaskRemoved": true,
+  "remainingSpanqaAccounts": 0,
+  "workflowActionlintExitCode": 0,
+  "localEvidenceDirectory": "/tmp/remote-windows-security-20261014-8368_gnj/ci-wrapper-evidence",
+  "evidenceArchiveSha256": "c4412cf99ce43f9417730596d95aeb140af46300ccd269d48579419f63419cbe",
+  "completeCargoSuitesRunThroughWrapper": false,
+  "windowsReleaseQualified": false,
+  "remainingSpanqaProfiles": 0
+}
