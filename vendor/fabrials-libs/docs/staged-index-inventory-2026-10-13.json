@@ -1,0 +1,296 @@
+{
+  "schema": 1,
+  "recordedAt": "2026-10-13T11:55:44.306607+00:00",
+  "repositoryHead": "6a813d375882e0fb81765c6bfa6c1ed5b092c871",
+  "stagedDiffSha256": "f0753607135d870097e31298bb46f368bef7e204c4b6132f55b1a7507cf11481",
+  "stagedDiffBytes": 293715,
+  "expectedStagedDiffPreserved": true,
+  "stagedFiles": 35,
+  "currentAgentLibraryChanges": [
+    "crates/fabrials-agent-host/src/origin.rs (unstaged qualification-origin selector and exactness tests)",
+    "crates/fabrials-remote-host/src/direct.rs (untracked direct-host base with current unstaged webOrigin persistence and origin tests)"
+  ],
+  "scope": "Inventory only; no index mutations. All 35 indexed paths predate current agent changes. Worktree hashes are observations at the timestamp; other agents own concurrent changes.",
+  "files": [
+    {
+      "path": ".gitignore",
+      "indexSha256": "b53ee26e6ff1da219b0563333a76d2c9ec19eec713d6ee54e11a1edacb0e9f3d",
+      "headSha256": "44c92e3a70ad3307b7056871c2bdb096d8bfa9373f5bf06a79bb6324a20ff2fb",
+      "workingTreeSha256": "cccee460fcf555c5c9cabda0a71f22144c3fae89d92fd8ce32d707bba6c62e53",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "Cargo.lock",
+      "indexSha256": "54406b84b6da3698b758d585a4674e934ab78a6230c1a6e6a66f93e86e98dc3b",
+      "headSha256": "b29e28f9341466a783ecfa3cf2cb18090fee1ed6ca1c08d2d310b7b4164b342e",
+      "workingTreeSha256": "324b5a5d1d0f9c11186c5e33fbca653be83bcc6704eb037d255086660deedebd",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/build.rs",
+      "indexSha256": "45b1562224b29b4dc5724728194393d28db260242acb8d5f36b015c61934ee2c",
+      "headSha256": "f84fb0b983b16f784e983a3efebb306001b8e1b76fb65df77e5f200f8cb5e123",
+      "workingTreeSha256": "45b1562224b29b4dc5724728194393d28db260242acb8d5f36b015c61934ee2c",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/examples/fake_agent.rs",
+      "indexSha256": "5a1ffb1a46de758a10f9ff03da9d88307e14b837876cc86e93884e9bd1be868a",
+      "headSha256": "f2ab22859267c097aeb1b27aa54266292ca9553690635bc3d95bf83081980243",
+      "workingTreeSha256": "8a9e437d4a979611a8d0c1513bc815c6cf2a0a6518c280c4c025e01ca23a074d",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/acp.rs",
+      "indexSha256": "655197a7503441e679c856e6cdeb60373124e8133b49a395259e01d548c9b7b1",
+      "headSha256": "4097968148cf52616ad09e5b5c85e4badb81cb3a8b9fe579dfe13c9aaab09a23",
+      "workingTreeSha256": "55b33b10d79b814fb44703c8228e22fca8e998dacf9923cb2878837bb9256ee4",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/assets.rs",
+      "indexSha256": "469c08ab88fc15854b25f24b27a8ba9491066bd90821bd4421b4d8a5cc36d76d",
+      "headSha256": "fad36c05c68daec6683cfe6d76d4954a4fa3f02828cd2c12414df4cc1ff64aa8",
+      "workingTreeSha256": "469c08ab88fc15854b25f24b27a8ba9491066bd90821bd4421b4d8a5cc36d76d",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/control/mod.rs",
+      "indexSha256": "cf9d348c2c7cbdf30c68d9c280d1006c9f1636a1fc591b61b1d8c58bc8b16a22",
+      "headSha256": "6abf91bbd70955b21ea6e8d5669b583d5fa8919cb37359934791efd7990cd41b",
+      "workingTreeSha256": "b3e3d7cfe7457d2c1781634754e29ace80ab055bf1e2ee57651b52ccc58f7b05",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/dispatch.rs",
+      "indexSha256": "ff4359c384d2e05f9f9a8542ca9df0f609870b47594c770bfd44b0a56e3f4a9e",
+      "headSha256": "e953340daff7b9bfde552a885e51b466d6658bb17beac6fa77ed293957661156",
+      "workingTreeSha256": "7c19dae0b64d14312955b86aac1d57ac727c5ff4915de5bcf43eca6e259c7320",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/host.rs",
+      "indexSha256": "968c9624d3a2d5b5945409e7b2851035160d88c8f39b7abb9ab31a3fb42bc78a",
+      "headSha256": "d1bfe0f58408a2602c1740855cbf75ed13d48d1c24594f891acb9c973498416f",
+      "workingTreeSha256": "f4c4b6a32bc4a119934a54b562759e083c55810743f33be34e299c28f59a405d",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/interactions.rs",
+      "indexSha256": "1f098c2ec738b594e59752b87d6513697f7de76b7f261c3d26319b7f8cb5e475",
+      "headSha256": null,
+      "workingTreeSha256": "1f098c2ec738b594e59752b87d6513697f7de76b7f261c3d26319b7f8cb5e475",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/lease.rs",
+      "indexSha256": "dd3dcefc1fbc2131568190885e586bb63efd4301ca0a7cb0f774bcb111f2efe6",
+      "headSha256": "db406b9e43543d7c4d526a108909f92ab83953c6e9acc2f655074a3ee5ff8798",
+      "workingTreeSha256": "5ab55dd9c78a5dcd819dab643c46f0edaa01ccf90128a0ff4c6bd2de8327b9c4",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/lib.rs",
+      "indexSha256": "26760bcf7a5d55a7f36569417ad062ccfebb71a3fdad7e530d0b3ed7eca52003",
+      "headSha256": "e3c063c1e544fe507b4b4bcbea5ff313f9879027b58821b1507084058b0d4af7",
+      "workingTreeSha256": "7f079386b2948d04d610c36e9f7383432470d87253cdd596b989355dae2bd5ea",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/origin.rs",
+      "indexSha256": "d8f910f2729942b01a90b34c3aa1d79533dd7981deb7a67eeb9fb3d7e0461708",
+      "headSha256": "d19281ea505f2868a78a57cb8b155413790b440ebfe5ff275065c4ddabbdb09b",
+      "workingTreeSha256": "0aab6df222be70ca9089121afda8cf781a55d24bcaf7a73ffc19cd7532142a47",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/pairing.rs",
+      "indexSha256": "51996ac942a8067bc26eff0d2a8a01ae68064e18711d9168f3087827e38799c8",
+      "headSha256": "abfacb7cdd4104df3c8eaaae0422430dd03433b15adc01596fb54936d3e61697",
+      "workingTreeSha256": "f708c3e95a7ec6846222f5a9b98d50f5aa6d52bc452d96fa8d1061b1488e50ce",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/projection.rs",
+      "indexSha256": "1e0b8d5ffc8e308e5f099c69e2f2b4dcabf681e540c5d63af94717bef9049614",
+      "headSha256": "05fb7cd11d1afe83d6b0278e25df10c118a6d834062f35bd661bf714fac4d531",
+      "workingTreeSha256": "1e0b8d5ffc8e308e5f099c69e2f2b4dcabf681e540c5d63af94717bef9049614",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/protocol.rs",
+      "indexSha256": "d8f03a9b891c5d41497feb1d8dad5503e7b6d96a9a6f23ffa52897ea0e0bf523",
+      "headSha256": "c181fe76e8d0a4174f5e0733efb1d60521f267948ba61a835212962a05ee88be",
+      "workingTreeSha256": "3b615c1e60086bc5698697aa4bc6bbe6057cfd4d1c65b33771644008107912bd",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/receipts.rs",
+      "indexSha256": "f73c96b63bb082977f9be4a5baafea5b57d19db94a004e72f8cd33252cf43952",
+      "headSha256": null,
+      "workingTreeSha256": "f73c96b63bb082977f9be4a5baafea5b57d19db94a004e72f8cd33252cf43952",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/remote.rs",
+      "indexSha256": "ac53725ec0bf44eadc49f5a63362a79005fc9e4b4790573628335d90cd4a067d",
+      "headSha256": null,
+      "workingTreeSha256": "c361c727d1e6a2cf9e21ca37dc36387446f1ced163180f356773ecfaebe848b2",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/src/server.rs",
+      "indexSha256": "45ae926839ab212b81314ce6592d300d4628087b11ae6fea76c1c324d39740ca",
+      "headSha256": "6bb06819750152d616d6dd3bcec084a3efc08e3009ac1e1c28ded9a3d5636ad0",
+      "workingTreeSha256": "3a6af4796879ad363dd2fa547fabc078b58d8931273544e2114f1181879ccb68",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/tests/agent_loop.rs",
+      "indexSha256": "3ab42630a15a59827993317a0a595e90bdae313445d1cef51bf4cc584ab32ddd",
+      "headSha256": "147aa66a7e42b377a518c6b0dc8ac74a2b4af277380b39dde63527fa3c3cc7cc",
+      "workingTreeSha256": "3ab42630a15a59827993317a0a595e90bdae313445d1cef51bf4cc584ab32ddd",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-agent-host/tests/remote_turn.rs",
+      "indexSha256": "e70eefe75645bdae760d5034cb1b0bc3dc8f38a3a078a2bf0cab5d2348fb8601",
+      "headSha256": null,
+      "workingTreeSha256": "9a878b1aa2a58701cead3bdfc62a289cde40b5178592e6fe32a2ad1adb9dde62",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-host/Cargo.toml",
+      "indexSha256": "07565c3702c5d8596365b18c69dac9d0a0acc1bd9295731c2b1089375c1e9735",
+      "headSha256": null,
+      "workingTreeSha256": "577a11e25b2f3501607e55d695c204f84392511177ea8e69604d6a0980028a3b",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-host/src/lib.rs",
+      "indexSha256": "976564642785aabb846a275985633ab3489ef3d256d57c6dc9ab3efc29f65f6b",
+      "headSha256": null,
+      "workingTreeSha256": "e1e366eeb7b11999f38838f2fa2aab645cba9937d891237dbbf525688282468c",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-host/src/shares.rs",
+      "indexSha256": "d55a4b0250c200f11fb3a097ce51504e9efc31118461950a8bb6b4f99d1aa72a",
+      "headSha256": null,
+      "workingTreeSha256": "ccce94164353cc9db4ebed227256f4c39249b2ae77782f606b7862d885e29efe",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-host/src/state.rs",
+      "indexSha256": "8cd8ebd29bb409d8e17f1b02f3ace91a8fae120d94bfdf0fcd37e9201ff42441",
+      "headSha256": null,
+      "workingTreeSha256": "8cd8ebd29bb409d8e17f1b02f3ace91a8fae120d94bfdf0fcd37e9201ff42441",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-host/src/status.rs",
+      "indexSha256": "e161d1ce4b3bbd4be9fd98ade8423529438409cce3126e76b4c2dc71638c3907",
+      "headSha256": null,
+      "workingTreeSha256": "e161d1ce4b3bbd4be9fd98ade8423529438409cce3126e76b4c2dc71638c3907",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-noise/Cargo.toml",
+      "indexSha256": "0fe7d679df7832655cb3bc01526d170683fe77be938ea1893789c582559fd68b",
+      "headSha256": null,
+      "workingTreeSha256": "0fe7d679df7832655cb3bc01526d170683fe77be938ea1893789c582559fd68b",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-noise/examples/interop.rs",
+      "indexSha256": "54ef55dc89a5e4d11429e38a5b6de7aa4ce28ac8273fca64d84cc6d7a7535eb9",
+      "headSha256": null,
+      "workingTreeSha256": "54ef55dc89a5e4d11429e38a5b6de7aa4ce28ac8273fca64d84cc6d7a7535eb9",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-noise/src/lib.rs",
+      "indexSha256": "b5f8f902e1e9d2116e30bc2e3c1e0a33981f811ea9e296811ea0db97bb2cf75c",
+      "headSha256": null,
+      "workingTreeSha256": "b5f8f902e1e9d2116e30bc2e3c1e0a33981f811ea9e296811ea0db97bb2cf75c",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "crates/fabrials-remote-noise/src/wasm.rs",
+      "indexSha256": "69faae26c5302b009a3e79d9bf358341bc634f5e637d186cdd1ffcd57640ec0b",
+      "headSha256": null,
+      "workingTreeSha256": "69faae26c5302b009a3e79d9bf358341bc634f5e637d186cdd1ffcd57640ec0b",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "docs/remote.md",
+      "indexSha256": "b82e7e38c1983d09fa06cdd9d49da4cd0d9725cf8f70236f990c61fba10798eb",
+      "headSha256": null,
+      "workingTreeSha256": "f466476e826b05645204db7802a71e9526a692b0b17ee87f59e2dc536ff20394",
+      "indexMatchesWorkingTree": false,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "scripts/build-remote-crypto.sh",
+      "indexSha256": "171aea9bec6364a449aa164d995e798e5a80e3ce28022f133aa76da16503acc8",
+      "headSha256": null,
+      "workingTreeSha256": "171aea9bec6364a449aa164d995e798e5a80e3ce28022f133aa76da16503acc8",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "tools/remote-bindgen/Cargo.lock",
+      "indexSha256": "f0276011ebe3fe688518d05d83d58bfaf491df63939119dcd72e4e5442f2a0d6",
+      "headSha256": null,
+      "workingTreeSha256": "f0276011ebe3fe688518d05d83d58bfaf491df63939119dcd72e4e5442f2a0d6",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "tools/remote-bindgen/Cargo.toml",
+      "indexSha256": "e9e212f8cc46e990ab1e5106603863598d17a02e7a240371794d3344f356db30",
+      "headSha256": null,
+      "workingTreeSha256": "e9e212f8cc46e990ab1e5106603863598d17a02e7a240371794d3344f356db30",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    },
+    {
+      "path": "tools/remote-bindgen/src/main.rs",
+      "indexSha256": "a031f5db3c41125b0d1d908ee956d99ce7608a59260ab3cb9c14f97184589648",
+      "headSha256": null,
+      "workingTreeSha256": "a031f5db3c41125b0d1d908ee956d99ce7608a59260ab3cb9c14f97184589648",
+      "indexMatchesWorkingTree": true,
+      "ownership": "preexisting indexed Remote implementation; not staged or authored by the current direct-native agent; original authorship cannot be established from the Git index"
+    }
+  ]
+}

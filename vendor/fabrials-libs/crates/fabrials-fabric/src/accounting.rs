@@ -45,7 +45,7 @@ pub fn persistence_identity_diagnostic(
 pub fn log_line(rec: &HopRecord, owner: Option<&str>) -> String {
     let usd = fabrials_pricing::list_cost_usd(rec).unwrap_or(0.0);
     format!(
-        "hop request_id={} owner={} provider={} account={} kind={} model={} status={} duration_ms={} unit={} quantity={} usd={:.6}",
+        "hop request_id={} owner={} provider={} account={} kind={} model={} status={} duration_ms={} first_byte_ms={} ttft_ms={} unit={} quantity={} usd={:.6}",
         safe_log_field(rec.request_id.as_deref().unwrap_or("-")),
         safe_log_field(owner.unwrap_or("-")),
         safe_log_field(rec.provider.as_deref().unwrap_or("-")),
@@ -54,6 +54,8 @@ pub fn log_line(rec: &HopRecord, owner: Option<&str>) -> String {
         safe_log_field(rec.model.as_deref().unwrap_or("-")),
         rec.status.map(|s| s.to_string()).unwrap_or_else(|| "-".into()),
         rec.duration_ms.map(|d| d.to_string()).unwrap_or_else(|| "-".into()),
+        rec.first_byte_ms.map(|d| d.to_string()).unwrap_or_else(|| "-".into()),
+        rec.ttft_ms.map(|d| d.to_string()).unwrap_or_else(|| "-".into()),
         safe_log_field(rec.unit.as_deref().unwrap_or("-")),
         rec.quantity.map(|q| q.to_string()).unwrap_or_else(|| "-".into()),
         usd,
@@ -445,6 +447,26 @@ mod tests {
         assert!(!low.contains("authorization"));
         assert!(!low.contains("cookie"));
         assert!(!low.contains("bearer "));
+    }
+
+    #[test]
+    fn log_line_reports_the_timings_it_has_and_dashes_for_the_rest() {
+        let measured = HopRecord {
+            duration_ms: Some(1_500),
+            first_byte_ms: Some(80),
+            ttft_ms: Some(900),
+            ..HopRecord::default()
+        };
+        let line = log_line(&measured, None);
+        assert!(
+            line.contains("duration_ms=1500 first_byte_ms=80 ttft_ms=900 "),
+            "{line}"
+        );
+        let line = log_line(&HopRecord::default(), None);
+        assert!(
+            line.contains("duration_ms=- first_byte_ms=- ttft_ms=- "),
+            "{line}"
+        );
     }
 
     #[test]

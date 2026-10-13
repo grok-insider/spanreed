@@ -51,8 +51,14 @@ pub mod dispatch;
 pub mod host;
 pub mod instance;
 pub mod integrations;
+#[allow(missing_docs)]
+pub mod interactions;
 pub mod journal;
 pub mod lease;
+mod live_media;
+#[allow(missing_docs)]
+pub mod media;
+mod media_commands;
 pub mod models;
 pub mod origin;
 pub mod pairing;
@@ -60,6 +66,16 @@ pub mod permission;
 pub mod picker;
 pub mod projection;
 pub mod protocol;
+#[allow(missing_docs)]
+pub mod receipts;
+#[allow(missing_docs)]
+pub mod remote;
+#[allow(missing_docs)]
+pub mod remote_connections;
+#[allow(missing_docs)]
+pub mod remote_management;
+#[allow(missing_docs)]
+pub mod remote_projects;
 pub mod repair;
 pub mod review;
 pub mod server;
@@ -70,6 +86,8 @@ pub mod state_dir;
 pub mod tools;
 #[cfg(windows)]
 pub mod win_acl;
+#[cfg(windows)]
+mod win_fs;
 #[cfg(windows)]
 pub mod win_job;
 pub mod workspace;

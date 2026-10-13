@@ -14,6 +14,7 @@ name = "fabrials_agent_host"
 
 [dependencies]
 async-trait = "0.1.89"
+base64 = "0.22.1"
 axum = { version = "0.8.9", default-features = false, features = [
     "http1",
     "json",
@@ -22,7 +23,9 @@ axum = { version = "0.8.9", default-features = false, features = [
 ] }
 cap-std = "4.0.2"
 fs2 = "0.4.3"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 getrandom = "0.4.3"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 git2 = { version = "0.20.4", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -72,7 +75,7 @@ format_collect = "allow"
 missing_errors_doc = "allow"
 
 [dev-dependencies]
-futures-util = { version = "0.3", default-features = false }
+tokio = { version = "1.49.0", features = ["test-util"] }
 tempfile = "3.27.0"
 tokio-tungstenite = "0.29.0"
 tower = { version = "0.5.3", features = ["util"] }

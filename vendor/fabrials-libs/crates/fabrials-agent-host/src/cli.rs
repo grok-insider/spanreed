@@ -101,6 +101,13 @@ pub async fn run_async(args: &[String], defaults: &CliDefaults) -> ExitCode {
     let command = args.first().map_or("help", String::as_str);
     let rest = args.get(1..).unwrap_or_default();
     let cli = Cli { defaults };
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        cli.print_help();
+        return ExitCode::SUCCESS;
+    }
     let outcome = match command {
         "serve" => cli.serve().await,
         "open" => cli.open().await,

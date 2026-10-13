@@ -277,7 +277,7 @@ fn host_status_states(journal: &fabrials_agent_host::journal::Journal) -> Vec<St
         ReplayOutcome::Replay(events) => events
             .into_iter()
             .filter_map(|envelope| match envelope.event {
-                Event::HostStatus { state } => Some(state),
+                Event::HostStatus { state, .. } => Some(state),
                 _ => None,
             })
             .collect(),
