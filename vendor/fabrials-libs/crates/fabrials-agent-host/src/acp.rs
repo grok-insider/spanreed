@@ -385,12 +385,16 @@ impl AgentHandle {
         #[cfg(unix)]
         builder.process_group(0);
 
+        #[cfg(not(windows))]
         let mut child = builder.spawn().map_err(AcpError::Spawn)?;
         #[cfg(windows)]
-        let job = (command.mode == AgentMode::Isolated)
-            .then(|| child.id())
-            .flatten()
-            .and_then(|pid| crate::win_job::KillOnDropJob::for_pid(pid).ok());
+        let (mut child, job) = if command.mode == AgentMode::Isolated {
+            let (child, job) =
+                crate::win_job::KillOnDropJob::spawn(&mut builder).map_err(AcpError::Spawn)?;
+            (child, Some(job))
+        } else {
+            (builder.spawn().map_err(AcpError::Spawn)?, None)
+        };
         let stdin = child.stdin.take().ok_or(AcpError::Pipe)?;
         let stdout = child.stdout.take().ok_or(AcpError::Pipe)?;
 
@@ -1048,12 +1052,16 @@ impl AgentSession {
         #[cfg(unix)]
         builder.process_group(0);
 
+        #[cfg(not(windows))]
         let mut child = builder.spawn().map_err(AcpError::Spawn)?;
         #[cfg(windows)]
-        let job = (command.mode == AgentMode::Isolated)
-            .then(|| child.id())
-            .flatten()
-            .and_then(|pid| crate::win_job::KillOnDropJob::for_pid(pid).ok());
+        let (mut child, job) = if command.mode == AgentMode::Isolated {
+            let (child, job) =
+                crate::win_job::KillOnDropJob::spawn(&mut builder).map_err(AcpError::Spawn)?;
+            (child, Some(job))
+        } else {
+            (builder.spawn().map_err(AcpError::Spawn)?, None)
+        };
         let stdin = child.stdin.take().ok_or(AcpError::Pipe)?;
         let stdout = child.stdout.take().ok_or(AcpError::Pipe)?;
         Ok(Self {

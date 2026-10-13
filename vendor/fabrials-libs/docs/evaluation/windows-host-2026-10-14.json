@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "startedAt": "2026-10-13T23:02:12.4054474Z",
+  "platform": "Microsoft Windows NT 10.0.26200.0",
+  "identity": "WIN11-QA\\friend",
+  "administratorRoleActive": false,
+  "foreignOwnerFixture": {
+    "path": "C:\\spanreed-qa\\remote-security-20261014\\foreign-owner-friend",
+    "owner": "NT AUTHORITY\\SYSTEM"
+  },
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "source": "C:\\spanreed-qa\\remote-security-20261014\\libs",
+  "files": [
+    {
+      "sha256": "a43fe7aa576ae16750347b2f7e5174274dc2ec83766efe97cdd56d6117d3be82",
+      "path": "Cargo.lock"
+    },
+    {
+      "sha256": "163dde6128cd873e0199b3b82c96e960cdaa98562f441c1f21a541138b65d1a1",
+      "path": "crates/fabrials-agent-host/Cargo.toml"
+    },
+    {
+      "sha256": "862cbf3af5e97dc1d341c6c09c2886efce14e1f6a2a1a3ecf13775b66c916465",
+      "path": "crates/fabrials-agent-host/src/acp.rs"
+    },
+    {
+      "sha256": "1c94a6f2e9d27a1a200d9e3172d27a5c92aa07dd609d9023f1526ec7fd772341",
+      "path": "crates/fabrials-agent-host/src/instance.rs"
+    },
+    {
+      "sha256": "c6b82d070b76eb6e2823e0ec6c578f3f3900cc2d259287ec6e19e761383d2492",
+      "path": "crates/fabrials-agent-host/src/control/windows.rs"
+    },
+    {
+      "sha256": "83931c104f854613ebb4b818414418a19b499f55172c9446fafb9eb9d229b738",
+      "path": "crates/fabrials-agent-host/src/live_media.rs"
+    },
+    {
+      "sha256": "1eb0671db587f6f59f41d90c1e60fcb72e15c66235d2d6d081438bdd714eb18d",
+      "path": "crates/fabrials-agent-host/src/server.rs"
+    },
+    {
+      "sha256": "66a632c9cdf010d12668a429637dd1c7dda5d1b2025156a71b560f7a75839dab",
+      "path": "crates/fabrials-agent-host/src/journal.rs"
+    },
+    {
+      "sha256": "70947cbc14ca42b744e90035817419e9dcc1d1dd48350d52dea9023e13603779",
+      "path": "scripts/qualify-windows-host.ps1"
+    },
+    {
+      "sha256": "c84efcffd794ca19500d64713b88bcbdc5c9e50884a6eaa6398eb4389afd7da0",
+      "path": "crates/fabrials-agent-host/src/win_acl.rs"
+    },
+    {
+      "sha256": "418744fb94be5c067f24421ee7291ed773c808f4a7ab12da3a6ff2f84f53c3d3",
+      "path": "crates/fabrials-agent-host/src/win_job.rs"
+    },
+    {
+      "sha256": "c23137a4a95202a6b432ad766aa835788eb0e082d33b87204069f871e835d5b4",
+      "path": "crates/fabrials-agent-host/src/win_fs.rs"
+    },
+    {
+      "sha256": "4708310978b386ef11803d352bac989514cb46bee61338176b307f625ab2374b",
+      "path": "crates/fabrials-agent-host/src/remote_projects.rs"
+    }
+  ],
+  "checks": [
+    {
+      "filter": "win_acl::tests",
+      "exitCode": 0,
+      "ignored": 0,
+      "log": "win_acl-tests.log",
+      "passed": 4
+    },
+    {
+      "filter": "win_job::tests",
+      "exitCode": 0,
+      "ignored": 0,
+      "log": "win_job-tests.log",
+      "passed": 3
+    },
+    {
+      "filter": "win_fs::tests",
+      "exitCode": 0,
+      "ignored": 0,
+      "log": "win_fs-tests.log",
+      "passed": 1
+    },
+    {
+      "filter": "remote_projects::windows_tests",
+      "exitCode": 0,
+      "ignored": 0,
+      "log": "remote_projects-windows_tests.log",
+      "passed": 1
+    },
+    {
+      "filter": "control::windows::windows_tests",
+      "exitCode": 0,
+      "ignored": 0,
+      "log": "control-windows-windows_tests.log",
+      "passed": 3
+    },
+    {
+      "filter": "instance::tests",
+      "exitCode": 0,
+      "ignored": 0,
+      "log": "instance-tests.log",
+      "passed": 4
+    }
+  ],
+  "testExecutable": {
+    "sha256": "b01bc4819dee8823022969f2bbdc4db28c33fb2c4972aa30ecc0a8b5ff62cc24",
+    "path": "C:\\spanreed-qa\\remote-security-20261014\\target\\debug\\deps\\fabrials_agent_host-362404cc3b5ea462.exe"
+  },
+  "result": "passed",
+  "notQualified": [
+    "Physical Windows hardware",
+    "Power loss",
+    "Interactive current-user service lifecycle",
+    "Production Grok inference",
+    "Shared Grok leader termination",
+    "Windows self-update"
+  ],
+  "finishedAt": "2026-10-13T23:02:14.8963843Z",
+  "additionalVerification": {
+    "windowsClippy": {
+      "command": "cargo clippy --locked -p fabrials-agent-host --all-targets -- -D warnings",
+      "exitCode": 0,
+      "logSha256": "50f8b461be3eb45b9dc06b7c660bf41ab1abe473975c76c41fc46bdd99bea177",
+      "extraFile": {
+        "path": "crates/fabrials-agent-host/examples/fake_agent.rs",
+        "sha256": "bfd631022f39a401c5f6d29e3592b88e020d9766ec31a99df14cfc3269e100c9"
+      }
+    },
+    "linux": {
+      "testsCommand": "cargo test --locked -p fabrials-agent-host --all-targets",
+      "unitPassed": 458,
+      "integrationPassed": 77,
+      "failed": 0,
+      "ignored": 0,
+      "testLogSha256": "480674509f88c85a98b6cb3c68115abaf099d8d283c7f0795e4ac2f41205e678",
+      "clippyExitCode": 0,
+      "fixtureRetest": "cargo test --locked -p fabrials-agent-host --test remote_turn",
+      "fixtureRetestPassed": 9
+    },
+    "localEvidenceDirectory": "/tmp/remote-windows-security-20261014-8368_gnj/evidence",
+    "archiveSha256": "609a5d75fdb5194e28973f9aa5ed8686272efd585572d5b8f5227526fc8bbdfe",
+    "vm": "win11-qa (qemu:///system)",
+    "priorSystemResult": "Two positive ACL tests correctly rejected Administrators-owned fresh state; negative foreign-owner and junction tests passed. Supported positive qualification uses the limited user."
+  }
+}

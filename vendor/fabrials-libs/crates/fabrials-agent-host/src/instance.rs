@@ -158,10 +158,21 @@ fn private_file(path: &Path) -> Result<File, InstanceError> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, READ_CONTROL,
+            WRITE_DAC,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | READ_CONTROL | WRITE_DAC)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     let file = options.open(path).map_err(InstanceError::Lock)?;
     #[cfg(windows)]
     {
-        crate::win_acl::set_owner_only(path).map_err(InstanceError::Lock)?;
+        crate::win_acl::set_file_owner_only(&file).map_err(InstanceError::Lock)?;
     }
     Ok(file)
 }

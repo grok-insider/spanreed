@@ -127,7 +127,7 @@ fn main() {
                     serde_json::json!({})
                 };
                 respond(&mut stdout, id, &serde_json::json!({"_meta":meta}));
-                if let Some(marker) = std::env::var_os("FAKE_AGENT_BREAK_PERMISSION_PIPE") {
+                if let Some(_marker) = std::env::var_os("FAKE_AGENT_BREAK_PERMISSION_PIPE") {
                     let request_id = serde_json::json!(9001);
                     pending_permission = Some(request_id.clone());
                     emit(
@@ -146,7 +146,7 @@ fn main() {
                         }),
                     );
                     #[cfg(unix)]
-                    if !std::path::Path::new(&marker).exists() {
+                    if !std::path::Path::new(&_marker).exists() {
                         use std::os::unix::process::CommandExt as _;
                         panic!(
                             "pipe fixture exec failed: {}",
@@ -156,7 +156,7 @@ fn main() {
                                     "exec 0<&-; printf closed > \"$1\"; exec sleep 30",
                                     "fixture"
                                 ])
-                                .arg(marker)
+                                .arg(_marker)
                                 .exec()
                         );
                     }

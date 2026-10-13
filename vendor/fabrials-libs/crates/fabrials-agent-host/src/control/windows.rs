@@ -172,7 +172,7 @@ fn create_server_with_user_dacl(
             return Err(ControlError::Io(std::io::Error::last_os_error()));
         }
 
-        let mut sa = SECURITY_ATTRIBUTES {
+        let sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: sd,
             bInheritHandle: FALSE,
@@ -196,7 +196,7 @@ fn create_server_with_user_dacl(
             65536,
             65536,
             0,
-            &mut sa,
+            &sa,
         );
 
         LocalFree(sd as *mut _);

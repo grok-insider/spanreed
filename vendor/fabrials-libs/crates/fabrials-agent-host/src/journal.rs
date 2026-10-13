@@ -363,7 +363,7 @@ impl Journal {
         let Some(path) = self.store.as_deref() else {
             return Ok(());
         };
-        let directory = path.parent().ok_or(JournalError::Storage)?;
+        let _directory = path.parent().ok_or(JournalError::Storage)?;
         let temporary = path.with_extension("json.tmp");
 
         let stored = StoredJournal {
@@ -421,7 +421,7 @@ impl Journal {
         // leave the directory entry behind and lose an intent the host has
         // already told the agent to act on.
         #[cfg(unix)]
-        std::fs::File::open(directory)
+        std::fs::File::open(_directory)
             .and_then(|handle| handle.sync_all())
             .map_err(|_| JournalError::Storage)?;
         Ok(())
