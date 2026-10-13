@@ -1392,6 +1392,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "getrandom 0.4.3",
+ "httpdate",
  "reqwest",
  "serde",
  "serde_json",

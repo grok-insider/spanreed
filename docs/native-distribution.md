@@ -12,13 +12,14 @@ The CLI build sets `SPANREED_NATIVE_NOTICES` to the generated `THIRD-PARTY-NOTIC
 
 Validated so far:
 
-- Four original-notice/closure tests, four packaging tests and fifteen release-orchestration tests pass locally.
-- Actual native notice generation and verification passed for Linux GNU (387 packages, 811 original notice files), Linux musl (387, 812) and Windows/tray (395, 826) against the earlier candidate lockfile. Regenerate after the canonical libraries sync; these counts are evidence for that lockfile only.
-- Linux updater: 31 tests, including real subprocess termination at all durable phases and the replacement gap; clippy on adapters/app/CLI passed before adding the licenses command.
+- Four original-notice/closure tests, five packaging tests and fifteen release-orchestration tests pass locally; the complete Python suite passes 58 tests.
+- After the canonical libraries sync to `20c6b44`, actual native notice generation and verification passed for Linux GNU (387 packages, 811 original notice files, 377 original registry sources), Linux musl (387, 812, 377) and Windows/tray (395, 826, 387) against the final candidate lockfile. These platform inventories use the local Rust 1.98.1 identity, not a claim about another release runner toolchain.
+- The GNU CLI compiled with the final vendor and required notice bundle. With an empty runtime environment, `spanreed licenses` emitted exactly `LICENSE` plus two LF bytes plus the original notice bundle: 4,341,527 bytes, SHA256 `282e527c558f16589a93dd0e7d7dbd86363c0360535cd531d76758b1d13a7052`. The CLI integration test also checks exact bytes and refusal of unexpected arguments.
+- With the final vendor and embedded notices: Linux updater 31/31 tests, including real subprocess termination at all durable phases and the replacement gap; CLI integration 23/23; clippy on adapters/app/CLI with all targets and denied warnings, and workspace formatting, pass.
 
 Outstanding gates:
 
-- Rebuild with the final vendored libraries and notice bundle, compare `spanreed licenses` byte for byte, rerun Rust checks, and qualify the actual Linux musl/Windows archive workflow.
+- Qualify the actual Linux musl/Windows archive workflow. The GNU debug build does not qualify either distributed architecture/link target.
 - Complete desktop Rust/frontend notice packaging and Nix notice integration; do not claim those outputs qualified from the CLI checks.
 - Exercise Windows DACL/Job/version fixtures and update/recover/rollback/installer lifecycle in the existing Windows QA guest. Windows apply remains disabled.
 - `block@0.1.6` and `malloc_buf@0.0.6` declare MIT but their exact historical sources do not supply standalone license text. The reviewed source pins match the released Rust files, but do not fill that legal gap. macOS stays excluded until it is resolved and native execution is qualified.

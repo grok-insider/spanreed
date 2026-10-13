@@ -22,6 +22,32 @@ fn version_is_exact_and_available_without_user_configuration() {
 }
 
 #[test]
+fn licenses_preserves_original_bytes_without_user_configuration() {
+    let result = Command::new(bin())
+        .arg("licenses")
+        .env_clear()
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    let expected = [
+        include_bytes!("../LICENSE").as_slice(),
+        b"\n\n".as_slice(),
+        include_bytes!(concat!(env!("OUT_DIR"), "/native-notices.txt")).as_slice(),
+    ]
+    .concat();
+    assert_eq!(result.stdout, expected);
+    let invalid = Command::new(bin())
+        .args(["licenses", "--unknown"])
+        .env_clear()
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(invalid.stdout.is_empty());
+    assert_eq!(invalid.stderr, b"usage: spanreed licenses\n");
+}
+
+#[test]
 fn blocked_update_refuses_before_release_lookup_or_download() {
     for args in [
         vec!["self-update", "--yes"],
