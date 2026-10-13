@@ -1,8 +1,10 @@
 //! Execute an authorized provider hop. Hosts retain identity and routing policy.
 use crate::http::{
-    is_hop_by_hop_header, pipe_upstream, write_status, write_upstream_bytes, HttpRequestReader,
+    is_hop_by_hop_header, pipe_upstream_observed, write_status, write_upstream_bytes,
+    HttpRequestReader,
 };
 use crate::provider::{Provider, Upstream};
+use crate::stream_probe::StreamProbe;
 use fabrials_types::hop::{HopClass, HopKind, Transport};
 use fabrials_types::HopRecord;
 use std::collections::HashMap;
@@ -375,13 +377,27 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
     observer.response_headers(upstream.status().as_u16(), upstream.headers());
     let status = upstream.status();
     let capture = !matches!(class.kind, HopKind::Image | HopKind::Video | HopKind::Tts);
-    let (captured, pipe_error) = match pipe_upstream(&mut client, &mut upstream, capture) {
-        Ok(captured) => (captured, None),
-        Err(error) => {
-            let message = error.to_string();
-            (error.captured, Some(message))
-        }
+    let response_header = |name: reqwest::header::HeaderName| {
+        upstream
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
     };
+    let mut probe = StreamProbe::for_response(
+        class.kind,
+        status.as_u16(),
+        response_header(reqwest::header::CONTENT_TYPE).as_deref(),
+        response_header(reqwest::header::CONTENT_ENCODING).as_deref(),
+    );
+    let (captured, pipe_error) =
+        match pipe_upstream_observed(&mut client, &mut upstream, capture, &mut probe) {
+            Ok(captured) => (captured, None),
+            Err(error) => {
+                let message = error.to_string();
+                (error.captured, Some(message))
+            }
+        };
 
     prov.observe_exchange(
         &routed,
@@ -402,6 +418,10 @@ pub fn forward(hop: AuthorizedHop<'_>, observer: &dyn HopObserver) -> Result<(),
         rec.key_hash = key_hash.clone();
         rec.kind = Some(class.kind.as_str().into());
         rec.duration_ms = Some(hop_started.elapsed().as_millis() as u64);
+        // Same origin as `duration_ms`, so a retried hop reports the latency the client saw.
+        rec.first_byte_ms = probe.first_byte_ms(hop_started);
+        rec.ttft_ms = probe.ttft_ms(hop_started);
+        rec.normalize_timings();
         rec.status = Some(status.as_u16());
         if rec.model.is_none() && class.kind.always_record() {
             rec.model = model.clone().or_else(|| Some(class.kind.as_str().into()));
@@ -674,13 +694,26 @@ mod tests {
         }
     }
     impl UsageExtractor for FakeProvider {
+        /// The usage of a whole JSON body, or of the first SSE `data:` event that has one.
         fn parse_usage(&self, response_body: &[u8]) -> Option<HopRecord> {
-            let value: serde_json::Value = serde_json::from_slice(response_body).ok()?;
-            let usage = value.get("usage")?;
-            Some(HopRecord {
-                output_tokens: usage.get("output_tokens")?.as_u64()?,
-                ..Default::default()
-            })
+            let from_value = |value: serde_json::Value| -> Option<HopRecord> {
+                let usage = value.get("usage")?;
+                Some(HopRecord {
+                    output_tokens: usage.get("output_tokens")?.as_u64()?,
+                    ..Default::default()
+                })
+            };
+            serde_json::from_slice(response_body)
+                .ok()
+                .and_then(from_value)
+                .or_else(|| {
+                    std::str::from_utf8(response_body)
+                        .ok()?
+                        .lines()
+                        .filter_map(|line| line.strip_prefix("data: "))
+                        .filter_map(|data| serde_json::from_str(data).ok())
+                        .find_map(from_value)
+                })
         }
     }
 
@@ -785,6 +818,87 @@ mod tests {
             String::from_utf8_lossy(&response).into_owned()
         });
         (TcpStream::connect(address).unwrap(), handle)
+    }
+
+    /// One scripted upstream answer for [`scripted_upstream`].
+    enum Scripted {
+        /// A complete JSON reply, sent after `delay_ms`.
+        Json {
+            status: u16,
+            reason: &'static str,
+            body: &'static str,
+            delay_ms: u64,
+        },
+        /// A chunked event stream: headers after `headers_ms`, then each part after its own
+        /// delay. `cut` ends the connection in the middle of a chunk instead of finishing.
+        Sse {
+            headers_ms: u64,
+            parts: Vec<(u64, &'static str)>,
+            cut: bool,
+        },
+    }
+
+    /// Upstream whose answers arrive on a schedule, to measure when the relay saw them.
+    fn scripted_upstream(replies: Vec<Scripted>) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            for reply in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap() == 0 {
+                        break;
+                    }
+                    let trimmed = line.trim_end();
+                    if trimmed.is_empty() {
+                        break;
+                    }
+                    let (name, value) = trimmed.split_once(':').unwrap_or((trimmed, ""));
+                    if name.eq_ignore_ascii_case("content-length") {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut request_body = vec![0u8; length];
+                reader.read_exact(&mut request_body).unwrap();
+                match reply {
+                    Scripted::Json {
+                        status,
+                        reason,
+                        body,
+                        delay_ms,
+                    } => {
+                        std::thread::sleep(Duration::from_millis(delay_ms));
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                    }
+                    Scripted::Sse {
+                        headers_ms,
+                        parts,
+                        cut,
+                    } => {
+                        std::thread::sleep(Duration::from_millis(headers_ms));
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                        );
+                        let _ = stream.flush();
+                        for (delay_ms, part) in parts {
+                            std::thread::sleep(Duration::from_millis(delay_ms));
+                            let _ = write!(stream, "{:x}\r\n{part}\r\n", part.len());
+                            let _ = stream.flush();
+                        }
+                        let _ = stream.write_all(if cut { b"ff\r\nabc" } else { b"0\r\n\r\n" });
+                        let _ = stream.flush();
+                    }
+                }
+            }
+        });
+        (base, handle)
     }
 
     fn run_hop(client: TcpStream, base: String, observer: &TestObserver) -> Result<(), String> {
@@ -1195,6 +1309,166 @@ mod tests {
         assert!(!response.contains("<html>"), "{response}");
         assert!(response.contains("application/json"), "{response}");
         assert_eq!(seen.lock().unwrap().len(), 1);
+        upstream.join().unwrap();
+    }
+
+    const KEEPALIVE: &str = ": keepalive\n\n";
+    const ROLE_ONLY: &str =
+        "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n";
+    const FIRST_TEXT: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+    const USAGE_EVENT: &str = "data: {\"usage\":{\"output_tokens\":3}}\n\ndata: [DONE]\n\n";
+
+    fn hop_record(observer: &TestObserver) -> HopRecord {
+        let records = observer.records.lock().unwrap();
+        assert_eq!(records.len(), 1, "{records:?}");
+        records[0].clone()
+    }
+
+    #[test]
+    fn a_streamed_chat_records_when_the_first_byte_and_the_first_content_arrived() {
+        let (base, upstream) = scripted_upstream(vec![Scripted::Sse {
+            headers_ms: 150,
+            // Comments and role-only chunks open a stream; neither is content.
+            parts: vec![
+                (100, KEEPALIVE),
+                (0, ROLE_ONLY),
+                (350, FIRST_TEXT),
+                (0, USAGE_EVENT),
+            ],
+            cut: false,
+        }]);
+        let (client, response) = fake_client();
+        let observer = TestObserver::default();
+
+        run_hop(client, base, &observer).unwrap();
+
+        assert!(response.join().unwrap().starts_with("HTTP/1.1 200"));
+        let record = hop_record(&observer);
+        let (first_byte, ttft, duration) = (
+            record.first_byte_ms.expect("first byte"),
+            record.ttft_ms.expect("ttft"),
+            record.duration_ms.expect("duration"),
+        );
+        assert!(first_byte >= 250, "first byte {first_byte}");
+        assert!(
+            ttft >= first_byte + 300,
+            "ttft {ttft} first byte {first_byte}"
+        );
+        assert!(ttft <= duration, "ttft {ttft} duration {duration}");
+        assert_eq!(record.output_tokens, 3);
+        upstream.join().unwrap();
+    }
+
+    #[test]
+    fn a_stream_that_never_carries_content_has_a_first_byte_and_no_ttft() {
+        let (base, upstream) = scripted_upstream(vec![Scripted::Sse {
+            headers_ms: 0,
+            parts: vec![(50, ROLE_ONLY), (0, USAGE_EVENT)],
+            cut: false,
+        }]);
+        let (client, response) = fake_client();
+        let observer = TestObserver::default();
+
+        run_hop(client, base, &observer).unwrap();
+
+        response.join().unwrap();
+        let record = hop_record(&observer);
+        assert!(record.first_byte_ms.is_some());
+        assert_eq!(record.ttft_ms, None);
+        upstream.join().unwrap();
+    }
+
+    #[test]
+    fn a_retried_hop_reports_the_latency_the_client_saw() {
+        // The first attempt is rejected after 300 ms; the retry streams at once. The row
+        // is the retry's, but its timings keep the origin of the whole hop.
+        let (base, upstream) = scripted_upstream(vec![
+            Scripted::Json {
+                status: 402,
+                reason: "Payment Required",
+                body: r#"{"message":"Grok Build usage balance exhausted"}"#,
+                delay_ms: 300,
+            },
+            Scripted::Sse {
+                headers_ms: 0,
+                parts: vec![(0, FIRST_TEXT), (0, USAGE_EVENT)],
+                cut: false,
+            },
+        ]);
+        let (client, response) = fake_client();
+        let observer = TestObserver {
+            offer_retry: true,
+            ..Default::default()
+        };
+
+        run_hop(client, base, &observer).unwrap();
+
+        assert!(response.join().unwrap().starts_with("HTTP/1.1 200"));
+        let record = hop_record(&observer);
+        assert!(record.first_byte_ms.unwrap() >= 300, "{record:?}");
+        assert!(record.ttft_ms.unwrap() >= 300, "{record:?}");
+        assert!(record.ttft_ms <= record.duration_ms, "{record:?}");
+        upstream.join().unwrap();
+    }
+
+    #[test]
+    fn a_json_response_has_a_first_byte_and_no_ttft() {
+        let (base, upstream) = scripted_upstream(vec![Scripted::Json {
+            status: 200,
+            reason: "OK",
+            body: r#"{"usage":{"output_tokens":7}}"#,
+            delay_ms: 80,
+        }]);
+        let (client, response) = fake_client();
+        let observer = TestObserver::default();
+
+        run_hop(client, base, &observer).unwrap();
+
+        response.join().unwrap();
+        let record = hop_record(&observer);
+        assert!(record.first_byte_ms.unwrap() >= 80, "{record:?}");
+        assert_eq!(record.ttft_ms, None);
+        assert_eq!(record.output_tokens, 7);
+        upstream.join().unwrap();
+    }
+
+    #[test]
+    fn a_stream_that_breaks_after_its_content_keeps_the_timings() {
+        let (base, upstream) = scripted_upstream(vec![Scripted::Sse {
+            headers_ms: 0,
+            parts: vec![(60, FIRST_TEXT)],
+            cut: true,
+        }]);
+        let (client, response) = fake_client();
+        let observer = TestObserver::default();
+
+        let outcome = run_hop(client, base, &observer);
+
+        assert!(outcome.is_err(), "the broken body is reported");
+        response.join().unwrap();
+        let record = hop_record(&observer);
+        assert!(record.first_byte_ms.unwrap() >= 60, "{record:?}");
+        assert!(record.ttft_ms.is_some(), "{record:?}");
+        assert_eq!(record.status, Some(200));
+        upstream.join().unwrap();
+    }
+
+    #[test]
+    fn a_failed_upstream_stream_carries_no_timings() {
+        // A 5xx never reaches the pipe as a stream: the hop is not a chat success.
+        let (base, upstream) = scripted_upstream(vec![Scripted::Json {
+            status: 500,
+            reason: "Internal Server Error",
+            body: r#"{"error":"boom"}"#,
+            delay_ms: 0,
+        }]);
+        let (client, response) = fake_client();
+        let observer = TestObserver::default();
+
+        run_hop(client, base, &observer).unwrap();
+
+        assert!(response.join().unwrap().starts_with("HTTP/1.1 500"));
+        assert!(observer.records.lock().unwrap().is_empty());
         upstream.join().unwrap();
     }
 }

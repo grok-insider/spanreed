@@ -40,6 +40,8 @@ impl UsagePartial {
             key_hash: None,
             kind: None,
             duration_ms: None,
+            first_byte_ms: None,
+            ttft_ms: None,
             status: None,
             unit: None,
             quantity: None,

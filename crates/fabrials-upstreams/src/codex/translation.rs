@@ -330,6 +330,10 @@ pub fn forward(
     let mut terminal = None;
     let mut tool_indices = std::collections::HashMap::new();
     let mut done_items: Vec<Value> = Vec::new();
+    // Instants of the upstream's own events: the client may get a role-only chunk long
+    // before the model has produced anything, so what the client is sent says nothing here.
+    let mut first_byte: Option<std::time::Instant> = None;
+    let mut first_content: Option<std::time::Instant> = None;
     loop {
         let mut line = Vec::new();
         let n = match reader
@@ -340,6 +344,9 @@ pub fn forward(
             Ok(n) => n,
             Err(_) => break,
         };
+        if n > 0 && first_byte.is_none() {
+            first_byte = Some(std::time::Instant::now());
+        }
         total = total.saturating_add(n);
         if line.len() > 8 * 1024 * 1024 || total > 64 * 1024 * 1024 {
             break;
@@ -376,6 +383,9 @@ pub fn forward(
         let mut event = event;
         let kind = event["type"].as_str().unwrap_or("").to_string();
         let kind = kind.as_str();
+        if first_content.is_none() && fabrials_fabric::stream_probe::event_has_content(&event) {
+            first_content = Some(std::time::Instant::now());
+        }
         if kind == "response.output_item.done" {
             if event["item"]["type"] == "reasoning" {
                 if let Some(blob) = event["item"]["encrypted_content"].as_str() {
@@ -474,6 +484,13 @@ pub fn forward(
     }
     record.status = Some(200);
     record.duration_ms = Some(started.elapsed().as_millis() as u64);
+    // After `record = usage`, which replaces the whole record. Only this success path sets
+    // them: the exits above leave `duration_ms` to the observer's own clock, and a timing
+    // from another clock could not be ordered against it.
+    record.first_byte_ms =
+        first_byte.map(|at| fabrials_fabric::stream_probe::elapsed_ms(started, at));
+    record.ttft_ms = first_content.map(|at| fabrials_fabric::stream_probe::elapsed_ms(started, at));
+    record.normalize_timings();
     if chat {
         let result = fabrials_fabric::wire_compat::responses_to_chat_response(&terminal);
         if stream {
@@ -975,5 +992,189 @@ mod tests {
         assert_eq!(value["object"], "list");
         assert_eq!(value["data"][0]["id"], "gpt-6-sol");
         assert!(value.get("models").is_none());
+    }
+
+    /// Codex fixture that answers on a schedule: headers at once, then each event after its
+    /// delay. Returns the adapter and the thread to join.
+    fn paced_codex(events: Vec<(u64, Value)>) -> (CodexAdapter, std::thread::JoinHandle<()>) {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let fixture = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(socket.try_clone().unwrap());
+            let mut length = 0usize;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_lowercase().strip_prefix("content-length: ") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").unwrap();
+            for (delay_ms, event) in events {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                socket
+                    .write_all(format!("data: {event}\n\n").as_bytes())
+                    .unwrap();
+                socket.flush().unwrap();
+            }
+        });
+        (CodexAdapter { base: Some(base) }, fixture)
+    }
+
+    fn terminal_event() -> Value {
+        json!({"type":"response.completed","response":{"id":"resp-t","created_at":1,"model":"fixture","status":"completed","output":[],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}})
+    }
+
+    fn run_paced(
+        events: Vec<(u64, Value)>,
+        path: &str,
+        request: Value,
+    ) -> (HopRecord, String, u64) {
+        let (adapter, fixture) = paced_codex(events);
+        let mut output = Vec::new();
+        let started = std::time::Instant::now();
+        let record = forward(
+            &adapter,
+            "POST",
+            path,
+            request.to_string().as_bytes(),
+            "fixture-token",
+            Some(&json!({"account_id":"fixture-account"})),
+            &mut output,
+        )
+        .unwrap()
+        .unwrap();
+        let total = started.elapsed().as_millis() as u64;
+        fixture.join().unwrap();
+        (record, String::from_utf8(output).unwrap(), total)
+    }
+
+    #[test]
+    fn timings_follow_the_upstream_events_not_the_chunks_the_client_receives() {
+        let (record, wire, total) = run_paced(
+            vec![
+                (
+                    100,
+                    json!({"type":"response.created","response":{"id":"resp-t"}}),
+                ),
+                (
+                    400,
+                    json!({"type":"response.output_text.delta","delta":"hello"}),
+                ),
+                (0, terminal_event()),
+            ],
+            "/backend-api/codex/chat/completions",
+            json!({"model":"fixture","messages":[{"role":"user","content":"hi"}],"stream":true}),
+        );
+        // The client already holds a role-only chunk for `response.created`.
+        assert!(wire.contains(r#""role":"assistant""#), "{wire}");
+        let (first_byte, ttft) = (record.first_byte_ms.unwrap(), record.ttft_ms.unwrap());
+        assert!(first_byte >= 100, "first byte {first_byte}");
+        assert!(
+            ttft >= first_byte + 350,
+            "ttft {ttft} first byte {first_byte}"
+        );
+        assert!(ttft <= record.duration_ms.unwrap());
+        assert!(record.duration_ms.unwrap() <= total);
+        // `record = usage` replaced the whole record: the usage is still there too.
+        assert_eq!(record.output_tokens, 2);
+    }
+
+    #[test]
+    fn a_client_that_does_not_stream_still_gets_the_upstream_timings() {
+        // Codex always streams upstream; the reply to this client is buffered.
+        let (record, wire, _) = run_paced(
+            vec![
+                (
+                    50,
+                    json!({"type":"response.created","response":{"id":"resp-t"}}),
+                ),
+                (
+                    300,
+                    json!({"type":"response.output_text.delta","delta":"hello"}),
+                ),
+                (0, terminal_event()),
+            ],
+            "/backend-api/codex/chat/completions",
+            json!({"model":"fixture","messages":[{"role":"user","content":"hi"}],"stream":false}),
+        );
+        assert!(wire.contains("chat.completion"), "{wire}");
+        assert!(record.ttft_ms.unwrap() >= record.first_byte_ms.unwrap() + 250);
+    }
+
+    #[test]
+    fn a_response_without_any_content_delta_has_a_first_byte_and_no_ttft() {
+        let (record, _, _) = run_paced(
+            vec![
+                (
+                    30,
+                    json!({"type":"response.created","response":{"id":"resp-t"}}),
+                ),
+                (
+                    0,
+                    json!({"type":"response.output_text.done","text":"hello"}),
+                ),
+                (0, terminal_event()),
+            ],
+            "/backend-api/codex/responses",
+            json!({"model":"fixture","input":"hi","stream":true}),
+        );
+        assert!(record.first_byte_ms.is_some());
+        assert_eq!(record.ttft_ms, None);
+    }
+
+    #[test]
+    fn the_first_function_call_arguments_delta_is_the_first_content() {
+        let (record, _, _) = run_paced(
+            vec![
+                (
+                    30,
+                    json!({"type":"response.created","response":{"id":"resp-t"}}),
+                ),
+                (
+                    200,
+                    json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"c1","name":"f"}}),
+                ),
+                (
+                    200,
+                    json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"{"}),
+                ),
+                (0, terminal_event()),
+            ],
+            "/backend-api/codex/chat/completions",
+            json!({"model":"fixture","messages":[{"role":"user","content":"hi"}],"stream":true}),
+        );
+        // The tool-call announcement (name, no arguments) is not content.
+        assert!(
+            record.ttft_ms.unwrap() >= record.first_byte_ms.unwrap() + 350,
+            "{record:?}"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_ends_before_completion_carries_no_timings() {
+        let (record, _, _) = run_paced(
+            vec![
+                (
+                    30,
+                    json!({"type":"response.created","response":{"id":"resp-t"}}),
+                ),
+                (
+                    30,
+                    json!({"type":"response.output_text.delta","delta":"hello"}),
+                ),
+            ],
+            "/backend-api/codex/responses",
+            json!({"model":"fixture","input":"hi","stream":true}),
+        );
+        assert_eq!(record.status, Some(502));
+        assert_eq!(record.first_byte_ms, None);
+        assert_eq!(record.ttft_ms, None);
     }
 }

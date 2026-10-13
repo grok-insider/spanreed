@@ -75,20 +75,21 @@ impl FilesystemIdentity {
                 inode: metadata.ino(),
             })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            // Windows does not expose a portable inode pair on stable Metadata.
-            // Hash the canonical path so distinct directories stay distinct for
-            // enrolment bounds and swap detection until a richer ID lands.
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            path.hash(&mut hasher);
-            Ok(Self {
-                device: 0,
-                inode: hasher.finish(),
-            })
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+            };
+            let directory = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(path)
+                .map_err(|_| WorkspaceError::NotADirectory)?;
+            crate::win_fs::identity(&directory).map_err(|_| WorkspaceError::NotADirectory)
         }
+        #[cfg(not(any(unix, windows)))]
+        Err(WorkspaceError::NotADirectory)
     }
 }
 
@@ -161,6 +162,21 @@ impl WorkspaceIndex {
             .map_err(|_| WorkspaceError::Unresolvable)?;
         let identity = FilesystemIdentity::of(&canonical)?;
 
+        self.enrol_verified(canonical, identity, now_ms)
+    }
+
+    pub(crate) fn enrol_verified(
+        &mut self,
+        canonical: PathBuf,
+        identity: FilesystemIdentity,
+        now_ms: u64,
+    ) -> Result<WorkspaceRef, WorkspaceError> {
+        let metadata =
+            std::fs::symlink_metadata(&canonical).map_err(|_| WorkspaceError::NotADirectory)?;
+        if metadata.file_type().is_symlink() || FilesystemIdentity::of(&canonical)? != identity {
+            return Err(WorkspaceError::IdentityChanged);
+        }
+
         if let Some(existing) = self
             .entries
             .values()
@@ -173,10 +189,7 @@ impl WorkspaceIndex {
         }
 
         self.next_id = self.next_id.saturating_add(1);
-        let display_name = canonical.file_name().map_or_else(
-            || canonical.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
+        let display_name = display_name_for(&canonical);
         let entry = WorkspaceRef {
             id: format!("ws-{}", self.next_id),
             display_name,
@@ -236,6 +249,20 @@ impl WorkspaceIndex {
             entry.last_opened_at = now_ms;
             entry.revision = entry.revision.saturating_add(1);
         }
+    }
+}
+
+pub(crate) fn display_name_for(path: &Path) -> String {
+    let value = path.file_name().unwrap_or_default().to_string_lossy();
+    let cleaned: String = value
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(200)
+        .collect();
+    if cleaned.trim().is_empty() {
+        "Directory".into()
+    } else {
+        cleaned
     }
 }
 

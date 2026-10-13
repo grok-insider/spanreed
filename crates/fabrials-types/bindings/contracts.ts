@@ -91,6 +91,20 @@ kind?: string | null,
  */
 duration_ms?: number | null,
 /**
+ * Milliseconds from the start of the hop (same origin as `duration_ms`) to the first
+ * byte of the upstream response body the relay read. A lower bound on the upstream's
+ * first byte: the first read can already hold bytes that arrived with the headers.
+ * None where no body is piped (WebSocket tunnel, rejections, send errors).
+ */
+first_byte_ms?: number | null,
+/**
+ * Milliseconds from the start of the hop (same origin as `duration_ms`) to the first
+ * streamed event that carries content: text, reasoning or tool-call argument deltas.
+ * Spans retries, so it is the latency the client saw. Reasoning an upstream hides is
+ * not content. None unless the upstream streamed events the relay could read.
+ */
+ttft_ms?: number | null,
+/**
  * HTTP status or 101 after a WebSocket upgrade. None on legacy rows.
  */
 status?: number | null,

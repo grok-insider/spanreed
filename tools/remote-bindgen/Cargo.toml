@@ -1,0 +1,10 @@
+[package]
+name = "fabrials-remote-bindgen"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+wasm-bindgen-cli-support = "=0.2.129"

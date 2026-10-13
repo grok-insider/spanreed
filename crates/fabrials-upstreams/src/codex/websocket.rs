@@ -84,9 +84,20 @@ struct Active<'a> {
     bytes: usize,
     record: Option<HopRecord>,
     started: std::time::Instant,
+    /// First upstream frame and first content event of the turn in progress. Reset with
+    /// `started` at every `response.create`, so each turn is measured on its own.
+    first_byte: Option<std::time::Instant>,
+    first_content: Option<std::time::Instant>,
     observer: &'a dyn fabrials_fabric::forward::HopObserver,
 }
 impl Active<'_> {
+    fn stamp_timings(&self, record: &mut HopRecord) {
+        use fabrials_fabric::stream_probe::elapsed_ms;
+        record.first_byte_ms = self.first_byte.map(|at| elapsed_ms(self.started, at));
+        record.ttft_ms = self.first_content.map(|at| elapsed_ms(self.started, at));
+        record.normalize_timings();
+    }
+
     fn finish(&mut self, adapter: &CodexAdapter, event: &Value, status: u16) {
         if let Some(mut record) = self.record.take() {
             if let Some(usage) = adapter.parse_usage(event.to_string().as_bytes()) {
@@ -97,6 +108,7 @@ impl Active<'_> {
             }
             record.status = Some(status);
             record.duration_ms = Some(self.started.elapsed().as_millis() as u64);
+            self.stamp_timings(&mut record);
             tokio::task::block_in_place(|| self.observer.record(record));
         }
     }
@@ -106,6 +118,7 @@ impl Drop for Active<'_> {
         if let Some(mut record) = self.record.take() {
             record.status = Some(502);
             record.duration_ms = Some(self.started.elapsed().as_millis() as u64);
+            self.stamp_timings(&mut record);
             tokio::task::block_in_place(|| self.observer.record(record));
         }
     }
@@ -167,6 +180,8 @@ async fn run(
         bytes: 0,
         record: None,
         started: std::time::Instant::now(),
+        first_byte: None,
+        first_content: None,
         observer: hop.observer,
     };
     loop {
@@ -196,6 +211,7 @@ async fn run(
                         super::translation::strip_unsupported_parameters(&mut event);
                         event["store"]=json!(false);
                         active.bytes=0;active.started=std::time::Instant::now();
+                        active.first_byte=None;active.first_content=None;
                         active.record=Some(HopRecord {ts_ms:super::translation::now_ms(),request_id:Some(fabrials_fabric::accounting::new_request_id()),provider:Some("codex".into()),route:Some("codex".into()),kind:Some("chat".into()),model:Some(model),account_id:hop.alias.map(|alias|format!("codex/{alias}")),key_hash:hop.key_hash.map(str::to_owned),..Default::default()});
                         upstream.send(Message::Text(event.to_string().into())).await.map_err(|_|"Codex WebSocket disconnected")?;
                     },
@@ -207,8 +223,13 @@ async fn run(
             message=upstream.next()=>{
                 let Some(Ok(message))=message else {return Err("Codex WebSocket disconnected".into());};
                 if let Message::Text(text)=&message {
+                    let received=std::time::Instant::now();
                     active.bytes=active.bytes.saturating_add(text.len());if active.bytes>64*1024*1024{return Err("Codex response exceeds 64 MiB".into());}
                     let event:Value=serde_json::from_str(text).map_err(|_|"Invalid Codex WebSocket event")?;
+                    if active.record.is_some() {
+                        active.first_byte.get_or_insert(received);
+                        if active.first_content.is_none() && fabrials_fabric::stream_probe::event_has_content(&event) {active.first_content=Some(received);}
+                    }
                     match event["type"].as_str() {
                         Some("response.completed"|"response.incomplete")=>{
                             let response=&event["response"];
@@ -424,6 +445,139 @@ mod tests {
             assert_eq!(record.status, Some(200));
             assert_eq!(record.total_tokens, 10);
         }
+    }
+
+    struct Timed(Mutex<Vec<HopRecord>>);
+    impl HopObserver for Timed {
+        fn record(&self, record: HopRecord) {
+            self.0.lock().unwrap().push(record);
+        }
+        fn log(&self, _: &str) {}
+        fn authorize_response(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&Value>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn each_websocket_turn_is_timed_from_its_own_creation() {
+        use tokio_tungstenite::tungstenite;
+        let sleep = |ms: u64| std::thread::sleep(std::time::Duration::from_millis(ms));
+        let completed = |index: usize| json!({"type":"response.completed","response":{"id":format!("response-{index}"),"status":"completed","model":"allowed","output":[],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}});
+        let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", origin.local_addr().unwrap());
+        let upstream = std::thread::spawn(move || {
+            let (socket, _) = origin.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut ws = tungstenite::accept(socket).unwrap();
+            let send = |ws: &mut tungstenite::WebSocket<std::net::TcpStream>, event: Value| {
+                ws.send(Message::Text(event.to_string().into())).unwrap();
+            };
+            // Turn 0: a lifecycle event, then content 300 ms later.
+            ws.read().unwrap();
+            sleep(100);
+            send(
+                &mut ws,
+                json!({"type":"response.created","response":{"id":"response-0"}}),
+            );
+            sleep(300);
+            send(
+                &mut ws,
+                json!({"type":"response.output_text.delta","delta":"hi"}),
+            );
+            send(&mut ws, completed(0));
+            // Turn 1: no content at all.
+            ws.read().unwrap();
+            sleep(50);
+            send(&mut ws, completed(1));
+            let _ = ws.read();
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let caller = std::thread::spawn(move || {
+            let socket = std::net::TcpStream::connect(address).unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let (mut client, _) =
+                tungstenite::client(format!("ws://{address}/codex/v1/responses"), socket).unwrap();
+            for _ in 0..2 {
+                client
+                    .send(Message::Text(
+                        json!({"type":"response.create","model":"allowed","input":[]})
+                            .to_string()
+                            .into(),
+                    ))
+                    .unwrap();
+                loop {
+                    let event: Value =
+                        serde_json::from_str(client.read().unwrap().to_text().unwrap()).unwrap();
+                    if event["type"] == "response.completed" {
+                        break;
+                    }
+                }
+            }
+            let _ = client.close(None);
+        });
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = BufReader::new(socket.try_clone().unwrap());
+        let mut headers = HashMap::new();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            let (name, value) = line.split_once(':').unwrap();
+            headers.insert(name.to_lowercase(), value.trim().to_string());
+        }
+        let observer = Timed(Mutex::new(Vec::new()));
+        let adapter = CodexAdapter { base: Some(base) };
+        let routed = adapter.resolve("/codex/v1/responses").unwrap();
+        forward(
+            &adapter,
+            WebSocketHop {
+                client: &mut socket,
+                headers: &headers,
+                prefetched: Vec::new(),
+                token: Some("fixture-token"),
+                secret: Some(&json!({"account_id":"fixture-account"})),
+                upstream: &routed,
+                observer: &observer,
+                alias: Some("work"),
+                key_hash: Some("fixture-hash"),
+            },
+        )
+        .unwrap();
+        caller.join().unwrap();
+        upstream.join().unwrap();
+        let records = observer.0.lock().unwrap();
+        assert_eq!(records.len(), 2);
+        let (first_byte, ttft) = (
+            records[0].first_byte_ms.unwrap(),
+            records[0].ttft_ms.unwrap(),
+        );
+        assert!(first_byte >= 100, "first byte {first_byte}");
+        assert!(
+            ttft >= first_byte + 250,
+            "ttft {ttft} first byte {first_byte}"
+        );
+        assert!(ttft <= records[0].duration_ms.unwrap());
+        // The second turn starts its own clock: nothing carries over from the first.
+        assert!(records[1].first_byte_ms.unwrap() >= 50, "{:?}", records[1]);
+        assert_eq!(records[1].ttft_ms, None);
     }
 
     #[test]

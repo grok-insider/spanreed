@@ -19,6 +19,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use futures_util::{Sink, SinkExt as _};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -86,6 +87,9 @@ pub const WS_SESSION_PROTOCOL_PREFIX: &str = "gls.";
 /// Header carrying the per-page CSRF token on mutations.
 pub const CSRF_HEADER: &str = "x-grok-light-csrf";
 
+#[allow(missing_docs)]
+pub const CONTROLLER_HEADER: &str = "x-grok-light-controller";
+
 /// Content Security Policy served with the application document.
 ///
 /// `connect-src 'self'` holds unchanged because the document and the socket
@@ -104,9 +108,28 @@ pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
      form-action 'self'; \
      frame-ancestors 'none'";
 
+#[allow(missing_docs)]
+#[async_trait::async_trait]
+pub trait DirectConnection: std::fmt::Debug + Send + Sync {
+    async fn serve(&self, host: Arc<HostState>, socket: WebSocket);
+}
+
 /// Mutable host state shared by every request.
 #[derive(Debug)]
 pub struct HostState {
+    pub(crate) workspace_updates: Mutex<()>,
+    pub(crate) remote_experiments: crate::remote_management::RemoteExperiments,
+    pub(crate) remote_projects: Mutex<crate::remote_projects::RemoteProjects>,
+    pub(crate) remote_connections: Mutex<crate::remote_connections::Connections>,
+    pub(crate) upstream_prompt: Mutex<Option<crate::remote_management::PromptCapabilities>>,
+    private_origin: Option<String>,
+    direct_connection: std::sync::OnceLock<Arc<dyn DirectConnection>>,
+    direct_slots: Arc<tokio::sync::Semaphore>,
+    #[allow(missing_docs)]
+    pub agent_mode: crate::acp::AgentMode,
+    receipts: Mutex<crate::receipts::Receipts>,
+    inflight_commands: Arc<tokio::sync::Semaphore>,
+    pub(crate) image_decoders: Arc<tokio::sync::Semaphore>,
     /// Canonical loopback origin for this installation.
     pub origin: LocalOrigin,
     /// Browser pairing broker.
@@ -123,7 +146,7 @@ pub struct HostState {
     shutdown: tokio::sync::watch::Sender<bool>,
     /// Raised when a journal event is recorded, so the controlling WebSocket
     /// can push it. Without this the browser only ever saw the hello frame.
-    event_notify: tokio::sync::Notify,
+    pub(crate) event_notify: tokio::sync::Notify,
     /// The host-owned directory picker.
     pub picker: Arc<dyn DirectoryPicker>,
     /// Where durable state lives, when the host owns a state directory.
@@ -139,6 +162,29 @@ pub struct HostState {
 }
 
 impl HostState {
+    #[allow(missing_docs)]
+    pub fn enable_direct_connection(
+        &self,
+        connection: Arc<dyn DirectConnection>,
+    ) -> Result<(), &'static str> {
+        if self.private_origin.is_none() {
+            return Err("direct_origin_required");
+        }
+        self.direct_connection
+            .set(connection)
+            .map_err(|_| "direct_already_enabled")
+    }
+
+    pub(crate) fn remote_control_transfer_enabled(&self) -> bool {
+        self.remote_experiments.control_transfer && self.agent_mode == crate::acp::AgentMode::Shared
+    }
+
+    pub(crate) async fn notify_remote_devices(&self) {
+        if self.remote_experiments.device_panel || self.remote_control_transfer_enabled() {
+            self.emit_event(Event::RemoteDevicesChanged, None).await;
+        }
+    }
+
     /// Attach the durable state directory and the picker the host will use.
     ///
     /// Opening the journal is part of this, and it is allowed to fail the
@@ -157,6 +203,18 @@ impl HostState {
     ) -> Result<Self, crate::journal::JournalError> {
         let directory = directory.into();
         self.journal = Mutex::new(Journal::open(&directory)?);
+        self.receipts = Mutex::new(
+            crate::receipts::Receipts::open(&directory)
+                .map_err(|_| crate::journal::JournalError::Storage)?,
+        );
+        self.pairing = Mutex::new(
+            PairingBroker::open(&directory, now_ms())
+                .map_err(|_| crate::journal::JournalError::Storage)?,
+        );
+        self.remote_projects = Mutex::new(
+            crate::remote_projects::RemoteProjects::load(&directory)
+                .map_err(|_| crate::journal::JournalError::Storage)?,
+        );
         self.state_directory = Some(directory);
         self.picker = picker;
         Ok(self)
@@ -204,6 +262,37 @@ impl HostState {
     pub fn with_agent_program(mut self, program: impl Into<String>) -> Self {
         self.agent_program = program.into();
         self
+    }
+
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn with_remote_experiments(
+        mut self,
+        flags: crate::remote_management::RemoteExperiments,
+    ) -> Self {
+        self.remote_experiments = flags;
+        self
+    }
+
+    #[allow(missing_docs)]
+    pub fn with_agent_mode(mut self, mode: crate::acp::AgentMode) -> Self {
+        self.agent_mode = mode;
+        self
+    }
+
+    #[allow(missing_docs)]
+    pub fn with_private_origin(
+        mut self,
+        origin: Option<String>,
+    ) -> Result<Self, crate::origin::OriginError> {
+        if let Some(value) = &origin {
+            crate::origin::validate_private_origin(value)?;
+            if !self.allowed_origins.contains(value) {
+                self.allowed_origins.push(value.clone());
+            }
+        }
+        self.private_origin = origin;
+        Ok(self)
     }
 
     /// Whether `origin` is an allowed hosted document origin for this host.
@@ -264,6 +353,15 @@ impl HostState {
         {
             *self.agent.lock().await = Some(Arc::clone(&agent));
         }
+        let recovering = if self.agent_mode == crate::acp::AgentMode::Shared {
+            let state = self.clone();
+            let agent = agent.clone();
+            Some(tokio::spawn(async move {
+                state.reconcile_shared(&agent).await;
+            }))
+        } else {
+            None
+        };
         loop {
             tokio::select! {
                 event = events.recv() => match event {
@@ -276,11 +374,55 @@ impl HostState {
                 }
             }
         }
+        if let Some(recovering) = recovering {
+            recovering.abort();
+        }
         // The agent ended. Anything still in flight is ambiguous.
         let mut journal = self.journal.lock().await;
         journal.interrupt_all_in_flight(InterruptCause::AgentExit);
         drop(journal);
         *self.agent.lock().await = None;
+    }
+
+    async fn reconcile_shared(&self, agent: &Arc<AgentHandle>) {
+        let sessions: Vec<_> = {
+            let session = self.session.lock().await;
+            session
+                .sessions
+                .values()
+                .filter_map(|live| {
+                    session
+                        .workspaces
+                        .get(&live.workspace_id)
+                        .map(|workspace| (live.id.clone(), workspace.path.clone()))
+                })
+                .collect()
+        };
+        for (session_id, path) in sessions {
+            match agent.load_session(&session_id, &path).await {
+                Ok(result) => {
+                    let running = result
+                        .get("_meta")
+                        .and_then(|meta| meta.get("x.ai/runningPromptId"))
+                        .and_then(serde_json::Value::as_str)
+                        .is_some();
+                    self.session.lock().await.set_running(&session_id, running);
+                }
+                Err(_) => {
+                    self.session.lock().await.sessions.remove(&session_id);
+                    self.emit_event(
+                        Event::SessionStatus {
+                            session_id,
+                            state: "unavailable".into(),
+                        },
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
+        self.replay_open_sessions().await;
+        self.emit_event(Event::WorkspacesChanged, None).await;
     }
 
     /// Supervise the agent: spawn it, run the ACP handshake, and relaunch it
@@ -305,15 +447,18 @@ impl HostState {
             let started = tokio::time::Instant::now();
             match AgentHandle::spawn(&command) {
                 Ok((agent, events)) => match agent.initialize().await {
-                    Ok(_) => {
+                    Ok(initialized) => {
+                        *self.upstream_prompt.lock().await = Some((&initialized).into());
                         self.emit_event(
                             Event::HostStatus {
                                 state: AGENT_READY.into(),
+                                controller_token: None,
                             },
                             None,
                         )
                         .await;
                         self.run_agent(agent, events).await;
+                        *self.upstream_prompt.lock().await = None;
                     }
                     Err(error) => {
                         eprintln!(
@@ -333,6 +478,7 @@ impl HostState {
             self.emit_event(
                 Event::HostStatus {
                     state: AGENT_RESTARTING.into(),
+                    controller_token: None,
                 },
                 None,
             )
@@ -378,6 +524,7 @@ impl HostState {
 
     /// Enrol a directory the host itself selected, and persist the index.
     async fn enrol_directory(&self, path: &std::path::Path) -> Result<(), ()> {
+        let _update = self.workspace_updates.lock().await;
         let Some(directory) = self.state_directory.as_deref() else {
             return Err(());
         };
@@ -450,6 +597,7 @@ impl HostState {
     /// the user the agent had lost the directory while the next host start
     /// handed it back.
     async fn revoke_workspace(&self, workspace_id: &str) -> Result<(), ()> {
+        let _update = self.workspace_updates.lock().await;
         let Some(directory) = self.state_directory.as_deref() else {
             return Err(());
         };
@@ -465,13 +613,20 @@ impl HostState {
     /// One at a time, in a loop rather than by recursion: the next prompt only
     /// leaves when the previous finishes, which is what keeps Light's queue and
     /// the agent's own from both holding the same message.
-    fn drain_queue(self: &Arc<Self>, session_id: &str) {
+    pub(crate) fn drain_queue(self: &Arc<Self>, session_id: &str) {
         let state = Arc::clone(self);
         let session_id = session_id.to_owned();
         tokio::spawn(async move {
             loop {
-                let Some(next) = state.session.lock().await.take_queued(&session_id) else {
-                    return;
+                let next = {
+                    let mut session = state.session.lock().await;
+                    let Some(next) = session.take_queued(&session_id) else {
+                        return;
+                    };
+                    session.set_running(&session_id, true);
+                    session.transcript_media.remember(&session_id, &next.images);
+                    session.local_turns.insert(session_id.clone());
+                    next
                 };
                 let bash = queue_entry_is_bash(&next.text);
                 // Host-local bash does not need the agent; chat does.
@@ -479,6 +634,14 @@ impl HostState {
                     None
                 } else {
                     let Some(agent) = state.agent.lock().await.clone() else {
+                        {
+                            let mut session = state.session.lock().await;
+                            session.local_turns.remove(&session_id);
+                            if let Some(live) = session.sessions.get_mut(&session_id) {
+                                live.running = false;
+                                live.queued.insert(0, next);
+                            }
+                        }
                         // Put the entry back? We already took it. Without an
                         // agent the chat queue cannot drain; surface failure
                         // and stop so the user can retry after the CLI returns.
@@ -525,8 +688,14 @@ impl HostState {
                 state
                     .emit_event(
                         Event::PromptSent {
+                            images: next
+                                .images
+                                .iter()
+                                .map(crate::media::PromptImage::descriptor)
+                                .collect(),
                             session_id: session_id.clone(),
                             text: next.text.clone(),
+                            idempotency_key: None,
                         },
                         None,
                     )
@@ -560,13 +729,16 @@ impl HostState {
                     }
                 } else {
                     let agent = agent.expect("non-bash path holds an agent");
-                    let sent = agent.prompt(&session_id, &next.text).await;
+                    let sent = agent
+                        .prompt_with_images(&session_id, &next.text, &next.images)
+                        .await;
                     {
                         let mut session = state.session.lock().await;
                         match &sent {
                             Ok(result) => session.finish_review_turn(&session_id, Some(result)),
                             Err(_) => session.interrupt_review_turn(&session_id),
                         }
+                        session.local_turns.remove(&session_id);
                         session.set_running(&session_id, false);
                     }
                     if sent.is_err() {
@@ -611,7 +783,7 @@ impl HostState {
     /// A newly attached tab holds no dialogs. Without this a reload while a
     /// permission was pending left the request alive in the host and blocking
     /// in the agent, with nothing on screen to answer it.
-    async fn replay_pending_permissions(&self) {
+    pub(crate) async fn replay_pending_permissions(&self) {
         let pending: Vec<(String, String, Vec<String>)> = {
             let session = self.session.lock().await;
             session
@@ -629,9 +801,30 @@ impl HostState {
                 .collect()
         };
 
+        let interactions: Vec<Event> = self
+            .session
+            .lock()
+            .await
+            .pending_interactions
+            .iter()
+            .map(|(key, pending)| pending.event(key))
+            .collect();
+        for event in interactions {
+            self.emit_event(event, None).await;
+        }
         for (session_id, request_id, options) in pending {
+            let (title, description) = self
+                .session
+                .lock()
+                .await
+                .permission_details
+                .get(&request_id)
+                .cloned()
+                .unwrap_or_default();
             self.emit_event(
                 Event::PermissionRequest {
+                    title,
+                    description,
                     session_id,
                     request_id,
                     options,
@@ -646,12 +839,19 @@ impl HostState {
     ///
     /// Bounded by the concurrency limit and, per session, by the rehydration
     /// bound, so a reconnect cannot be turned into an unbounded read.
-    async fn replay_open_sessions(&self) {
+    pub(crate) async fn replay_open_sessions(&self) {
         let open = self.session.lock().await.sessions_to_replay();
 
         let now = crate::now_ms();
         for (session_id, path) in open {
-            let restored = crate::session_catalog::rehydrate_session(&path, &session_id);
+            let restored =
+                crate::session_catalog::rehydrate_session_async(path.clone(), session_id.clone())
+                    .await;
+            self.session
+                .lock()
+                .await
+                .transcript_media
+                .remember(&session_id, &restored.images);
             let live_tasks = self
                 .session
                 .lock()
@@ -660,17 +860,37 @@ impl HostState {
                 .session(&session_id)
                 .map(|rt| rt.snapshot_tasks(now))
                 .unwrap_or_default();
-            if !crate::session_catalog::rehydrate_has_content(&restored) && live_tasks.is_empty() {
-                continue;
+            if crate::session_catalog::rehydrate_has_content(&restored) || !live_tasks.is_empty() {
+                self.emit_event(
+                    crate::session_catalog::snapshot_from_rehydrate_with_runtime(
+                        &crate::session_catalog::grok_home(),
+                        Some(path.as_path()),
+                        session_id.clone(),
+                        restored,
+                        live_tasks,
+                    ),
+                    None,
+                )
+                .await;
             }
+            self.replay_session_status(&session_id).await;
+        }
+    }
+
+    async fn replay_session_status(&self, session_id: &str) {
+        let running = self
+            .session
+            .lock()
+            .await
+            .sessions
+            .get(session_id)
+            .map(|live| live.running);
+        if let Some(running) = running {
             self.emit_event(
-                crate::session_catalog::snapshot_from_rehydrate_with_runtime(
-                    &crate::session_catalog::grok_home(),
-                    Some(path.as_path()),
-                    session_id,
-                    restored,
-                    live_tasks,
-                ),
+                Event::SessionStatus {
+                    session_id: session_id.into(),
+                    state: if running { "running" } else { "idle" }.into(),
+                },
                 None,
             )
             .await;
@@ -678,7 +898,86 @@ impl HostState {
     }
 
     /// Fold an `x.ai/*` extension notification into runtime state + SPA events.
-    async fn absorb_ext_notification(&self, method: &str, params: &serde_json::Value) {
+    async fn absorb_ext_notification(self: &Arc<Self>, method: &str, params: &serde_json::Value) {
+        let (method, params) = crate::interactions::normalize(method, params);
+        if method == "x.ai/session_notification" {
+            if params
+                .pointer("/update/sessionUpdate")
+                .and_then(serde_json::Value::as_str)
+                == Some("image_dropped")
+            {
+                if let Some(session_id) =
+                    params.get("sessionId").and_then(serde_json::Value::as_str)
+                {
+                    self.emit_event(
+                        Event::ImageRejected {
+                            session_id: session_id.to_owned(),
+                        },
+                        None,
+                    )
+                    .await;
+                }
+            }
+            if let Some((session_id, tool_call_id)) = crate::interactions::resolved(params) {
+                let mut session = self.session.lock().await;
+                let mut keys: Vec<String> = session
+                    .pending_interactions
+                    .iter()
+                    .filter(|(_, pending)| {
+                        pending.session_id == session_id && pending.tool_call_id == tool_call_id
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                keys.extend(
+                    session
+                        .pending_permissions
+                        .iter()
+                        .filter(|(key, pending)| {
+                            pending.session_id == session_id
+                                && session
+                                    .permission_tools
+                                    .get(*key)
+                                    .is_some_and(|tool| tool == tool_call_id)
+                        })
+                        .map(|(key, _)| key.clone()),
+                );
+                for key in &keys {
+                    session.pending_interactions.remove(key);
+                    session.pending_permissions.remove(key);
+                    session.permission_tools.remove(key);
+                }
+                drop(session);
+                for request_id in keys {
+                    self.emit_event(
+                        Event::InteractionResolved {
+                            session_id: session_id.into(),
+                            request_id,
+                        },
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
+        if method == "x.ai/session/prompt_complete" {
+            if let Some(session_id) = params.get("sessionId").and_then(serde_json::Value::as_str) {
+                let mut session = self.session.lock().await;
+                if session.local_turns.contains(session_id) {
+                    return;
+                }
+                session.set_running(session_id, false);
+                drop(session);
+                self.drain_queue(session_id);
+                self.emit_event(
+                    Event::SessionStatus {
+                        session_id: session_id.into(),
+                        state: "idle".into(),
+                    },
+                    None,
+                )
+                .await;
+            }
+        }
         use crate::xai_runtime::{RuntimeAction, decode_notification};
 
         let Some(action) = decode_notification(method, params) else {
@@ -738,9 +1037,51 @@ impl HostState {
     }
 
     /// Fold one agent event into host state.
-    async fn absorb(&self, event: AgentEvent) {
+    async fn absorb(self: &Arc<Self>, event: AgentEvent) {
         match event {
+            AgentEvent::InteractionRequest {
+                method,
+                request_id,
+                params,
+            } => {
+                if let Some(pending) =
+                    crate::interactions::PendingInteraction::parse(&method, request_id, &params)
+                {
+                    let key = format!(
+                        "interaction-{}",
+                        self.journal.lock().await.emitted_through() + 1
+                    );
+                    let event = pending.event(&key);
+                    let mut session = self.session.lock().await;
+                    if session.pending_interactions.len() >= 64 {
+                        return;
+                    }
+                    session.pending_interactions.insert(key, pending);
+                    drop(session);
+                    self.emit_event(event, None).await;
+                }
+            }
             AgentEvent::Update(params) => {
+                if self.agent_mode == crate::acp::AgentMode::Shared
+                    && matches!(
+                        params
+                            .pointer("/update/sessionUpdate")
+                            .and_then(serde_json::Value::as_str),
+                        Some("agent_message_chunk" | "agent_thought_chunk" | "tool_call")
+                    )
+                    && let Some(session_id) =
+                        params.get("sessionId").and_then(serde_json::Value::as_str)
+                {
+                    self.session.lock().await.set_running(session_id, true);
+                    self.emit_event(
+                        Event::SessionStatus {
+                            session_id: session_id.into(),
+                            state: "running".into(),
+                        },
+                        None,
+                    )
+                    .await;
+                }
                 let capture = if let Some(session_id) =
                     params.get("sessionId").and_then(serde_json::Value::as_str)
                 {
@@ -768,6 +1109,9 @@ impl HostState {
                 // Classify by ACP `sessionUpdate`. Treating every text-bearing
                 // update as a message was the bug that streamed internal
                 // reasoning into the agent bubble next to the real reply.
+                if self.absorb_image(&params).await {
+                    return;
+                }
                 if let Some(event) = crate::projection::session_update_event(&params) {
                     self.emit_event(event, None).await;
                 }
@@ -809,6 +1153,35 @@ impl HostState {
                 };
 
                 let key = format!("perm-{}", self.journal.lock().await.emitted_through() + 1);
+                if let Some(tool_call_id) = params
+                    .pointer("/toolCall/toolCallId")
+                    .or_else(|| params.pointer("/toolCall/id"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    self.session
+                        .lock()
+                        .await
+                        .permission_tools
+                        .insert(key.clone(), tool_call_id.into());
+                }
+                let title = params
+                    .pointer("/toolCall/title")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|text| crate::bounds::truncate_utf8(text, 512).0);
+                let description = params
+                    .pointer("/toolCall/rawInput/command")
+                    .or_else(|| params.pointer("/toolCall/description"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(|text| crate::bounds::truncate_utf8(text, 2048).0);
+                {
+                    let mut session = self.session.lock().await;
+                    if session.pending_permissions.len() >= 64 {
+                        return;
+                    }
+                    session
+                        .permission_details
+                        .insert(key.clone(), (title.clone(), description.clone()));
+                }
                 self.session.lock().await.open_permission(
                     &key,
                     PendingPermission {
@@ -822,12 +1195,44 @@ impl HostState {
                         session_id,
                         request_id: key,
                         options: renderable,
+                        title,
+                        description,
                     },
                     None,
                 )
                 .await;
             }
             AgentEvent::Exited => {
+                if self.agent_mode == crate::acp::AgentMode::Shared {
+                    *self.agent.lock().await = None;
+                    let ids = {
+                        let mut session = self.session.lock().await;
+                        session.local_turns.clear();
+                        session.pending_permissions.clear();
+                        session.pending_interactions.clear();
+                        session.permission_tools.clear();
+                        session.permission_details.clear();
+                        session.sessions.keys().cloned().collect::<Vec<_>>()
+                    };
+                    for session_id in ids {
+                        self.emit_event(
+                            Event::SessionStatus {
+                                session_id,
+                                state: "reconnecting".into(),
+                            },
+                            None,
+                        )
+                        .await;
+                    }
+                    self.emit_event(
+                        Event::Error {
+                            code: "agent_transport_lost".into(),
+                        },
+                        None,
+                    )
+                    .await;
+                    return;
+                }
                 // Runtime state is process-scoped with the agent.
                 self.session.lock().await.runtime.clear();
                 // One agent process holds every session (light ADR 0011), so
@@ -849,6 +1254,9 @@ impl HostState {
                     // can never be answered, so it is dropped rather than left
                     // waiting for a decision that would go nowhere.
                     session.pending_permissions.clear();
+                    session.pending_interactions.clear();
+                    session.permission_tools.clear();
+                    session.permission_details.clear();
                     ids
                 };
                 for session_id in closed {
@@ -879,6 +1287,20 @@ impl HostState {
     #[must_use]
     pub fn new(origin: LocalOrigin) -> Self {
         Self {
+            workspace_updates: Mutex::new(()),
+            remote_experiments: crate::remote_management::RemoteExperiments::from_environment(),
+            remote_projects: Mutex::new(crate::remote_projects::RemoteProjects::default()),
+            remote_connections: Mutex::new(crate::remote_connections::Connections::default()),
+            upstream_prompt: Mutex::new(None),
+            private_origin: None,
+            direct_connection: std::sync::OnceLock::new(),
+            direct_slots: Arc::new(tokio::sync::Semaphore::new(16)),
+            agent_mode: crate::acp::AgentMode::Isolated,
+            receipts: Mutex::new(crate::receipts::Receipts::default()),
+            image_decoders: Arc::new(tokio::sync::Semaphore::new(2)),
+            inflight_commands: Arc::new(tokio::sync::Semaphore::new(
+                crate::bounds::MAX_INFLIGHT_COMMANDS,
+            )),
             origin,
             pairing: Mutex::new(PairingBroker::new()),
             lease: Mutex::new(ControlLease::new()),
@@ -922,6 +1344,9 @@ pub struct PairRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairResponse {
+    #[allow(missing_docs)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation_id: Option<String>,
     /// Opaque browser session identifier, safe to display.
     pub session_id: String,
     /// Secret session token for hosted clients (`x-gl-session` header).
@@ -942,12 +1367,42 @@ pub fn router(state: Arc<HostState>) -> Router {
         .route("/session", get(resume))
         .route("/command", post(command))
         .route("/events", get(events))
+        .route("/remote", get(direct_events))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             enforce_origin,
         ))
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+async fn direct_events(
+    State(state): State<Arc<HostState>>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let Some(connection) = state.direct_connection.get().cloned() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !header_str(&headers, "sec-websocket-protocol").is_some_and(|values| {
+        values
+            .split(',')
+            .any(|value| value.trim() == "fabrials.remote.v1")
+    }) {
+        return rejected();
+    }
+    let Ok(permit) = state.direct_slots.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    upgrade
+        .protocols(["fabrials.remote.v1"])
+        .max_message_size(90 * 1024)
+        .max_frame_size(90 * 1024)
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
+            connection.serve(state, socket).await;
+        })
+        .into_response()
 }
 
 /// Bound loopback listeners for one origin (IPv4 required, IPv6 when available).
@@ -1055,6 +1510,42 @@ async fn enforce_origin(
     let host_ref = host.as_deref();
     let origin_ref = origin.as_deref();
 
+    if let Some(private_origin) = &state.private_origin
+        && host_ref == private_origin.strip_prefix("https://")
+    {
+        let safe = (request.method() == Method::GET || request.method() == Method::HEAD)
+            && !is_websocket_upgrade(request.headers());
+        let exact_origin = origin_ref == Some(private_origin.as_str());
+        let hosted_origin =
+            !exact_origin && origin_ref.is_some_and(|value| state.allows_web_origin(value));
+        let public_navigation = safe
+            && origin_ref.is_none()
+            && matches!(
+                header_str(request.headers(), "sec-fetch-site"),
+                Some("cross-site" | "same-site")
+            )
+            && header_str(request.headers(), "sec-fetch-mode") == Some("navigate")
+            && header_str(request.headers(), "sec-fetch-dest") == Some("document")
+            && (matches!(request.uri().path(), "/" | "/index.html")
+                || (assets::is_safe_path(request.uri().path())
+                    && assets::is_spa_navigation_path(request.uri().path())));
+        if (!exact_origin && !hosted_origin && !(safe && origin_ref.is_none()))
+            || (!sec_fetch_site_is_same_origin(header_str(request.headers(), "sec-fetch-site"))
+                && !public_navigation
+                && !hosted_origin)
+        {
+            return rejected();
+        }
+        if request.method() == Method::OPTIONS {
+            return cors_preflight_response(origin_ref.unwrap_or(private_origin));
+        }
+        let mut response = next.run(request).await;
+        if hosted_origin && let Some(origin) = origin_ref {
+            apply_cors_headers(response.headers_mut(), origin);
+        }
+        return response;
+    }
+
     // CORS preflight from the hosted document — no side effects.
     if request.method() == Method::OPTIONS {
         if let Some(ref origin) = origin {
@@ -1134,7 +1625,9 @@ fn apply_cors_headers(headers: &mut HeaderMap, origin: &str) {
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("content-type, x-grok-light-csrf, x-gl-session"),
+        HeaderValue::from_static(
+            "content-type, x-grok-light-csrf, x-gl-session, x-grok-light-controller",
+        ),
     );
     headers.insert(header::VARY, HeaderValue::from_static("Origin"));
 }
@@ -1176,11 +1669,6 @@ async fn health(State(state): State<Arc<HostState>>) -> Response {
 }
 
 /// Serve the embedded SPA.
-///
-/// Unknown paths fall back to the entry document so the SPA owns its own
-/// routing, which is standard for a single-page application and is safe here
-/// because the asset table is a fixed set: an unknown path serves the same
-/// document, never a file from disk.
 async fn serve_asset(uri: axum::http::Uri) -> Response {
     if let Some(asset) = assets::lookup(uri.path()) {
         return (
@@ -1190,13 +1678,8 @@ async fn serve_asset(uri: axum::http::Uri) -> Response {
         )
             .into_response();
     }
-    if let Some(index) = assets::lookup("/") {
-        return (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, index.content_type)],
-            index.bytes,
-        )
-            .into_response();
+    if uri.path() != "/" && !assets::is_spa_navigation_path(uri.path()) {
+        return StatusCode::NOT_FOUND.into_response();
     }
     // Built without a bundle. Say so plainly rather than pretending.
     let body = "<!doctype html><meta charset=\"utf-8\"><title>Agent host</title>\
@@ -1222,6 +1705,10 @@ async fn pair(
         return rejected();
     };
 
+    if broker.persist().is_err() {
+        broker.revoke(&paired.session_id);
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     let cookie = format!(
         "{SESSION_COOKIE}={}; HttpOnly; SameSite=Strict; Path=/",
         paired.session_token.expose()
@@ -1231,6 +1718,7 @@ async fn pair(
     };
 
     let body = PairResponse {
+        installation_id: Some(state.origin.install_id().to_owned()),
         session_id: paired.session_id,
         session_token: paired.session_token.expose().to_owned(),
         csrf_token: paired.csrf_token.expose().to_owned(),
@@ -1244,42 +1732,39 @@ async fn pair(
         .into_response()
 }
 
-/// Re-issue a CSRF token to an already-paired browser.
-///
-/// The CSRF token deliberately lives only in page memory, so a reload loses
-/// it. Without this the user would be sent back to setup on every refresh even
-/// though the pairing cookie is still valid.
-///
-/// Re-issue CSRF for a still-valid session (reload recovery).
-///
-/// Hosted clients send `x-gl-session` (cookies are SameSite-blocked cross-site).
-/// Loopback fallback SPA may still present the cookie.
 async fn resume(State(state): State<Arc<HostState>>, headers: HeaderMap) -> Response {
     let Some(token) = session_token(&headers) else {
         return rejected();
     };
     let now = now_ms();
-    let mut broker = state.pairing.lock().await;
+    let broker = state.pairing.lock().await;
     let Ok(session_id) = broker.verify_session(token, now) else {
         return rejected();
     };
-    let Ok(csrf) = broker.reissue_csrf(&session_id) else {
-        return rejected();
+    let csrf = match header_str(&headers, CSRF_HEADER)
+        .filter(|csrf| broker.verify_mutation(token, csrf, now).is_ok())
+    {
+        Some(csrf) => csrf.to_owned(),
+        None => match broker.recover_csrf(token, now) {
+            Ok(csrf) => csrf.expose().to_owned(),
+            Err(_) => return rejected(),
+        },
     };
     (
         StatusCode::OK,
         axum::Json(PairResponse {
+            installation_id: Some(state.origin.install_id().to_owned()),
             session_id,
             // Echo the presented token so hosted clients can rehydrate memory.
             session_token: token.to_owned(),
-            csrf_token: csrf.expose().to_owned(),
+            csrf_token: csrf,
             protocol_version: PROTOCOL_VERSION,
         }),
     )
         .into_response()
 }
 
-async fn command(
+pub(crate) async fn command(
     State(state): State<Arc<HostState>>,
     headers: HeaderMap,
     body: axum::body::Bytes,
@@ -1295,12 +1780,13 @@ async fn command(
     };
 
     let now = now_ms();
-    {
+    let principal = {
         let broker = state.pairing.lock().await;
-        if broker.verify_mutation(token, csrf, now).is_err() {
-            return rejected();
+        match broker.verify_mutation(token, csrf, now) {
+            Ok(principal) => principal,
+            Err(_) => return rejected(),
         }
-    }
+    };
 
     // The version is read before the body is understood. An operation whose
     // shape changed will not deserialise at all under the older version, so
@@ -1309,6 +1795,7 @@ async fn command(
     // told to do.
     if let Ok(probe) = serde_json::from_slice::<VersionProbe>(&body)
         && probe.protocol_version != PROTOCOL_VERSION
+        && probe.protocol_version != crate::protocol::CONTENT_PROTOCOL_VERSION
     {
         return (
             StatusCode::CONFLICT,
@@ -1327,6 +1814,121 @@ async fn command(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
+    let control_authorized = if envelope.operation.requires_control() {
+        let lease = state.lease.lock().await;
+        let epoch = envelope.controller_epoch.unwrap_or(0);
+        if state.agent_mode == crate::acp::AgentMode::Shared
+            || state.remote_control_transfer_enabled()
+        {
+            lease.authorize_connection(
+                &principal,
+                header_str(&headers, CONTROLLER_HEADER).unwrap_or_default(),
+                epoch,
+                now_ms(),
+            )
+        } else {
+            lease.authorize_session(&principal, epoch, now_ms())
+        }
+        .is_ok()
+    } else {
+        true
+    };
+    if !control_authorized {
+        return (
+            StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION, "requestId": envelope.request_id,
+                "error": "controller_required"
+            })),
+        )
+            .into_response();
+    }
+    if state.agent_mode == crate::acp::AgentMode::Shared
+        && matches!(&envelope.operation, crate::protocol::Operation::Prompt { text, bash, .. }
+            | crate::protocol::Operation::SendNow { text, bash, .. } if *bash || text.trim_start().starts_with('!'))
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            axum::Json(serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION, "requestId": envelope.request_id,
+                "error": "remote_shell_disabled"
+            })),
+        )
+            .into_response();
+    }
+    if let Err(error) =
+        crate::remote_management::verify_workspace(&state, &envelope.operation).await
+    {
+        return command_error(&envelope.request_id, error);
+    }
+    if crate::remote_management::handles(&envelope.operation) {
+        return crate::remote_management::command(
+            &state,
+            &principal,
+            header_str(&headers, CONTROLLER_HEADER).unwrap_or_default(),
+            &envelope,
+        )
+        .await;
+    }
+    if crate::media_commands::handles(&envelope.operation) {
+        return crate::media_commands::command(&state, &principal, &envelope).await;
+    }
+    let revoke_target = match &envelope.operation {
+        crate::protocol::Operation::ForgetBrowserPairing => Some(Some(principal.as_str())),
+        crate::protocol::Operation::RevokeBrowserPairing { session_id } => {
+            Some(session_id.as_deref())
+        }
+        _ => None,
+    };
+    if let Some(session_id) = revoke_target {
+        let mut broker = state.pairing.lock().await;
+        if let Some(session_id) = session_id {
+            broker.revoke(session_id);
+        } else {
+            broker.revoke_all();
+        }
+        if broker.persist().is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        drop(broker);
+        state.session.lock().await.media.revoke(session_id);
+        state.remote_connections.lock().await.revoke(session_id);
+        let mut lease = state.lease.lock().await;
+        if session_id.is_none_or(|id| lease.holder_session() == Some(id)) {
+            lease.clear();
+        }
+        drop(lease);
+        state.event_notify.notify_waiters();
+        state.notify_remote_devices().await;
+    }
+
+    if let crate::protocol::Operation::GetCommandStatus { idempotency_key } = &envelope.operation {
+        let key = crate::receipts::scoped_key(&principal, idempotency_key);
+        return match state.receipts.lock().await.get(&key) {
+            Some(mut receipt) => {
+                receipt.idempotency_key.clone_from(idempotency_key);
+                receipt_response(&envelope.request_id, "commandStatus", &receipt)
+            }
+            None => command_error(&envelope.request_id, "unknown_command"),
+        };
+    }
+    if state.agent_mode == crate::acp::AgentMode::Shared
+        && matches!(
+            &envelope.operation,
+            crate::protocol::Operation::Prompt { .. }
+                | crate::protocol::Operation::SendNow { .. }
+                | crate::protocol::Operation::PromptContent { .. }
+        )
+    {
+        return accept_detached(state, principal, envelope).await;
+    }
+
+    if let Err(error) =
+        crate::media_commands::validate_prompt(&state, &principal, &envelope.operation).await
+    {
+        return command_error(&envelope.request_id, error);
+    }
+
     let agent = state.agent.lock().await.clone();
     // Project open enrols a host-resolved path; it cannot go through pure
     // dispatch without HostState (durable workspace index).
@@ -1343,7 +1945,14 @@ async fn command(
             // updates can be absorbed and pushed while a prompt is still open.
             // Without that, `session/update` lines pile up until the turn ends and
             // the browser never sees a live reply.
-            dispatch_unlocked(&envelope, &state.journal, &state.session, agent.as_ref()).await
+            dispatch_unlocked(
+                &envelope,
+                &state.journal,
+                &state.session,
+                agent.as_ref(),
+                None,
+            )
+            .await
         };
 
     if let Some(failure) = apply_command_effects(&state, &envelope, &outcome).await {
@@ -1374,6 +1983,113 @@ async fn command(
     }
 }
 
+fn command_error(request_id: &str, error: &str) -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        axum::Json(serde_json::json!({
+            "protocolVersion": PROTOCOL_VERSION, "requestId": request_id, "error": error
+        })),
+    )
+        .into_response()
+}
+
+fn receipt_response(
+    request_id: &str,
+    outcome: &str,
+    receipt: &crate::receipts::Receipt,
+) -> Response {
+    let mut result = serde_json::to_value(receipt).expect("receipt serializes");
+    result["outcome"] = serde_json::Value::String(outcome.into());
+    (
+        StatusCode::ACCEPTED,
+        axum::Json(serde_json::json!({
+            "protocolVersion": PROTOCOL_VERSION, "requestId": request_id, "result": result
+        })),
+    )
+        .into_response()
+}
+
+async fn accept_detached(
+    state: Arc<HostState>,
+    principal: String,
+    mut envelope: CommandEnvelope,
+) -> Response {
+    let public_key = envelope
+        .idempotency_key
+        .clone()
+        .expect("validated idempotency");
+    let key = crate::receipts::scoped_key(&principal, &public_key);
+    let operation = serde_json::to_value(&envelope.operation).expect("operation serializes");
+    let mut receipts = state.receipts.lock().await;
+    if receipts.get(&key).is_some() {
+        return match receipts.begin(key, public_key, &operation) {
+            Ok(receipt) => receipt_response(&envelope.request_id, "commandStatus", &receipt),
+            Err(error) => command_error(&envelope.request_id, error),
+        };
+    }
+    if let Err(error) =
+        crate::media_commands::validate_prompt(&state, &principal, &envelope.operation).await
+    {
+        return command_error(&envelope.request_id, error);
+    }
+    let Ok(permit) = state.inflight_commands.clone().try_acquire_owned() else {
+        return command_error(&envelope.request_id, "too_many_commands");
+    };
+    let receipt = match receipts.begin(key.clone(), public_key.clone(), &operation) {
+        Ok(receipt) => receipt,
+        Err(error) => return command_error(&envelope.request_id, error),
+    };
+    drop(receipts);
+    let response = receipt_response(&envelope.request_id, "commandAccepted", &receipt);
+    envelope.idempotency_key = Some(key.clone());
+    tokio::spawn(async move {
+        let _permit = permit;
+        let agent = state.agent.lock().await.clone();
+        let outcome = dispatch_unlocked(
+            &envelope,
+            &state.journal,
+            &state.session,
+            agent.as_ref(),
+            Some((&state, public_key.as_str())),
+        )
+        .await;
+        let failed_effect = apply_command_effects(&state, &envelope, &outcome)
+            .await
+            .is_some();
+        let result = outcome
+            .as_ref()
+            .ok()
+            .and_then(|result| serde_json::to_value(result).ok());
+        let error = if failed_effect {
+            Some("effect_failed".into())
+        } else {
+            outcome.as_ref().err().map(|error| error.code().to_owned())
+        };
+        let uncertain = matches!(
+            outcome,
+            Err(crate::dispatch::DispatchError::Agent
+                | crate::dispatch::DispatchError::NotReplayable)
+        );
+        let finished =
+            state
+                .receipts
+                .lock()
+                .await
+                .finish(&key, result.clone(), error.clone(), uncertain);
+        state
+            .emit_event(
+                Event::CommandCompleted {
+                    idempotency_key: public_key,
+                    result: finished.as_ref().ok().and(result),
+                    error: finished.err().map(str::to_owned).or(error),
+                },
+                None,
+            )
+            .await;
+    });
+    response
+}
+
 /// The session an operation addresses, when it addresses one.
 ///
 /// Every session-scoped command names its session (light ADR 0011), so this is
@@ -1384,6 +2100,8 @@ const fn addressed_session(operation: &crate::protocol::Operation) -> Option<&St
     use crate::protocol::Operation;
     match operation {
         Operation::Prompt { session_id, .. }
+        | Operation::PromptContent { session_id, .. }
+        | Operation::SendNow { session_id, .. }
         | Operation::CancelTurn { session_id }
         | Operation::CloseSession { session_id }
         | Operation::DecidePermission { session_id, .. }
@@ -1404,6 +2122,29 @@ async fn apply_command_effects(
     envelope: &CommandEnvelope,
     outcome: &Result<DispatchOutcome, crate::dispatch::DispatchError>,
 ) -> Option<Response> {
+    if outcome.is_ok() {
+        if let crate::protocol::Operation::AnswerInteraction {
+            session_id,
+            request_id,
+            ..
+        }
+        | crate::protocol::Operation::DecidePermission {
+            session_id,
+            request_id,
+            ..
+        } = &envelope.operation
+        {
+            state
+                .emit_event(
+                    Event::InteractionResolved {
+                        session_id: session_id.clone(),
+                        request_id: request_id.clone(),
+                    },
+                    None,
+                )
+                .await;
+        }
+    }
     // A picker has no time bound, so it runs after the response rather than
     // holding this request open while the user browses.
     if matches!(outcome, Ok(DispatchOutcome::PickerOpened)) {
@@ -1448,7 +2189,25 @@ async fn apply_command_effects(
     if turn_phase_should_clear(&envelope.operation, outcome)
         && let Some(session_id) = addressed_session(&envelope.operation)
     {
-        state.session.lock().await.set_running(session_id, false);
+        let mut session = state.session.lock().await;
+        session.local_turns.remove(session_id);
+        if state.agent_mode == crate::acp::AgentMode::Shared
+            && matches!(outcome, Err(crate::dispatch::DispatchError::Agent))
+        {
+            drop(session);
+            state
+                .emit_event(
+                    Event::SessionStatus {
+                        session_id: session_id.clone(),
+                        state: "reconnecting".into(),
+                    },
+                    None,
+                )
+                .await;
+            return None;
+        }
+        session.set_running(session_id, false);
+        drop(session);
         state
             .emit_event(
                 Event::SessionStatus {
@@ -1482,13 +2241,7 @@ async fn apply_command_effects(
         )
     ) {
         let session_id = addressed_session(&envelope.operation).cloned()?;
-        let restored = state
-            .session
-            .lock()
-            .await
-            .pending_rehydrate
-            .take()
-            .unwrap_or_default();
+        let restored = state.session.lock().await.pending_rehydrate.take();
         // Parent-scoped members/workflows need the workspace cwd; resolve from
         // the open session's enrolled workspace when present.
         let (cwd, live_tasks) = {
@@ -1505,27 +2258,33 @@ async fn apply_command_effects(
                 .unwrap_or_default();
             (cwd, live_tasks)
         };
-        state
-            .emit_event(
-                crate::session_catalog::snapshot_from_rehydrate_with_runtime(
-                    &crate::session_catalog::grok_home(),
-                    cwd.as_deref(),
-                    session_id.clone(),
-                    restored,
-                    live_tasks,
-                ),
-                None,
-            )
-            .await;
-        state
-            .emit_event(
-                Event::SessionStatus {
-                    session_id,
-                    state: "idle".into(),
-                },
-                None,
-            )
-            .await;
+        if let Some(restored) = restored {
+            state
+                .session
+                .lock()
+                .await
+                .transcript_media
+                .remember(&session_id, &restored.images);
+            state
+                .emit_event(
+                    crate::session_catalog::snapshot_from_rehydrate_with_runtime(
+                        &crate::session_catalog::grok_home(),
+                        cwd.as_deref(),
+                        session_id.clone(),
+                        restored,
+                        live_tasks,
+                    ),
+                    None,
+                )
+                .await;
+        }
+        state.replay_session_status(&session_id).await;
+    }
+    if matches!(
+        outcome,
+        Ok(DispatchOutcome::SessionCreated { .. } | DispatchOutcome::Closed)
+    ) {
+        state.emit_event(Event::WorkspacesChanged, None).await;
     }
     None
 }
@@ -1538,6 +2297,7 @@ async fn apply_command_effects(
 /// `Sec-WebSocket-Protocol`), and is where the controlling tab takes its lease.
 async fn events(
     State(state): State<Arc<HostState>>,
+    uri: axum::http::Uri,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
@@ -1559,11 +2319,20 @@ async fn events(
         }
     };
 
-    let connection_id = format!("conn-{}", now_ms());
+    let Ok(connection_id) = crate::pairing::random_hex() else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let after_sequence = uri.query().and_then(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .find(|(key, _)| key == "afterSequence")
+            .and_then(|(_, value)| value.parse::<u64>().ok())
+    });
     // Negotiate only the family protocol — never echo the session token.
     upgrade
         .protocols([WS_SUBPROTOCOL])
-        .on_upgrade(move |socket| drive_events(socket, state, session_id, connection_id))
+        .on_upgrade(move |socket| {
+            drive_events(socket, state, session_id, connection_id, after_sequence)
+        })
 }
 
 /// Whether the client offered the exact versioned subprotocol.
@@ -1596,54 +2365,133 @@ async fn drive_events(
     mut socket: WebSocket,
     state: Arc<HostState>,
     session_id: String,
-    connection_id: String,
+    connection_secret: crate::pairing::Secret,
+    after_sequence: Option<u64>,
 ) {
-    let acquired = {
-        let mut lease = state.lease.lock().await;
-        lease.acquire(&session_id, &connection_id, now_ms())
-    };
-    let Ok(epoch) = acquired else {
-        // A second tab is blocked. It may observe status only, so the
-        // connection closes rather than silently sharing control.
-        let _ = socket
-            .send(Message::Text(
-                serde_json::json!({
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "eventSequence": 0,
-                    "event": { "kind": "error", "code": "controller_held" }
-                })
-                .to_string()
-                .into(),
-            ))
-            .await;
-        return;
-    };
-
-    let hello = state
-        .emit_event(
-            Event::HostStatus {
-                state: format!("controlling:{epoch}"),
-            },
-            None,
-        )
-        .await;
-    let mut last_sent = hello.event_sequence;
-    if send_event_frame(&mut socket, &hello).await.is_err() {
-        release_controller(&state, &connection_id).await;
+    let connection_id = connection_secret.expose();
+    if state
+        .remote_connections
+        .lock()
+        .await
+        .register(&session_id, connection_id)
+        .is_err()
+    {
         return;
     }
+    let acquired = {
+        let mut lease = state.lease.lock().await;
+        lease.acquire(&session_id, connection_id, now_ms())
+    };
+    state.notify_remote_devices().await;
+    let mut epoch = match acquired {
+        Ok(epoch) => Some(epoch),
+        Err(_)
+            if state.agent_mode == crate::acp::AgentMode::Shared
+                || state.remote_control_transfer_enabled() =>
+        {
+            None
+        }
+        Err(_) => {
+            state
+                .remote_connections
+                .lock()
+                .await
+                .disconnect(connection_id);
+            state.notify_remote_devices().await;
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                socket.send(Message::Text(
+                    serde_json::json!({
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "eventSequence": 0,
+                        "event": { "kind": "error", "code": "controller_held" }
+                    })
+                    .to_string()
+                    .into(),
+                )),
+            )
+            .await;
+            return;
+        }
+    };
 
-    // A tab that has just attached holds no transcripts: the host keeps
-    // sessions, the browser keeps their content, and a reload throws the
-    // browser's copy away. Without this, every open conversation came back
-    // reading "no messages yet" while its history sat on disk. The same
-    // rehydration as resume (light ADR 0010), once per open session.
-    state.replay_open_sessions().await;
-    state.replay_pending_permissions().await;
+    let mut last_sent = after_sequence.unwrap_or(0);
+    let hello = EventEnvelope {
+        protocol_version: PROTOCOL_VERSION,
+        event_sequence: 0,
+        session_revision: None,
+        event: Event::HostStatus {
+            state: epoch.map_or_else(|| "watching".into(), |epoch| format!("controlling:{epoch}")),
+            controller_token: (epoch.is_some() || state.remote_control_transfer_enabled())
+                .then(|| connection_id.to_owned()),
+        },
+    };
+    if send_event_frame(&mut socket, &hello).await.is_err() {
+        release_controller(&state, connection_id).await;
+        return;
+    }
+    let needs_snapshot = after_sequence.is_none()
+        || matches!(
+            state.journal.lock().await.replay_after(last_sent),
+            ReplayOutcome::SnapshotRequired
+        );
+    if needs_snapshot {
+        last_sent = state.journal.lock().await.emitted_through();
+        state.emit_event(Event::ReplayReset, None).await;
+        state.replay_open_sessions().await;
+        state.replay_pending_permissions().await;
+    }
 
     loop {
+        let notification = state.event_notify.notified();
+        tokio::pin!(notification);
+        notification.as_mut().enable();
+        if !state
+            .pairing
+            .lock()
+            .await
+            .has_session(&session_id, now_ms())
+            || (!state.remote_control_transfer_enabled()
+                && if let Some(epoch) = epoch {
+                    state
+                        .lease
+                        .lock()
+                        .await
+                        .authorize(connection_id, epoch, now_ms())
+                        .is_err()
+                } else {
+                    false
+                })
+        {
+            break;
+        }
+        if state.remote_control_transfer_enabled() {
+            let current = state
+                .lease
+                .lock()
+                .await
+                .connection_epoch(connection_id, now_ms());
+            if current != epoch {
+                let status = EventEnvelope {
+                    protocol_version: PROTOCOL_VERSION,
+                    event_sequence: 0,
+                    session_revision: None,
+                    event: Event::HostStatus {
+                        state: current.map_or_else(
+                            || "watching".into(),
+                            |value| format!("controlling:{value}"),
+                        ),
+                        controller_token: Some(connection_id.into()),
+                    },
+                };
+                if send_event_frame(&mut socket, &status).await.is_err() {
+                    break;
+                }
+                epoch = current;
+            }
+        }
         // Drain first so a notify that raced with the wait is still delivered.
-        if push_pending_events(&mut socket, &state, &mut last_sent)
+        if push_pending_events(&mut socket, &state, &session_id, &mut last_sent)
             .await
             .is_err()
         {
@@ -1655,7 +2503,7 @@ async fn drive_events(
                 match message {
                     Some(Ok(Message::Text(text))) if text.len() <= MAX_WS_FRAME_BYTES => {
                         let mut lease = state.lease.lock().await;
-                        if lease.heartbeat(&connection_id, now_ms()).is_err() {
+                        if epoch.is_some() && lease.heartbeat(connection_id, now_ms()).is_err() && !state.remote_control_transfer_enabled() {
                             break;
                         }
                     }
@@ -1668,23 +2516,28 @@ async fn drive_events(
                     Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
                 }
             }
-            () = state.event_notify.notified() => {
+            () = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+            () = &mut notification => {
                 // Loop continues into push_pending_events.
             }
         }
     }
 
-    release_controller(&state, &connection_id).await;
+    release_controller(&state, connection_id).await;
 }
 
 /// Push every journal event after `last_sent` over the controlling socket.
 ///
 /// Returns `Err` when the socket is gone so the caller can tear down the lease.
-async fn push_pending_events(
-    socket: &mut WebSocket,
+async fn push_pending_events<S: Sink<Message> + Unpin>(
+    socket: &mut S,
     state: &HostState,
+    principal: &str,
     last_sent: &mut u64,
 ) -> Result<(), ()> {
+    if state.is_shutting_down() || !state.pairing.lock().await.has_session(principal, now_ms()) {
+        return Err(());
+    }
     let envelopes = {
         let journal = state.journal.lock().await;
         match journal.replay_after(*last_sent) {
@@ -1692,33 +2545,148 @@ async fn push_pending_events(
             // The controller fell behind the retained window. There is no
             // snapshot path on this socket yet, so stop rather than inventing
             // events the browser already missed.
-            ReplayOutcome::SnapshotRequired => return Err(()),
+            ReplayOutcome::SnapshotRequired => {
+                drop(journal);
+                *last_sent = state.journal.lock().await.emitted_through();
+                state.emit_event(Event::ReplayReset, None).await;
+                state.replay_open_sessions().await;
+                state.replay_pending_permissions().await;
+                match state.journal.lock().await.replay_after(*last_sent) {
+                    ReplayOutcome::Replay(events) => events,
+                    ReplayOutcome::SnapshotRequired => return Err(()),
+                }
+            }
         }
     };
     for envelope in envelopes {
+        if state.is_shutting_down() || !state.pairing.lock().await.has_session(principal, now_ms())
+        {
+            return Err(());
+        }
         send_event_frame(socket, &envelope).await?;
         *last_sent = envelope.event_sequence;
     }
     Ok(())
 }
 
-async fn send_event_frame(socket: &mut WebSocket, envelope: &EventEnvelope) -> Result<(), ()> {
+async fn send_event_frame<S: Sink<Message> + Unpin>(
+    socket: &mut S,
+    envelope: &EventEnvelope,
+) -> Result<(), ()> {
     let payload = serde_json::to_string(envelope).map_err(|_| ())?;
-    socket
-        .send(Message::Text(payload.into()))
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        socket.send(Message::Text(payload.into())),
+    )
+    .await
+    .map_err(|_| ())?
+    .map_err(|_| ())
+}
+
+#[cfg(test)]
+mod private_delivery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn revocation_stops_a_backpressured_private_event_batch() {
+        let state = Arc::new(HostState::new(
+            LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
+        ));
+        let principal = {
+            let mut broker = state.pairing.lock().await;
+            let nonce = broker.mint_nonce(now_ms()).unwrap();
+            broker
+                .redeem_nonce(nonce.expose(), now_ms())
+                .unwrap()
+                .session_id
+        };
+        for _ in 0..128 {
+            state.emit_event(Event::WorkspacesChanged, None).await;
+        }
+        let (output, mut received) = tokio::sync::mpsc::channel(16);
+        let monitor = output.clone();
+        let mut sink = Box::pin(futures_util::sink::unfold(
+            output,
+            |output, message| async move {
+                output.send(message).await.map_err(|_| ())?;
+                Ok::<_, ()>(output)
+            },
+        ));
+        let serving = state.clone();
+        let grant = principal.clone();
+        let task = tokio::spawn(async move {
+            let mut cursor = 0;
+            let result = push_pending_events(&mut sink, &serving, &grant, &mut cursor).await;
+            (result, cursor)
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while monitor.capacity() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
         .await
-        .map_err(|_| ())
+        .unwrap();
+        state.pairing.lock().await.revoke(&principal);
+        drop(monitor);
+        let mut count = 0;
+        while received.recv().await.is_some() {
+            count += 1;
+        }
+        let (result, cursor) = task.await.unwrap();
+        assert!(
+            result.is_err(),
+            "revoked access continued draining its private event batch"
+        );
+        assert!(
+            count <= 17,
+            "revoked access sent beyond the bounded queued/in-flight frames: {count}"
+        );
+        assert!(cursor <= 17);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_private_event_frame_has_a_single_five_second_deadline() {
+        let (output, _received) = tokio::sync::mpsc::channel(1);
+        output
+            .send(Message::Text("already-full".into()))
+            .await
+            .unwrap();
+        let mut sink = Box::pin(futures_util::sink::unfold(
+            output,
+            |output, message| async move {
+                output.send(message).await.map_err(|_| ())?;
+                Ok::<_, ()>(output)
+            },
+        ));
+        let envelope = EventEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            event_sequence: 1,
+            session_revision: None,
+            event: Event::WorkspacesChanged,
+        };
+        let started = tokio::time::Instant::now();
+        assert!(send_event_frame(&mut sink, &envelope).await.is_err());
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(5));
+    }
 }
 
 /// Drop the control lease and mark anything still in flight for review.
-async fn release_controller(state: &HostState, connection_id: &str) {
+pub(crate) async fn release_controller(state: &HostState, connection_id: &str) {
+    state
+        .remote_connections
+        .lock()
+        .await
+        .disconnect(connection_id);
     // Losing the controlling tab denies anything pending rather than leaving
     // it to be replayed later.
     let mut lease = state.lease.lock().await;
-    lease.release(connection_id);
+    let was_controller = lease.release(connection_id);
     drop(lease);
-    let mut journal = state.journal.lock().await;
-    journal.interrupt_all_in_flight(InterruptCause::ControllerLost);
+    if was_controller && state.agent_mode == crate::acp::AgentMode::Isolated {
+        let mut journal = state.journal.lock().await;
+        journal.interrupt_all_in_flight(InterruptCause::ControllerLost);
+    }
+    state.notify_remote_devices().await;
 }
 
 /// Dispatch without holding the journal across agent I/O.
@@ -1731,6 +2699,7 @@ async fn dispatch_unlocked(
     journal: &Mutex<Journal>,
     session: &Mutex<SessionState>,
     agent: Option<&Arc<crate::acp::AgentHandle>>,
+    prompt_event: Option<(&HostState, &str)>,
 ) -> Result<DispatchOutcome, crate::dispatch::DispatchError> {
     use crate::dispatch::DispatchError;
     use crate::journal::BeginOutcome;
@@ -1753,7 +2722,7 @@ async fn dispatch_unlocked(
     }
 
     let key = envelope.idempotency_key.clone();
-    let result = run_unlocked(envelope, journal, session, agent).await;
+    let result = run_unlocked(envelope, journal, session, agent, prompt_event).await;
 
     // Classify the outcome exactly once, while the turn is still fresh.
     if let Some(key) = key
@@ -1832,7 +2801,8 @@ async fn open_session(
                 .map_err(|error| map_dispatch_agent_error(&error))?;
             // Rehydration is best effort by ADR 0010: a load that succeeded
             // with no transcript on disk still opens the session.
-            let restored = crate::session_catalog::rehydrate_session(&path, id);
+            let restored =
+                crate::session_catalog::rehydrate_session_async(path.clone(), id.to_owned()).await;
             (id.to_owned(), Some(restored), result)
         }
     };
@@ -1843,7 +2813,11 @@ async fn open_session(
             id: session_id.clone(),
             workspace_id: workspace.id.clone(),
             workspace_name: workspace.display_name.clone(),
-            running: false,
+            running: open_result
+                .get("_meta")
+                .and_then(|meta| meta.get("x.ai/runningPromptId"))
+                .and_then(serde_json::Value::as_str)
+                .is_some(),
             queued: Vec::new(),
             opened_at_ms: crate::now_ms(),
         })?;
@@ -1862,8 +2836,10 @@ async fn prompt_or_queue(
     session_id: &str,
     text: &str,
     bash: bool,
+    images: &[crate::media::PromptImage],
     session: &Mutex<SessionState>,
     agent: Option<&Arc<crate::acp::AgentHandle>>,
+    prompt_event: Option<(&HostState, &str)>,
 ) -> Result<DispatchOutcome, crate::dispatch::DispatchError> {
     use crate::dispatch::DispatchError;
 
@@ -1881,7 +2857,7 @@ async fn prompt_or_queue(
     {
         let mut session = session.lock().await;
         if session.session(session_id)?.running {
-            let entry_id = session.queue_prompt(session_id, &wire)?;
+            let entry_id = session.queue_prompt_with_images(session_id, &wire, images)?;
             return Ok(DispatchOutcome::PromptQueued {
                 session_id: session_id.to_owned(),
                 entry_id,
@@ -1891,10 +2867,28 @@ async fn prompt_or_queue(
             return run_bash_for_session(session_id, &wire, &mut session);
         }
         session.begin_review_turn(session_id)?;
+        session.transcript_media.remember(session_id, images);
         session.set_running(session_id, true);
+        session.local_turns.insert(session_id.into());
     }
     let agent = chat_agent.expect("non-bash path holds an agent");
-    let sent = agent.prompt(session_id, &wire).await;
+    if let Some((state, key)) = prompt_event {
+        state
+            .emit_event(
+                Event::PromptSent {
+                    images: images
+                        .iter()
+                        .map(crate::media::PromptImage::descriptor)
+                        .collect(),
+                    session_id: session_id.into(),
+                    text: wire.clone(),
+                    idempotency_key: Some(key.into()),
+                },
+                None,
+            )
+            .await;
+    }
+    let sent = agent.prompt_with_images(session_id, &wire, images).await;
     {
         let mut session = session.lock().await;
         if let Ok(result) = &sent {
@@ -1916,8 +2910,10 @@ async fn send_now_unlocked(
     session_id: &str,
     text: &str,
     bash: bool,
+    images: &[crate::media::PromptImage],
     session: &Mutex<SessionState>,
     agent: Option<&Arc<crate::acp::AgentHandle>>,
+    prompt_event: Option<(&HostState, &str)>,
 ) -> Result<DispatchOutcome, crate::dispatch::DispatchError> {
     use crate::dispatch::DispatchError;
 
@@ -1947,10 +2943,27 @@ async fn send_now_unlocked(
             return run_bash_for_session(session_id, &wire, &mut session);
         }
         session.begin_review_turn(session_id)?;
+        session.transcript_media.remember(session_id, images);
         session.set_running(session_id, true);
     }
     let agent = chat_agent.expect("non-bash path holds an agent");
-    let sent = agent.prompt(session_id, &wire).await;
+    if let Some((state, key)) = prompt_event {
+        state
+            .emit_event(
+                Event::PromptSent {
+                    images: images
+                        .iter()
+                        .map(crate::media::PromptImage::descriptor)
+                        .collect(),
+                    session_id: session_id.into(),
+                    text: wire.clone(),
+                    idempotency_key: Some(key.into()),
+                },
+                None,
+            )
+            .await;
+    }
+    let sent = agent.prompt_with_images(session_id, &wire, images).await;
     {
         let mut session = session.lock().await;
         if let Ok(result) = &sent {
@@ -2000,6 +3013,7 @@ async fn run_unlocked(
     journal: &Mutex<Journal>,
     session: &Mutex<SessionState>,
     agent: Option<&Arc<crate::acp::AgentHandle>>,
+    prompt_event: Option<(&HostState, &str)>,
 ) -> Result<DispatchOutcome, crate::dispatch::DispatchError> {
     use crate::dispatch::DispatchError;
     use crate::protocol::Operation;
@@ -2047,13 +3061,50 @@ async fn run_unlocked(
             session_id,
             text,
             bash,
-        } => send_now_unlocked(session_id, text, *bash, session, agent).await,
+        } => send_now_unlocked(session_id, text, *bash, &[], session, agent, prompt_event).await,
 
         Operation::Prompt {
             session_id,
             text,
             bash,
-        } => prompt_or_queue(session_id, text, *bash, session, agent).await,
+        } => prompt_or_queue(session_id, text, *bash, &[], session, agent, prompt_event).await,
+
+        Operation::PromptContent {
+            session_id,
+            text,
+            image_ids,
+            send_now,
+        } => {
+            let images = session
+                .lock()
+                .await
+                .media
+                .resolve(None, session_id, image_ids, now_ms())
+                .map_err(|_| DispatchError::Unsupported)?;
+            if *send_now {
+                send_now_unlocked(
+                    session_id,
+                    text,
+                    false,
+                    &images,
+                    session,
+                    agent,
+                    prompt_event,
+                )
+                .await
+            } else {
+                prompt_or_queue(
+                    session_id,
+                    text,
+                    false,
+                    &images,
+                    session,
+                    agent,
+                    prompt_event,
+                )
+                .await
+            }
+        }
 
         Operation::ListModels => Ok(DispatchOutcome::Models {
             models: crate::models::list_models(),
@@ -2146,17 +3197,55 @@ async fn run_unlocked(
             session.lock().await.interrupt_review_turn(session_id);
             Ok(DispatchOutcome::Cancelled)
         }
+        Operation::AnswerInteraction {
+            session_id,
+            request_id,
+            answer,
+        } => {
+            let agent = agent.ok_or(DispatchError::NoSession)?;
+            let (pending, answer) = {
+                let mut session = session.lock().await;
+                let pending = session
+                    .pending_interactions
+                    .get(request_id)
+                    .ok_or(DispatchError::UnknownPermission)?;
+                if pending.session_id != *session_id {
+                    return Err(DispatchError::UnknownPermission);
+                }
+                let answer = pending
+                    .answer(answer)
+                    .ok_or(DispatchError::UnknownPermission)?;
+                let pending = session
+                    .pending_interactions
+                    .remove(request_id)
+                    .ok_or(DispatchError::UnknownPermission)?;
+                (pending, answer)
+            };
+            agent
+                .answer_interaction(&pending.request_id, answer)
+                .await
+                .map_err(|error| map_dispatch_agent_error(&error))?;
+            Ok(DispatchOutcome::Acknowledged)
+        }
         Operation::DecidePermission {
             session_id,
             request_id,
             option_id,
         } => {
             let pending = {
-                let session = session.lock().await;
-                session
+                let mut session = session.lock().await;
+                let pending = session
                     .pending_permissions
                     .get(request_id)
-                    .cloned()
+                    .ok_or(DispatchError::UnknownPermission)?;
+                if pending.session_id != *session_id {
+                    return Err(DispatchError::UnknownPermission);
+                }
+                crate::permission::authorize_answer(&pending.offered, option_id)
+                    .map_err(DispatchError::from)?;
+                session
+                    .pending_permissions
+                    .remove(request_id)
                     .ok_or(DispatchError::UnknownPermission)?
             };
             // The request has to belong to the session the browser named, or
@@ -2318,9 +3407,30 @@ fn run_without_begin(
                 .map_err(|_| DispatchError::UnknownReviewRecord)?;
             Ok(DispatchOutcome::Acknowledged)
         }
-        Operation::AcknowledgeEvents { .. } | Operation::RevokeBrowserPairing { .. } => {
+        Operation::AcknowledgeEvents { through_sequence } => {
+            journal
+                .acknowledge(*through_sequence)
+                .map_err(|_| DispatchError::UnknownReviewRecord)?;
             Ok(DispatchOutcome::Acknowledged)
         }
+        Operation::RevokeBrowserPairing { .. } | Operation::ForgetBrowserPairing => {
+            Ok(DispatchOutcome::Acknowledged)
+        }
+        Operation::GetRemoteCapabilities
+        | Operation::ReadImageChunk { .. }
+        | Operation::PromptContent { .. }
+        | Operation::StartImageUpload { .. }
+        | Operation::AppendImageUpload { .. }
+        | Operation::FinishImageUpload { .. }
+        | Operation::DiscardImage { .. }
+        | Operation::ListRemoteProjects { .. }
+        | Operation::EnrollRemoteProject { .. }
+        | Operation::ListBrowserDevices
+        | Operation::RequestControlTransfer
+        | Operation::CancelControlTransfer { .. }
+        | Operation::ApproveControlTransfer { .. }
+        | Operation::GetCommandStatus { .. }
+        | Operation::AnswerInteraction { .. } => Err(DispatchError::Unsupported),
         // Agent-bound ops are handled in `run_unlocked` before this is called.
         Operation::Prompt { .. }
         | Operation::CreateSession { .. }
@@ -2491,7 +3601,10 @@ fn turn_phase_should_clear(
     use crate::protocol::Operation;
 
     match operation {
-        Operation::Prompt { .. } | Operation::CancelTurn { .. } | Operation::SendNow { .. } => {
+        Operation::Prompt { .. }
+        | Operation::PromptContent { .. }
+        | Operation::CancelTurn { .. }
+        | Operation::SendNow { .. } => {
             match outcome {
                 // A finished turn and a mid-turn agent failure both hand control
                 // back to the page: either way it must be able to type again.
@@ -2512,6 +3625,23 @@ fn turn_phase_should_clear(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn drop_notification_is_visible_and_bounded_without_upstream_notes() {
+        let state = Arc::new(HostState::new(
+            crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21220).unwrap(),
+        ));
+        state.absorb(crate::acp::AgentEvent::ExtNotification {method:"_x.ai/session_notification".into(),params:serde_json::json!({"method":"x.ai/session_notification","params":{"sessionId":"s-1","update":{"sessionUpdate":"image_dropped","notes":["do not expose upstream details"]}}})}).await;
+        let journal = state.journal.lock().await;
+        let crate::journal::ReplayOutcome::Replay(events) = journal.replay_after(0) else {
+            panic!("events")
+        };
+        assert!(events.iter().any(|entry| matches!(&entry.event, crate::protocol::Event::ImageRejected {session_id} if session_id=="s-1")));
+        assert!(
+            !serde_json::to_string(&events)
+                .unwrap()
+                .contains("upstream details")
+        );
+    }
     use super::{
         CONTENT_SECURITY_POLICY, CSRF_HEADER, HostState, PairResponse, SESSION_COOKIE, router,
     };
@@ -2545,6 +3675,458 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_resolution_removes_matching_question_only() {
+        let state = state();
+        for (id, session_id) in [(1, "session-a"), (2, "session-b")] {
+            state.absorb(crate::acp::AgentEvent::InteractionRequest {
+                method:"x.ai/ask_user_question".into(), request_id:serde_json::json!(id),
+                params:serde_json::json!({"sessionId":session_id,"toolCallId":"same-tool","questions":[{"question":"Which?","options":[{"label":"A"}]}]})
+            }).await;
+        }
+        assert_eq!(state.session.lock().await.pending_interactions.len(), 2);
+        state.absorb(crate::acp::AgentEvent::ExtNotification { method:"_x.ai/session_notification".into(), params:serde_json::json!({"method":"x.ai/session_notification","params":{"sessionId":"session-a","update":{"sessionUpdate":"interaction_resolved","tool_call_id":"same-tool"}}}) }).await;
+        let session = state.session.lock().await;
+        assert_eq!(session.pending_interactions.len(), 1);
+        assert_eq!(
+            session
+                .pending_interactions
+                .values()
+                .next()
+                .unwrap()
+                .session_id,
+            "session-b"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_replays_authoritative_running_state_after_the_snapshot() {
+        use crate::dispatch::{LiveSession, Workspace};
+        use crate::protocol::Event;
+        let state = state();
+        let root = tempfile::tempdir().unwrap();
+        {
+            let mut sessions = state.session.lock().await;
+            sessions.workspaces.insert(
+                "workspace".into(),
+                Workspace {
+                    id: "workspace".into(),
+                    display_name: "Workspace".into(),
+                    path: root.path().into(),
+                },
+            );
+            for (id, running) in [("active", true), ("empty", false)] {
+                sessions
+                    .open_session(LiveSession {
+                        id: id.into(),
+                        workspace_id: "workspace".into(),
+                        workspace_name: "Workspace".into(),
+                        running,
+                        queued: Vec::new(),
+                        opened_at_ms: 0,
+                    })
+                    .unwrap();
+            }
+        }
+        state.absorb(crate::acp::AgentEvent::ExtNotification {
+            method: "x.ai/task_backgrounded".into(),
+            params: serde_json::json!({"sessionId":"active","update":{"taskId":"task-1","command":"working"}}),
+        }).await;
+        let before = state.journal.lock().await.emitted_through();
+        state.replay_open_sessions().await;
+        let crate::journal::ReplayOutcome::Replay(events) =
+            state.journal.lock().await.replay_after(before)
+        else {
+            panic!("missing replay")
+        };
+        assert_eq!(events.len(), 3);
+        assert!(
+            matches!(&events[0].event, Event::SessionSnapshot { session_id, .. } if session_id == "active")
+        );
+        assert!(
+            matches!(&events[1].event, Event::SessionStatus { session_id, state } if session_id == "active" && state == "running")
+        );
+        assert!(
+            matches!(&events[2].event, Event::SessionStatus { session_id, state } if session_id == "empty" && state == "idle")
+        );
+    }
+
+    #[tokio::test]
+    async fn private_proxy_host_is_opt_in_and_requires_its_exact_origin() {
+        let private = "https://station.example.ts.net";
+        let state = Arc::new(
+            HostState::new(
+                crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
+            )
+            .with_private_origin(Some(private.into()))
+            .unwrap(),
+        );
+        let response = router(state.clone())
+            .oneshot(
+                Request::get("/")
+                    .header(header::HOST, "station.example.ts.net")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = router(state.clone())
+            .oneshot(
+                Request::post("/pair")
+                    .header(header::HOST, "station.example.ts.net")
+                    .header(header::ORIGIN, "https://evil.ts.net")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"nonce":"x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response = router(state)
+            .oneshot(
+                Request::post("/pair")
+                    .header(header::HOST, "station.example.ts.net")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"nonce":"x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let regular = Arc::new(HostState::new(
+            crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
+        ));
+        let response = router(regular)
+            .oneshot(
+                Request::get("/")
+                    .header(header::HOST, "station.example.ts.net")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn private_proxy_rejects_noncanonical_and_foreign_origins() {
+        for origin in [
+            "http://station.example.ts.net",
+            "https://station.example.ts.net/",
+            "https://station.example.ts.net/path",
+            "https://user:password@station.example.ts.net",
+        ] {
+            assert!(
+                HostState::new(
+                    crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001)
+                        .unwrap()
+                )
+                .with_private_origin(Some(origin.into()))
+                .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn hosted_pwa_can_pair_to_custom_https_origin_with_exact_cors() {
+        hosted_pwa_pairing_uses_configured_origin(None).await;
+    }
+
+    #[tokio::test]
+    async fn qualification_pwa_pairing_replaces_production_origin_with_exact_cors() {
+        hosted_pwa_pairing_uses_configured_origin(Some(crate::origin::QUALIFICATION_WEB_ORIGIN))
+            .await;
+    }
+
+    async fn hosted_pwa_pairing_uses_configured_origin(configured_origin: Option<&str>) {
+        let origin = configured_origin.unwrap_or(crate::origin::PRODUCTION_WEB_ORIGIN);
+        let mut host = HostState::new(
+            crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
+        );
+        if let Some(origin) = configured_origin {
+            host = host.with_allowed_origins(vec![origin.into()]);
+        }
+        let state = Arc::new(
+            host.with_private_origin(Some("https://grok.example:8443".into()))
+                .unwrap(),
+        );
+        let nonce = state
+            .pairing
+            .lock()
+            .await
+            .mint_nonce(crate::now_ms())
+            .unwrap();
+        let preflight = router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/pair")
+                    .header(header::HOST, "grok.example:8443")
+                    .header(header::ORIGIN, origin)
+                    .header("sec-fetch-site", "cross-site")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            preflight.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            origin
+        );
+        let paired = router(state.clone())
+            .oneshot(
+                Request::post("/pair")
+                    .header(header::HOST, "grok.example:8443")
+                    .header(header::ORIGIN, origin)
+                    .header("sec-fetch-site", "cross-site")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"nonce":nonce.expose()}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(paired.status(), StatusCode::OK);
+        assert_eq!(
+            paired.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            origin
+        );
+        for rejected_origin in [
+            "https://desktop.grok.me.evil.example",
+            "https://grok.fabrials.com.evil.example",
+            "https://grok.fabrials.com:8443",
+            "http://grok.fabrials.com",
+            "null",
+            "http://desktop.grok.me",
+            "https://grok.example:8443",
+            if origin == crate::origin::PRODUCTION_WEB_ORIGIN {
+                crate::origin::QUALIFICATION_WEB_ORIGIN
+            } else {
+                crate::origin::PRODUCTION_WEB_ORIGIN
+            },
+        ] {
+            for method in [Method::GET, Method::OPTIONS, Method::POST] {
+                let response = router(state.clone())
+                    .oneshot(
+                        Request::builder()
+                            .method(method.clone())
+                            .uri("/healthz")
+                            .header(header::HOST, "grok.example:8443")
+                            .header(header::ORIGIN, rejected_origin)
+                            .header("sec-fetch-site", "cross-site")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::FORBIDDEN,
+                    "{method} {rejected_origin}"
+                );
+                assert!(
+                    !response
+                        .headers()
+                        .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn private_proxy_accepts_external_document_navigation_only_to_the_public_shell() {
+        let state = Arc::new(
+            HostState::new(
+                crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
+            )
+            .with_private_origin(Some("https://station.example.ts.net".into()))
+            .unwrap(),
+        );
+        for method in [Method::GET, Method::HEAD] {
+            for site in ["cross-site", "same-site"] {
+                for path in [
+                    "/",
+                    "/?p=21001",
+                    "/index.html",
+                    "/setup",
+                    "/s/existing-session",
+                ] {
+                    let response = router(state.clone())
+                        .oneshot(
+                            Request::builder()
+                                .method(method.clone())
+                                .uri(path)
+                                .header(header::HOST, "station.example.ts.net")
+                                .header("sec-fetch-site", site)
+                                .header("sec-fetch-mode", "navigate")
+                                .header("sec-fetch-dest", "document")
+                                .body(Body::empty())
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    if path == "/index.html" && crate::assets::lookup(path).is_none() {
+                        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+                        continue;
+                    }
+                    assert_eq!(response.status(), StatusCode::OK, "{method} {site} {path}");
+                    assert_eq!(
+                        response.headers().get(header::CONTENT_TYPE).unwrap(),
+                        "text/html; charset=utf-8"
+                    );
+                    assert!(response.headers().get(header::SET_COOKIE).is_none());
+                    assert!(
+                        response
+                            .headers()
+                            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                            .is_none()
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn private_proxy_keeps_external_fetches_apis_and_mutations_blocked() {
+        let state = Arc::new(
+            HostState::new(
+                crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
+            )
+            .with_private_origin(Some("https://station.example.ts.net".into()))
+            .unwrap(),
+        );
+        let mut requests = Vec::new();
+        for method in [Method::GET, Method::HEAD] {
+            for path in [
+                "/healthz",
+                "/session",
+                "/events",
+                "/pair",
+                "/command",
+                "/sw.js",
+                "/manifest.webmanifest",
+                "/assets/app.js",
+                "/unknown",
+                "/s/..",
+                "/s/a/b",
+            ] {
+                requests.push(
+                    Request::builder()
+                        .method(method.clone())
+                        .uri(path)
+                        .header("sec-fetch-mode", "navigate")
+                        .header("sec-fetch-dest", "document"),
+                );
+            }
+        }
+        for (mode, destination) in [
+            ("cors", "empty"),
+            ("no-cors", "document"),
+            ("navigate", "iframe"),
+            ("navigate", "frame"),
+            ("navigate", "embed"),
+            ("navigate", "object"),
+            ("navigate", "empty"),
+        ] {
+            requests.push(
+                Request::get("/")
+                    .header("sec-fetch-mode", mode)
+                    .header("sec-fetch-dest", destination),
+            );
+        }
+        requests.push(Request::get("/"));
+        requests.push(Request::get("/").header("sec-fetch-mode", "navigate"));
+        requests.push(Request::get("/").header("sec-fetch-dest", "document"));
+        for method in [Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS] {
+            for path in ["/", "/pair", "/command"] {
+                requests.push(
+                    Request::builder()
+                        .method(method.clone())
+                        .uri(path)
+                        .header("sec-fetch-mode", "navigate")
+                        .header("sec-fetch-dest", "document"),
+                );
+            }
+        }
+        requests.push(
+            Request::get("/")
+                .header("sec-fetch-mode", "navigate")
+                .header("sec-fetch-dest", "document")
+                .header(header::UPGRADE, "websocket")
+                .header(header::CONNECTION, "Upgrade"),
+        );
+        requests.push(
+            Request::get("/")
+                .header("sec-fetch-mode", "navigate")
+                .header("sec-fetch-dest", "document")
+                .header(header::ORIGIN, "https://evil.example"),
+        );
+        for (method, path) in [
+            (Method::GET, "/session"),
+            (Method::GET, "/events"),
+            (Method::POST, "/pair"),
+            (Method::POST, "/command"),
+            (Method::OPTIONS, "/pair"),
+        ] {
+            requests.push(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("sec-fetch-mode", "navigate")
+                    .header("sec-fetch-dest", "document")
+                    .header(header::ORIGIN, "https://station.example.ts.net"),
+            );
+        }
+        for request in requests {
+            let request = request
+                .header(header::HOST, "station.example.ts.net")
+                .header("sec-fetch-site", "cross-site")
+                .body(Body::empty())
+                .unwrap();
+            let name = format!(
+                "{} {} {:?}",
+                request.method(),
+                request.uri(),
+                request.headers()
+            );
+            let response = router(state.clone()).oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{name}");
+        }
+        for site in ["unexpected", "Cross-Site", "cross-site, same-origin"] {
+            let response = router(state.clone())
+                .oneshot(
+                    Request::get("/")
+                        .header(header::HOST, "station.example.ts.net")
+                        .header("sec-fetch-site", site)
+                        .header("sec-fetch-mode", "navigate")
+                        .header("sec-fetch-dest", "document")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{site}");
+        }
+        for host in ["foreign.example.ts.net".to_owned(), host_header()] {
+            let response = router(state.clone())
+                .oneshot(
+                    Request::get("/")
+                        .header(header::HOST, host.clone())
+                        .header("sec-fetch-site", "cross-site")
+                        .header("sec-fetch-mode", "navigate")
+                        .header("sec-fetch-dest", "document")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{host}");
+        }
+    }
+
+    #[tokio::test]
     async fn document_is_served_without_an_origin_header() {
         // Browsers omit Origin on a document navigation; requiring it would
         // reject the application's own entry point.
@@ -2558,6 +4140,50 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn missing_static_assets_never_serve_the_document() {
+        for path in [
+            "/missing.js",
+            "/missing.webmanifest",
+            "/missing.wasm",
+            "/unknown",
+        ] {
+            let response = router(state())
+                .oneshot(
+                    Request::get(path)
+                        .header(header::HOST, host_header())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn embedded_pwa_manifest_has_manifest_mime_and_json_body() {
+        if crate::assets::lookup("/manifest.webmanifest").is_none() {
+            return;
+        }
+        let response = router(state())
+            .oneshot(
+                Request::get("/manifest.webmanifest")
+                    .header(header::HOST, host_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/manifest+json"
+        );
+        let body: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+        assert!(body["start_url"].is_string());
     }
 
     #[tokio::test]
@@ -2654,6 +4280,16 @@ mod tests {
                 .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
                 .and_then(|v| v.to_str().ok()),
             Some(PRODUCTION_WEB_ORIGIN)
+        );
+
+        assert!(
+            preflight
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value
+                    .split(',')
+                    .any(|name| name.trim() == super::CONTROLLER_HEADER))
         );
 
         let health = router(state)
@@ -2934,6 +4570,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authenticated_installation_identity_survives_host_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let identity = crate::state::load_or_create(directory.path()).unwrap();
+        let build = |identity: &crate::state::InstallIdentity| {
+            Arc::new(
+                HostState::new(identity.origin().unwrap())
+                    .with_persistence(
+                        directory.path(),
+                        Arc::new(crate::picker::UnavailableDirectoryPicker),
+                    )
+                    .unwrap(),
+            )
+        };
+        let state = build(&identity);
+        let nonce = state
+            .pairing
+            .lock()
+            .await
+            .mint_nonce(crate::now_ms())
+            .unwrap();
+        let response = super::pair(
+            axum::extract::State(state.clone()),
+            axum::Json(super::PairRequest {
+                nonce: nonce.expose().to_owned(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let paired: PairResponse = serde_json::from_str(&body_string(response).await).unwrap();
+        assert_eq!(
+            paired.installation_id.as_deref(),
+            Some(identity.install_id.as_str())
+        );
+        drop(state);
+        let reloaded = crate::state::load_or_create(directory.path()).unwrap();
+        let state = build(&reloaded);
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(super::SESSION_HEADER, paired.session_token.parse().unwrap());
+        let response = super::resume(axum::extract::State(state), headers).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let resumed: PairResponse = serde_json::from_str(&body_string(response).await).unwrap();
+        assert_eq!(resumed.installation_id, paired.installation_id);
+        assert_eq!(resumed.session_id, paired.session_id);
+    }
+
+    #[tokio::test]
+    async fn anonymous_responses_do_not_expose_installation_identity() {
+        for path in ["/healthz", "/session"] {
+            let response = router(state())
+                .oneshot(
+                    Request::get(path)
+                        .header(header::HOST, host_header())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if path == "/healthz" {
+                    StatusCode::OK
+                } else {
+                    StatusCode::FORBIDDEN
+                }
+            );
+            let body = body_string(response).await;
+            assert!(!body.contains("installationId"));
+            assert!(!body.contains(INSTALL));
+        }
+        let response = super::pair(
+            axum::extract::State(state()),
+            axum::Json(super::PairRequest {
+                nonce: "invalid".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = body_string(response).await;
+        assert!(!body.contains("installationId"));
+        assert!(!body.contains(INSTALL));
+    }
+
+    #[tokio::test]
     async fn pairing_round_trip_sets_a_hardened_cookie() {
         let state = state();
         let nonce = {
@@ -3063,7 +4782,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resuming_reissues_a_csrf_token_to_a_paired_browser() {
+    async fn resuming_recovers_a_csrf_token_to_a_paired_browser() {
         // A reload keeps the cookie but loses the in-memory CSRF token.
         let state = state();
         let (cookie, first_csrf) = paired(&state).await;
@@ -3084,7 +4803,7 @@ mod tests {
             serde_json::from_str(&body_string(response).await).expect("json");
         assert_ne!(
             resumed.csrf_token, first_csrf,
-            "a fresh token must be issued"
+            "recovery must not reveal the original secret"
         );
 
         // And the new token works for a mutation.
@@ -3102,6 +4821,119 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn resuming_with_valid_csrf_preserves_the_controlling_tabs_credentials() {
+        let state = state();
+        let (cookie, csrf) = paired(&state).await;
+        for _ in 0..2 {
+            let response = router(state.clone())
+                .oneshot(
+                    Request::get("/session")
+                        .header(header::HOST, host_header())
+                        .header(header::COOKIE, cookie.clone())
+                        .header(CSRF_HEADER, csrf.clone())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let resumed: PairResponse = serde_json::from_str(&body_string(response).await).unwrap();
+            assert!(
+                resumed.csrf_token == csrf,
+                "valid CSRF must survive observer resume"
+            );
+        }
+        let response = router(state)
+            .oneshot(
+                Request::post("/command")
+                    .header(header::HOST, host_header())
+                    .header(header::ORIGIN, origin_header())
+                    .header(header::COOKIE, cookie)
+                    .header(CSRF_HEADER, csrf)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(bootstrap_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn resuming_with_invalid_csrf_recovers_without_disrupting_other_tabs() {
+        let state = state();
+        let (cookie, previous) = paired(&state).await;
+        let invalid = "b".repeat(64);
+        let response = router(state.clone())
+            .oneshot(
+                Request::get("/session")
+                    .header(header::HOST, host_header())
+                    .header(header::COOKIE, cookie)
+                    .header(CSRF_HEADER, invalid.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let resumed: PairResponse = serde_json::from_str(&body_string(response).await).unwrap();
+        assert_ne!(resumed.csrf_token, invalid);
+        assert_ne!(resumed.csrf_token, previous);
+        let broker = state.pairing.lock().await;
+        assert!(
+            broker
+                .verify_mutation(&resumed.session_token, &previous, crate::now_ms())
+                .is_ok()
+        );
+        assert!(
+            broker
+                .verify_mutation(&resumed.session_token, &resumed.csrf_token, crate::now_ms())
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn resuming_without_shared_storage_is_independent_of_response_order() {
+        let state = state();
+        let (cookie, original) = paired(&state).await;
+        let request = |csrf: &str| {
+            Request::get("/session")
+                .header(header::HOST, host_header())
+                .header(header::COOKIE, cookie.clone())
+                .header(CSRF_HEADER, csrf)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let (first, second) = tokio::join!(
+            router(state.clone()).oneshot(request("")),
+            router(state.clone()).oneshot(request("stale"))
+        );
+        let second = second.unwrap();
+        let first = first.unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(first.status(), StatusCode::OK);
+        let second: PairResponse = serde_json::from_str(&body_string(second).await).unwrap();
+        let first: PairResponse = serde_json::from_str(&body_string(first).await).unwrap();
+        assert_eq!(first.csrf_token, second.csrf_token);
+        for csrf in [original, second.csrf_token, first.csrf_token] {
+            let response = router(state.clone())
+                .oneshot(
+                    Request::post("/command")
+                        .header(header::HOST, host_header())
+                        .header(header::ORIGIN, origin_header())
+                        .header(header::COOKIE, cookie.clone())
+                        .header(CSRF_HEADER, csrf)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(bootstrap_body()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+        }
     }
 
     #[tokio::test]

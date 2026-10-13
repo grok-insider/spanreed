@@ -146,6 +146,9 @@ impl ControlLease {
     ///
     /// Returns [`LeaseError::NotController`] when the caller does not hold it.
     pub fn heartbeat(&mut self, connection_id: &str, now_ms: u64) -> Result<(), LeaseError> {
+        if self.state(now_ms) != LeaseState::Held {
+            return Err(LeaseError::NotController);
+        }
         let holder = self.holder.as_mut().ok_or(LeaseError::NotController)?;
         if holder.connection_id != connection_id {
             return Err(LeaseError::NotController);
@@ -177,6 +180,62 @@ impl ControlLease {
             return Err(LeaseError::StaleEpoch);
         }
         Ok(())
+    }
+
+    #[allow(missing_docs)]
+    pub fn authorize_session(
+        &self,
+        session_id: &str,
+        epoch: u64,
+        now_ms: u64,
+    ) -> Result<(), LeaseError> {
+        let holder = self.holder.as_ref().ok_or(LeaseError::NotController)?;
+        if holder.session_id != session_id {
+            return Err(LeaseError::NotController);
+        }
+        self.authorize(&holder.connection_id, epoch, now_ms)
+    }
+
+    #[allow(missing_docs)]
+    pub fn authorize_connection(
+        &self,
+        session_id: &str,
+        connection_id: &str,
+        epoch: u64,
+        now_ms: u64,
+    ) -> Result<(), LeaseError> {
+        let holder = self.holder.as_ref().ok_or(LeaseError::NotController)?;
+        if holder.session_id != session_id {
+            return Err(LeaseError::NotController);
+        }
+        self.authorize(connection_id, epoch, now_ms)
+    }
+
+    #[allow(missing_docs)]
+    pub fn connection_epoch(&self, connection_id: &str, now_ms: u64) -> Option<u64> {
+        self.holder
+            .as_ref()
+            .filter(|holder| {
+                holder.connection_id == connection_id && self.state(now_ms) == LeaseState::Held
+            })
+            .map(|holder| holder.epoch)
+    }
+
+    #[allow(missing_docs, clippy::too_many_arguments)]
+    pub fn transfer(
+        &mut self,
+        session_id: &str,
+        connection_id: &str,
+        epoch: u64,
+        target_session: &str,
+        target_connection: &str,
+        now_ms: u64,
+    ) -> Result<u64, LeaseError> {
+        self.authorize_connection(session_id, connection_id, epoch, now_ms)?;
+        if self.epoch == u64::MAX {
+            return Err(LeaseError::StaleEpoch);
+        }
+        Ok(self.grant(target_session, target_connection, now_ms))
     }
 
     /// Release the lease if held by this connection.
@@ -353,5 +412,23 @@ mod tests {
         lease.acquire("bs-1", "conn-a", T0).expect("acquire");
         assert!(!lease.release("conn-b"));
         assert_eq!(lease.state(T0 + 1), LeaseState::Held);
+    }
+    #[test]
+    fn another_principal_cannot_borrow_a_current_epoch() {
+        let mut lease = ControlLease::new();
+        let epoch = lease.acquire("owner", "connection", T0).unwrap();
+        assert!(lease.authorize_session("owner", epoch, T0 + 1).is_ok());
+        assert_eq!(
+            lease.authorize_session("stranger", epoch, T0 + 1),
+            Err(LeaseError::NotController)
+        );
+        assert_eq!(
+            lease.authorize_session("owner", epoch + 1, T0 + 1),
+            Err(LeaseError::StaleEpoch)
+        );
+        assert_eq!(
+            lease.heartbeat("connection", T0 + LEASE_TIMEOUT_MS),
+            Err(LeaseError::NotController)
+        );
     }
 }

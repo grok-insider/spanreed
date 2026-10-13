@@ -1,5 +1,6 @@
 //! Parse inbound HTTP and copy upstream bytes to the client.
 
+use crate::stream_probe::StreamProbe;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -358,6 +359,22 @@ pub fn pipe_upstream(
     upstream: &mut reqwest::blocking::Response,
     capture: bool,
 ) -> Result<Vec<u8>, PipeUpstreamError> {
+    pipe_upstream_observed(
+        client,
+        upstream,
+        capture,
+        &mut StreamProbe::first_byte_only(),
+    )
+}
+
+/// [`pipe_upstream`] that reports the timing of each body read to `probe`. The probe is an
+/// out-parameter so its timings survive both the `Ok` and the `Err` return.
+pub fn pipe_upstream_observed(
+    client: &mut TcpStream,
+    upstream: &mut reqwest::blocking::Response,
+    capture: bool,
+    probe: &mut StreamProbe,
+) -> Result<Vec<u8>, PipeUpstreamError> {
     let status = upstream.status();
     write!(
         client,
@@ -383,7 +400,7 @@ pub fn pipe_upstream(
         "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
     )
     .map_err(PipeUpstreamError::without_capture)?;
-    copy_chunked(client, upstream, capture)
+    copy_chunked_observed(client, upstream, capture, probe)
 }
 
 /// Copy `src` as HTTP chunks onto `client`. `capture = false` for Imagine/TTS audio.
@@ -391,6 +408,18 @@ pub fn copy_chunked(
     client: &mut impl Write,
     src: &mut impl Read,
     capture: bool,
+) -> Result<Vec<u8>, PipeUpstreamError> {
+    copy_chunked_observed(client, src, capture, &mut StreamProbe::first_byte_only())
+}
+
+/// [`copy_chunked`] that reports every read to `probe`. The read instant is taken as soon as
+/// the read returns and the probe is fed after the chunk was forwarded (also when forwarding
+/// failed), so scanning never delays the client and a slow client never inflates a timing.
+pub fn copy_chunked_observed(
+    client: &mut impl Write,
+    src: &mut impl Read,
+    capture: bool,
+    probe: &mut StreamProbe,
 ) -> Result<Vec<u8>, PipeUpstreamError> {
     // Only parsing metadata from the tail is required (the completed SSE
     // event is last). A rolling bound prevents arbitrarily large upstream
@@ -408,6 +437,7 @@ pub fn copy_chunked(
                 ));
             }
         };
+        let read_at = Instant::now();
         if capture {
             let overflow = captured
                 .len()
@@ -418,13 +448,11 @@ pub fn copy_chunked(
             }
             captured.extend(&buf[..n]);
         }
-        if let Err(error) = write!(client, "{:x}\r\n", n) {
-            return Err(PipeUpstreamError::with_capture(error, &captured));
-        }
-        if let Err(error) = client.write_all(&buf[..n]) {
-            return Err(PipeUpstreamError::with_capture(error, &captured));
-        }
-        if let Err(error) = client.write_all(b"\r\n") {
+        let forwarded = write!(client, "{:x}\r\n", n)
+            .and_then(|()| client.write_all(&buf[..n]))
+            .and_then(|()| client.write_all(b"\r\n"));
+        probe.observe_chunk(&buf[..n], read_at);
+        if let Err(error) = forwarded {
             return Err(PipeUpstreamError::with_capture(error, &captured));
         }
     }
@@ -1073,6 +1101,127 @@ mod tests {
         let client_error =
             copy_chunked(&mut BrokenWriter, &mut Cursor::new(b"usage-event"), true).unwrap_err();
         assert_eq!(client_error.captured, b"usage-event");
+    }
+
+    const ROLE_EVENT: &[u8] = b"data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n";
+    const TEXT_EVENT: &[u8] = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n";
+
+    /// Replays scripted reads, sleeping before each one, then ends or fails.
+    struct PacedSource {
+        steps: std::vec::IntoIter<(Duration, &'static [u8])>,
+        then_fail: bool,
+    }
+
+    impl PacedSource {
+        fn new(steps: Vec<(u64, &'static [u8])>, then_fail: bool) -> Self {
+            Self {
+                steps: steps
+                    .into_iter()
+                    .map(|(ms, bytes)| (Duration::from_millis(ms), bytes))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+                then_fail,
+            }
+        }
+    }
+
+    impl Read for PacedSource {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            match self.steps.next() {
+                Some((delay, bytes)) => {
+                    std::thread::sleep(delay);
+                    output[..bytes.len()].copy_from_slice(bytes);
+                    Ok(bytes.len())
+                }
+                None if self.then_fail => {
+                    Err(io::Error::new(io::ErrorKind::ConnectionReset, "reset"))
+                }
+                None => Ok(0),
+            }
+        }
+    }
+
+    #[test]
+    fn observed_copy_times_each_read_and_forwards_the_same_bytes() {
+        let origin = Instant::now();
+        let mut probe = StreamProbe::sse_content();
+        let mut output = Vec::new();
+        let mut source = PacedSource::new(vec![(40, ROLE_EVENT), (60, TEXT_EVENT)], false);
+        copy_chunked_observed(&mut output, &mut source, true, &mut probe).unwrap();
+        let total = origin.elapsed().as_millis() as u64;
+        let first_byte = probe.first_byte_ms(origin).expect("first byte");
+        let ttft = probe.ttft_ms(origin).expect("ttft");
+        assert!(first_byte >= 40, "{first_byte}");
+        assert!(
+            ttft >= first_byte + 60,
+            "ttft {ttft} first byte {first_byte}"
+        );
+        assert!(ttft <= total, "ttft {ttft} total {total}");
+
+        let mut expected = Vec::new();
+        copy_chunked(
+            &mut expected,
+            &mut PacedSource::new(vec![(0, ROLE_EVENT), (0, TEXT_EVENT)], false),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            output, expected,
+            "observing must not change what is forwarded"
+        );
+    }
+
+    #[test]
+    fn observed_copy_keeps_timings_when_the_upstream_fails_after_the_content() {
+        let origin = Instant::now();
+        let mut probe = StreamProbe::sse_content();
+        let mut source = PacedSource::new(vec![(20, TEXT_EVENT)], true);
+        let error =
+            copy_chunked_observed(&mut Vec::new(), &mut source, true, &mut probe).unwrap_err();
+        assert_eq!(error.captured, TEXT_EVENT);
+        assert!(probe.first_byte_ms(origin).is_some());
+        assert!(probe.ttft_ms(origin).is_some());
+    }
+
+    #[test]
+    fn observed_copy_keeps_timings_when_the_client_disconnects() {
+        struct Gone;
+        impl Write for Gone {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "gone"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let origin = Instant::now();
+        let mut probe = StreamProbe::sse_content();
+        let mut source = PacedSource::new(vec![(0, TEXT_EVENT)], false);
+        assert!(copy_chunked_observed(&mut Gone, &mut source, true, &mut probe).is_err());
+        assert!(probe.first_byte_ms(origin).is_some());
+        assert!(probe.ttft_ms(origin).is_some());
+    }
+
+    #[test]
+    fn a_slow_client_does_not_inflate_the_timings() {
+        struct SlowClient;
+        impl Write for SlowClient {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                std::thread::sleep(Duration::from_millis(150));
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let origin = Instant::now();
+        let mut probe = StreamProbe::sse_content();
+        let mut source = PacedSource::new(vec![(0, TEXT_EVENT)], false);
+        copy_chunked_observed(&mut SlowClient, &mut source, true, &mut probe).unwrap();
+        // The instant is taken when the read returns, before the three slow writes.
+        let ttft = probe.ttft_ms(origin).expect("ttft");
+        assert!(ttft < 150, "ttft {ttft}");
+        assert!(origin.elapsed() >= Duration::from_millis(450));
     }
 
     #[test]

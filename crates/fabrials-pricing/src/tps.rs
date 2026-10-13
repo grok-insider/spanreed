@@ -3,6 +3,12 @@
 //! The clock is the hop wall time (`duration_ms`), which already excludes client
 //! tool calls. `output_tokens` is the provider total and already includes
 //! reasoning, so `reasoning_tokens` is not added again.
+//!
+//! The same clock also spans the wait before the first token (`HopRecord::ttft_ms`, see
+//! [`crate::latency`]), so this rate reads lower than the model's generation speed, most
+//! of all for models that think before they answer. It is deliberately not corrected: a
+//! hop that hides its reasoning reports that wait as TTFT, and subtracting it would credit
+//! the hidden reasoning tokens to the visible window.
 
 use fabrials_types::HopRecord;
 

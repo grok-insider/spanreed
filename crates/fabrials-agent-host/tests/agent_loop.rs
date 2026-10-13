@@ -82,6 +82,7 @@ async fn the_loop_separates_responses_from_notifications() {
             AgentEvent::Exited => break,
             AgentEvent::PermissionRequest { .. } => panic!("unexpected permission request"),
             AgentEvent::ExtNotification { .. } => {}
+            AgentEvent::InteractionRequest { .. } => panic!("unexpected interaction"),
         }
     }
     assert_eq!(text, "hello world");
@@ -165,6 +166,7 @@ async fn a_permission_request_is_projected_and_answered_natively() {
             }
             AgentEvent::Exited => break,
             AgentEvent::ExtNotification { .. } => {}
+            AgentEvent::InteractionRequest { .. } => panic!("unexpected interaction"),
         }
     }
     panic!("the agent never confirmed the selected option");

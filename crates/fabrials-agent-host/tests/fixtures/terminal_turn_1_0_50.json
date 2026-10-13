@@ -1,0 +1,518 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "method": "_x.ai/queue/changed",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "entries": [
+        {
+          "id": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+          "version": 0,
+          "kind": "prompt",
+          "text": "This is a one-shot live terminal-to-PWA integration check in this empty test workspace. Use the terminal tool to run exactly this one shell command: sleep 8; printf 'REMOTE_LIVE_ONCE\\n' >> live-once.txt . Ask for approval and wait for the answer. Do not run any other tool calls and do not repeat the command. After completion reply LIVE_DONE.",
+          "position": 0
+        }
+      ]
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "_x.ai/queue/changed",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "entries": [],
+      "runningPromptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+      "runningText": "This is a one-shot live terminal-to-PWA integration check in this empty test workspace. Use the terminal tool to run exactly this one shell command: sleep 8; printf 'REMOTE_LIVE_ONCE\\n' >> live-once.txt . Ask for approval and wait for the answer. Do not run any other tool calls and do not repeat the command. After completion reply LIVE_DONE.",
+      "runningKind": "prompt"
+    }
+  },
+  {
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "user_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "This is a one-shot live terminal-to-PWA integration check in this empty test workspace. Use the terminal tool to run exactly this one shell command: sleep 8; printf 'REMOTE_LIVE_ONCE\\n' >> live-once.txt . Ask for approval and wait for the answer. Do not run any other tool calls and do not repeat the command. After completion reply LIVE_DONE."
+        },
+        "_meta": {
+          "modelId": "grok-4.6",
+          "promptIndex": 0
+        }
+      },
+      "_meta": {
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-8",
+        "agentTimestampMs": 1791703263247
+      }
+    },
+    "jsonrpc": "2.0"
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "I'll"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-12",
+        "agentTimestampMs": 1791703266491,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 3
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " run"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-13",
+        "agentTimestampMs": 1791703266491,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 4
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " the"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-14",
+        "agentTimestampMs": 1791703266491,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 5
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " exact"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-15",
+        "agentTimestampMs": 1791703266496,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 6
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " command"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-16",
+        "agentTimestampMs": 1791703266542,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 7
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " you"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-17",
+        "agentTimestampMs": 1791703266542,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 8
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " specified"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-18",
+        "agentTimestampMs": 1791703266556,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 9
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " and"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-19",
+        "agentTimestampMs": 1791703266577,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 10
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " wait"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-20",
+        "agentTimestampMs": 1791703266596,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 11
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " for"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-21",
+        "agentTimestampMs": 1791703266617,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 12
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " it"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-22",
+        "agentTimestampMs": 1791703266637,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 13
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " to"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-23",
+        "agentTimestampMs": 1791703266657,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 14
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": " finish"
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-24",
+        "agentTimestampMs": 1791703266678,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 15
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "."
+        }
+      },
+      "_meta": {
+        "totalTokens": 1530,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-25",
+        "agentTimestampMs": 1791703266699,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 16
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-82dcef1a-2695-4d6d-954f-d6728ec57093-0",
+        "title": "run_terminal_command",
+        "rawInput": {
+          "command": "sleep 8; printf 'REMOTE_LIVE_ONCE\\n' >> live-once.txt",
+          "description": "Sleep then append REMOTE_LIVE_ONCE marker"
+        },
+        "_meta": {
+          "x.ai/tool": {
+            "version": 1,
+            "name": "run_terminal_command",
+            "kind": "execute",
+            "namespace": "grok_build",
+            "label": "Run Command",
+            "read_only": false
+          }
+        }
+      },
+      "_meta": {
+        "totalTokens": 16229,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-27",
+        "agentTimestampMs": 1791703267098,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703266311,
+        "turnStartMs": 1791703263344,
+        "updateType": "ToolCall",
+        "updateParams": {
+          "toolCallId": "call-82dcef1a-2695-4d6d-954f-d6728ec57093-0",
+          "title": "run_terminal_command",
+          "kind": "Other",
+          "status": "Pending"
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "LIVE"
+        }
+      },
+      "_meta": {
+        "totalTokens": 16231,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-32",
+        "agentTimestampMs": 1791703333332,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703333298,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 1
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "_"
+        }
+      },
+      "_meta": {
+        "totalTokens": 16231,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-33",
+        "agentTimestampMs": 1791703333332,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703333298,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 2
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session/update",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "DONE"
+        }
+      },
+      "_meta": {
+        "totalTokens": 16231,
+        "eventId": "01a129d4-ce4b-7991-945d-5400d4b5eee4-34",
+        "agentTimestampMs": 1791703333332,
+        "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+        "streamStartMs": 1791703333298,
+        "turnStartMs": 1791703263344,
+        "updateType": "AgentMessageChunk",
+        "chunkId": 3
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "_x.ai/queue/changed",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "entries": []
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "_x.ai/session/prompt_complete",
+    "params": {
+      "sessionId": "01a129d4-ce4b-7991-945d-5400d4b5eee4",
+      "promptId": "220cf763-31e8-4891-a423-8d7d9bda6b94",
+      "stopReason": "end_turn",
+      "agentResult": null
+    }
+  }
+]

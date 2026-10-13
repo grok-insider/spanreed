@@ -105,6 +105,7 @@ pub fn content_type_for(path: &str) -> &'static str {
         Some("js") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("json") => "application/json",
+        Some("webmanifest") => "application/manifest+json",
         Some("svg") => "image/svg+xml",
         Some("woff2") => "font/woff2",
         Some("png") => "image/png",
@@ -188,6 +189,10 @@ mod tests {
         assert_eq!(content_type_for("/a.css"), "text/css; charset=utf-8");
         assert_eq!(content_type_for("/a.woff2"), "font/woff2");
         assert_eq!(content_type_for("/a.wasm"), "application/wasm");
+        assert_eq!(
+            content_type_for("/manifest.webmanifest"),
+            "application/manifest+json"
+        );
         assert_eq!(content_type_for("/a.weird"), "application/octet-stream");
         assert_eq!(content_type_for("/noextension"), "application/octet-stream");
     }

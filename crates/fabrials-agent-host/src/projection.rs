@@ -39,6 +39,14 @@ pub fn session_update_event(params: &Value) -> Option<Event> {
     let session_id = params.get("sessionId").and_then(Value::as_str)?.to_owned();
 
     match kind {
+        "user_message_chunk"
+            if params
+                .pointer("/update/_meta/hideFromScrollback")
+                .and_then(Value::as_bool)
+                != Some(true) =>
+        {
+            text_chunk(params).map(|text| Event::UserMessageDelta { session_id, text })
+        }
         "agent_message_chunk" => {
             text_chunk(params).map(|text| Event::MessageDelta { session_id, text })
         }

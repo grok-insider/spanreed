@@ -69,6 +69,7 @@ pub mod ports;
 pub mod provider;
 pub mod reasoning;
 pub mod routes;
+pub mod stream_probe;
 pub mod wire_compat;
 pub mod ws_tunnel;
 
