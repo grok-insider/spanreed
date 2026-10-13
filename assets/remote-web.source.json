@@ -303,7 +303,7 @@
         "scripts/prepare-public.test.mjs": "d8a0bd3adf24a3df1937170c0bc06efb4c0742e9cd19e79f8be88c823ed6a9ae",
         "scripts/probe-acp-capabilities.py": "4acef8c4c7e90353412c5fd47d4fe9594faf285a34ff599c50fd60df3fb91db4",
         "scripts/qualify-acp-vision.py": "e44a274041b0d9f90e67e6c28d71656e94f7d52560607c65039563852652ab01",
-        "scripts/qualify-direct-browser.ts": "d31c268ea825b5006cbbcbf949ebdbfad08a7537aabd936d741dd28ec2d3f939",
+        "scripts/qualify-direct-browser.ts": "87343893d777c79c3ba3fa1e18684c2e5ccfae56deb33a065931b0905b02b0ac",
         "scripts/qualify-draft-recovery.ts": "e178b325e5a5d479dfad0bce77cf80aecfaff4e7f76af630b2853c82a84ba47e",
         "scripts/qualify-managed-browser.ts": "f6b314017c32915d246b77a3d8f2876a627fcf87f461e523ccb7c2ef5b1b89cd",
         "scripts/qualify-managed-extras.ts": "1257a7b193ccd2a47e6449cf8b807064f16c93ae1289179f3c097d785ab47153",
@@ -321,9 +321,9 @@
         "scripts/test-share-target.mjs": "d2cfee8bebf1c83fd382f27e9578784446d7397dbf14acd2c78a16c1f858785b",
         "scripts/worker-manifest.mjs": "3b150f462ac741fadc027b73d722fa592642a6f52e3359647a16a2a7f6548d26"
       },
-      "head": "f1d4287b8f4afc3c389212fce20f9abd37db7c36",
+      "head": "b738e4a091d2e49355b7a2213d24a0ae2a40d1eb",
       "repository": "grok-insider/grok-desktop-portable",
-      "treeSha256": "66907607825cd912da0fa28d5b43d579814dc3535a2022e702acac2b496b2f77"
+      "treeSha256": "005808765debf056da2c53c12a6e6614e78c60ca353fe81855fe644f4c664770"
     }
   }
 }
