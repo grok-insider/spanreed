@@ -810,30 +810,31 @@ fn full_diff(path: &str, old: &str, new: &str) -> String {
 mod tests {
     use super::*;
 
-    fn document(updates: &[Value]) -> Value {
+    fn document(workspace: &Path, updates: &[Value]) -> Value {
         let input = updates
             .iter()
             .map(|update| format!("{}\n", json!({"params":{"update":update}})))
             .collect::<String>();
-        project(
-            std::io::Cursor::new(input),
-            Path::new("/workspace"),
-            "Session",
-        )
-        .unwrap()
+        project(std::io::Cursor::new(input), workspace, "Session").unwrap()
     }
 
     #[test]
     fn export_allows_only_visible_text_tools_and_relative_diffs() {
-        let output = document(&[
-            json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hello"}}),
-            json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"PRIVATE_REASONING"}}),
-            json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"PRIVATE_INTERNAL"},"_meta":{"hideFromScrollback":true}}),
-            json!({"sessionUpdate":"system_message_chunk","content":{"type":"text","text":"PRIVATE_SYSTEM"}}),
-            json!({"sessionUpdate":"tool_call","toolCallId":"t","title":"Read","rawInput":{"password":"SECRET_CREDENTIAL"},"content":[{"type":"resource","resource":{"text":"PRIVATE_RESOURCE"}},{"type":"content","content":{"type":"text","text":"visible"}},{"type":"diff","path":"/workspace/file.rs","oldText":"a","newText":"b"}]}),
-            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"PRIVATE_BINARY"}}),
-            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}),
-        ]);
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("workspace");
+        let file = workspace.join("file.rs");
+        let output = document(
+            &workspace,
+            &[
+                json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hello"}}),
+                json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"PRIVATE_REASONING"}}),
+                json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"PRIVATE_INTERNAL"},"_meta":{"hideFromScrollback":true}}),
+                json!({"sessionUpdate":"system_message_chunk","content":{"type":"text","text":"PRIVATE_SYSTEM"}}),
+                json!({"sessionUpdate":"tool_call","toolCallId":"t","title":"Read","rawInput":{"password":"SECRET_CREDENTIAL"},"content":[{"type":"resource","resource":{"text":"PRIVATE_RESOURCE"}},{"type":"content","content":{"type":"text","text":"visible"}},{"type":"diff","path":file,"oldText":"a","newText":"b"}]}),
+                json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"PRIVATE_BINARY"}}),
+                json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}),
+            ],
+        );
         let wire = output.to_string();
         for private in [
             "PRIVATE_REASONING",
@@ -848,6 +849,33 @@ mod tests {
         assert_eq!(output["entries"].as_array().unwrap().len(), 5);
         assert_eq!(output["entries"][3]["path"], "file.rs");
         assert_eq!(output["entries"][4]["role"], "assistant");
+    }
+
+    #[test]
+    fn export_keeps_relative_diffs_and_rejects_native_paths_outside_the_workspace() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("workspace");
+        let outside = directory.path().join("outside.rs");
+        let traversal = Path::new("nested").join("..").join("outside.rs");
+        let relative = Path::new("nested").join("file.rs");
+        let output = document(
+            &workspace,
+            &[
+                json!({"sessionUpdate":"tool_call","toolCallId":"t","title":"Edit","content":[
+                    {"type":"diff","path":outside,"oldText":"a","newText":"PRIVATE_OUTSIDE"},
+                    {"type":"diff","path":traversal,"oldText":"a","newText":"PRIVATE_TRAVERSAL"},
+                    {"type":"diff","path":relative,"oldText":"a","newText":"visible"}
+                ]}),
+            ],
+        );
+        assert_eq!(output["entries"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            output["entries"][1]["path"],
+            relative.to_string_lossy().as_ref()
+        );
+        let wire = output.to_string();
+        assert!(!wire.contains("PRIVATE_OUTSIDE"));
+        assert!(!wire.contains("PRIVATE_TRAVERSAL"));
     }
 
     #[test]
@@ -1062,7 +1090,9 @@ mod tests {
         let metadata = source.metadata().unwrap();
         let input = std::fs::read_to_string(&source).unwrap();
         std::fs::write(&source, input.replace("first", "other")).unwrap();
-        std::fs::File::open(&source)
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&source)
             .unwrap()
             .set_times(std::fs::FileTimes::new().set_modified(metadata.modified().unwrap()))
             .unwrap();
