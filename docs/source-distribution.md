@@ -3,7 +3,7 @@
 Every new Spanreed release must include `spanreed-<version>-source.tar.gz` and
 its SHA256 sidecar alongside its binaries. The source job produces these files;
 publication and recovery independently verify their contents before any public
-release mutation. The release remains a draft until all sixteen assets verify.
+release mutation. The release remains a draft until all ten stable Linux/Windows assets verify.
 
 ## Contents and correspondence
 

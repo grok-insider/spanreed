@@ -1,8 +1,13 @@
 use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+#[cfg(not(windows))]
+use std::io::Read;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(windows))]
+use std::time::Instant;
 
 use fabrials_agent_host::instance::{InstanceError, InstanceLock};
 
@@ -85,13 +90,10 @@ impl Candidate {
     }
 
     pub(super) fn install(self, version: &str) -> Result<(), String> {
-        self.install_with(
-            |source, destination| fs::rename(source, destination),
-            |path| version_probe(path, version, Duration::from_secs(5)),
-            cfg!(windows),
-        )
+        super::durable::install(&self.destination, &self.staged, version)
     }
 
+    #[cfg(test)]
     fn install_with(
         mut self,
         mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
@@ -139,6 +141,7 @@ impl Candidate {
         Ok(())
     }
 
+    #[cfg(test)]
     fn recover(
         &mut self,
         failure: String,
@@ -190,7 +193,7 @@ impl Drop for Candidate {
     }
 }
 
-fn validate_destination(destination: &Path) -> Result<(), String> {
+pub(super) fn validate_destination(destination: &Path) -> Result<(), String> {
     let parent = destination.parent().ok_or("install path has no parent")?;
     for (path, directory) in [(parent, true), (destination, false)] {
         let metadata = match fs::symlink_metadata(path) {
@@ -224,11 +227,7 @@ fn validate_destination(destination: &Path) -> Result<(), String> {
             if metadata.file_attributes() & 0x400 != 0 {
                 return Err(format!("reparse install path refused: {}", path.display()));
             }
-            if !fabrials_agent_host::win_acl::is_owner_only(path)
-                .map_err(|error| format!("inspect install ACL: {error}"))?
-            {
-                return Err(format!("unsafe install ACL: {}", path.display()));
-            }
+            super::windows::validate(path, directory)?;
         }
     }
     Ok(())
@@ -244,7 +243,13 @@ fn sync_directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn version_probe(path: &Path, version: &str, timeout: Duration) -> Result<(), String> {
+#[cfg(windows)]
+pub(super) fn version_probe(path: &Path, version: &str, timeout: Duration) -> Result<(), String> {
+    super::windows::version_probe(path, version, timeout)
+}
+
+#[cfg(not(windows))]
+pub(super) fn version_probe(path: &Path, version: &str, timeout: Duration) -> Result<(), String> {
     let mut command = Command::new(path);
     command
         .arg("--version")
@@ -260,9 +265,6 @@ fn version_probe(path: &Path, version: &str, timeout: Duration) -> Result<(), St
         .spawn()
         .map_err(|error| format!("start candidate version check: {error}"))?;
     let mut guard = VersionProcess(child);
-    #[cfg(windows)]
-    let _job = fabrials_agent_host::win_job::KillOnDropJob::for_pid(guard.0.id())
-        .map_err(|error| format!("confine candidate version check: {error}"))?;
     let stdout = guard
         .0
         .stdout
@@ -302,8 +304,10 @@ fn version_probe(path: &Path, version: &str, timeout: Duration) -> Result<(), St
     Ok(())
 }
 
+#[cfg(not(windows))]
 struct VersionProcess(std::process::Child);
 
+#[cfg(not(windows))]
 impl Drop for VersionProcess {
     fn drop(&mut self) {
         #[cfg(unix)]

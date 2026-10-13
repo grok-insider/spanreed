@@ -57,9 +57,6 @@ def binary_assets(version):
     version_tuple(version)
     return [f"spanreed-{version}-x86_64-unknown-linux-musl.tar.gz",
             f"spanreed-{version}-x86_64-pc-windows-msvc.zip",
-            f"spanreed-{version}-aarch64-apple-darwin.tar.gz",
-            f"spanreed-{version}-x86_64-apple-darwin.tar.gz",
-            f"spanreed-{version}-universal-apple-darwin.tar.gz",
             f"Spanreed_{version}_amd64.deb", f"Spanreed_{version}_x64-setup.exe"]
 
 
@@ -137,7 +134,8 @@ def release_notes(version):
         "Install instructions: https://fabrials.com/install/spanreed.sh (Linux x86_64) and " + \
         "https://fabrials.com/install/spanreed.ps1 (Windows x64).\n\n" + \
         f"Corresponding source: https://github.com/{REPO}/releases/download/v{version}/{source_asset(version)} " + \
-        "(includes the Portable PWA, vendored libraries, licenses and build instructions).\n"
+        "(includes the Portable PWA, vendored libraries, licenses and build instructions).\n" + \
+        "CLI archives include exact native third-party notices and original registry sources; spanreed licenses retains the notices after installation and self-update.\n"
 
 
 def validate_pr(number, sha, release_only=False, wait_for_head=False):
@@ -271,7 +269,7 @@ def publish(sha, run_id):
     if not current:
         jobs = api(f"actions/runs/{int(run_id)}/jobs?per_page=100")["jobs"]
         builders = [j for j in jobs if j["name"].startswith(
-            ("cli / cli (", "cli / macos-universal", "desktop / desktop ("))]
+            ("cli / cli (", "desktop / desktop ("))]
         if len(builders) != len(binary_assets(version)) \
                 or any(j["conclusion"] != "success" for j in builders):
             raise ValueError("Recovery requires every builder job to succeed")

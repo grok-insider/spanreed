@@ -18,7 +18,10 @@ use crate::creds;
 use crate::http;
 use crate::setup;
 
+mod durable;
 mod install;
+#[cfg(windows)]
+mod windows;
 
 pub const DEFAULT_REPO: &str = crate::product::GITHUB_REPO;
 
@@ -270,22 +273,18 @@ pub fn apply_update(r: &CheckResult, dry_run: bool) -> Result<String, String> {
         ));
     }
 
-    stop_capture_processes();
-    let installed = candidate.install(&r.latest);
-
-    // Best-effort restart capture if it was part of normal setup.
-    let ensure_msg = match setup::service_ensure(false) {
-        Ok(m) => format!("; capture: {m}"),
-        Err(e) => format!("; capture ensure: {e} (run: spanreed capture ensure)"),
-    };
-    installed.map_err(|error| format!("{error}{ensure_msg}"))?;
-
+    candidate.install(&r.latest)?;
+    #[cfg(windows)]
+    return Ok(format!(
+        "update {} prepared; the verified helper completes after this process exits. Run self-update --status to check completion or --recover if interrupted. Restart running Spanreed processes after completion",
+        r.latest
+    ));
+    #[cfg(not(windows))]
     Ok(format!(
-        "installed {} → {} ({}){}",
+        "installed {} → {} ({}); previous executable retained for self-update --rollback. Restart running Spanreed processes when idle",
         r.latest,
         dest.display(),
-        r.tag,
-        ensure_msg
+        r.tag
     ))
 }
 
@@ -338,26 +337,31 @@ fn extract_tar_gz_binary(archive: &[u8]) -> Result<Vec<u8>, String> {
     Err("tar.gz archive has no spanreed binary".into())
 }
 
-/// Stop capture workers so the install path can be replaced on Windows.
-fn stop_capture_processes() {
+pub fn recover_update(rollback: bool) -> Result<String, String> {
+    if install_is_nix_managed() {
+        return Err(
+            "this installation is Nix-managed; use its profile generations for recovery".into(),
+        );
+    }
+    let directory = fabrials_agent_host::state_dir::resolve_state_dirs()
+        .map_err(|error| error.to_string())?
+        .state_dir;
+    let _host = install::claim_host(&directory)?;
+    durable::recover(&setup::install_bin_path(), rollback)
+}
+
+pub fn update_status() -> Result<String, String> {
+    durable::status(&install_path())
+}
+
+pub fn finish_update() -> Result<String, String> {
     #[cfg(windows)]
     {
-        let script = r#"
-Get-CimInstance Win32_Process -Filter "Name='spanreed.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -match 'capture' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Milliseconds 400
-"#;
-        let _ = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
-            .output();
+        durable::finish()
     }
     #[cfg(not(windows))]
     {
-        // Best-effort: pkill patterns; ignore errors.
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "spanreed capture"])
-            .output();
+        Err("update helpers are only used on Windows".into())
     }
 }
 

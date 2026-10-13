@@ -18,6 +18,15 @@ pub struct CheckResult {
 pub trait SelfUpdater: Send + Sync {
     fn check_for_update(&self) -> Result<CheckResult, String>;
     fn apply_update(&self, result: &CheckResult, dry_run: bool) -> Result<String, String>;
+    fn recover_update(&self, _rollback: bool) -> Result<String, String> {
+        Err("update recovery is unavailable in this adapter".into())
+    }
+    fn update_status(&self) -> Result<String, String> {
+        Err("update status is unavailable in this adapter".into())
+    }
+    fn finish_update(&self) -> Result<String, String> {
+        Err("update completion is unavailable in this adapter".into())
+    }
     fn can_apply_self_update(&self) -> bool;
     fn apply_blocked_reason(&self) -> Option<&'static str>;
     /// `SPANREED_OFFLINE` is set.
@@ -34,6 +43,18 @@ pub fn current_version() -> &'static str {
 
 pub fn check_for_update(ctx: &AppContext) -> Result<CheckResult, String> {
     updater(ctx).check_for_update()
+}
+
+pub fn recover_update(ctx: &AppContext, rollback: bool) -> Result<String, String> {
+    updater(ctx).recover_update(rollback)
+}
+
+pub fn update_status(ctx: &AppContext) -> Result<String, String> {
+    updater(ctx).update_status()
+}
+
+pub fn finish_update(ctx: &AppContext) -> Result<String, String> {
+    updater(ctx).finish_update()
 }
 
 pub fn apply_update(

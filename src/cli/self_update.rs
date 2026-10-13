@@ -6,6 +6,19 @@ use std::process::ExitCode;
 use crate::app::{AppContext, updates};
 
 pub(super) fn run(ctx: &AppContext, args: &[String]) -> ExitCode {
+    if args.len() == 1 {
+        match args[0].as_str() {
+            "--recover" => {
+                return super::report("self-update", updates::recover_update(ctx, false));
+            }
+            "--rollback" => {
+                return super::report("self-update", updates::recover_update(ctx, true));
+            }
+            "--status" => return super::report("self-update", updates::update_status(ctx)),
+            "--finish" => return super::report("self-update", updates::finish_update(ctx)),
+            _ => {}
+        }
+    }
     let mut check_only = false;
     let mut json = false;
     let mut yes = false;
@@ -114,6 +127,9 @@ fn print_help() {
          \t--json        Machine-readable check result\n\
          \t--yes / -y    Apply without interactive confirmation\n\
          \t--dry-run     Download + verify checksum; do not replace the binary\n\
+         \t--status      Inspect the local update transaction without network access\n\
+         \t--recover     Restore an interrupted update without network access\n\
+         \t--rollback    Restore the previous completed update without network access\n\
          \nEnv: SPANREED_REPO (default {}), SPANREED_OFFLINE=1",
         updates::DEFAULT_REPO
     );

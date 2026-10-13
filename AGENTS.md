@@ -274,7 +274,7 @@ SPANREED_OFFLINE=1 cargo test --all
   (`release-plz-manual-v…` → `master`). Both flows use `scripts/release.py`.
 - Do **not** hand-edit `CHANGELOG.md` outside a Release PR.
 - No crates.io publication. Release orchestration uses `gh` with `GITHUB_TOKEN`; no personal token fallback.
-- Publish from the exact release merge SHA on `master`, after all seven native builders and the corresponding-source producer pass. Keep the release draft until all sixteen artifacts (binaries/installers, source archive and checksums) verify.
+- Publish from the exact release merge SHA on `master`, after all four qualified Linux/Windows native builders and the corresponding-source producer pass. Keep the release draft until all ten artifacts (binaries/installers, source archive and checksums) verify.
 - Operations and recovery: `docs/release-automation.md`.
 
 ### Distribution (install vs binaries vs share)

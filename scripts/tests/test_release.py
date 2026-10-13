@@ -16,9 +16,6 @@ SPEC.loader.exec_module(release)
 ROOT = Path(__file__).resolve().parents[2]
 BUILDER_JOBS = [("cli / cli (", "ubuntu-24.04, x86_64-unknown-linux-musl)"),
                 ("cli / cli (", "windows-latest, x86_64-pc-windows-msvc)"),
-                ("cli / cli (", "macos-latest, aarch64-apple-darwin)"),
-                ("cli / cli (", "macos-latest, x86_64-apple-darwin)"),
-                ("cli / macos-universal", ""),
                 ("desktop / desktop (", "linux)"), ("desktop / desktop (", "windows)"), ("source", "")]
 PRODUCTION_INDEX = '<meta name="grok-app-origin" content="https://desktop.grok.me">'
 

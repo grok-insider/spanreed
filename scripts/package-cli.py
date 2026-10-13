@@ -1,0 +1,153 @@
+import argparse
+import hashlib
+import importlib.util
+import io
+import json
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+import tarfile
+import tempfile
+import tomllib
+import zipfile
+
+SPEC = importlib.util.spec_from_file_location('native_notices', Path(__file__).with_name('native-notices.py'))
+notices = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(notices)
+STABLE_TARGETS = {'x86_64-unknown-linux-musl': [], 'x86_64-pc-windows-msvc': ['tray']}
+MAX_FILE = 128 * 1024 * 1024
+MAX_TOTAL = 512 * 1024 * 1024
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def regular(path):
+    path = Path(path)
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= MAX_FILE, 'Expected bounded regular packaging input')
+    return path.read_bytes()
+
+
+def safe_name(name):
+    path = PurePosixPath(name)
+    require(name and not path.is_absolute() and str(path) == name and '..' not in path.parts and '\\' not in name and not any(ord(c) < 32 for c in name), 'Unsafe artifact path')
+    return name
+
+
+def verify_payload(files, target, version, manifest):
+    require(target in STABLE_TARGETS, 'Only qualified Linux and Windows targets may be distributed')
+    require(re.fullmatch(r'\d+\.\d+\.\d+', version), 'Invalid stable version')
+    require(sum(len(data) for data in files.values()) <= MAX_TOTAL, 'Artifact payload exceeds limit')
+    metadata = json.loads(files['NATIVE-ARTIFACT.json'])
+    inventory = json.loads(files['notices/inventory.json'])
+    binary = 'spanreed.exe' if target.endswith('msvc') else 'spanreed'
+    require(metadata.get('schema') == 1 and metadata.get('target') == target and metadata.get('version') == version, 'Artifact identity differs')
+    require(inventory.get('target') == target and inventory.get('package') == 'spanreed' and inventory.get('features') == STABLE_TARGETS[target], 'Native inventory target or features differ')
+    require(metadata.get('rustc') == inventory.get('rustc'), 'Artifact toolchain differs from notices')
+    actual = {name: digest(data) for name, data in files.items() if name != 'NATIVE-ARTIFACT.json'}
+    require(metadata.get('files') == actual, 'Artifact payload checksum differs')
+    require(set(files) >= {binary, 'LICENSE', 'notices/THIRD-PARTY-NOTICES.txt', 'notices/inventory.json'}, 'Native artifact omits required notices')
+    require(all(name in {binary, 'LICENSE', 'NATIVE-ARTIFACT.json'} or name.startswith('notices/') for name in files), 'Unexpected native artifact payload')
+    require(files['LICENSE'] == regular(Path(manifest).parent / 'LICENSE'), 'Source license differs')
+    require(files['notices/THIRD-PARTY-NOTICES.txt'] in files[binary] and files['LICENSE'] in files[binary], 'Executable does not retain original notice bytes')
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        for name, data in files.items():
+            safe_name(name)
+            if name.startswith('notices/'):
+                destination = root / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(data)
+        notices.verify(root / 'notices', Path(manifest).parent / 'Cargo.lock')
+    return metadata
+
+
+def verify_archive(archive, target, version, manifest):
+    files, total = {}, 0
+    def add(name, size, read):
+        nonlocal total
+        safe_name(name)
+        total += size
+        require(name not in files and 0 <= size <= MAX_FILE and total <= MAX_TOTAL, 'Oversized or duplicate native archive member')
+        data = read()
+        require(len(data) == size, 'Truncated native archive member')
+        files[name] = data
+    if str(archive).endswith('.zip'):
+        with zipfile.ZipFile(archive) as stream:
+            for member in stream.infolist():
+                require(not member.is_dir() and (member.external_attr >> 16) & 0o170000 in (0, 0o100000), 'Nonregular ZIP member')
+                add(member.filename, member.file_size, lambda: stream.read(member))
+    else:
+        with tarfile.open(archive, 'r:gz') as stream:
+            for member in stream:
+                require(member.isfile(), 'Nonregular tar member')
+                add(member.name, member.size, lambda: stream.extractfile(member).read())
+    return verify_payload(files, target, version, manifest)
+
+
+def build(args):
+    manifest = Path(args.manifest).resolve()
+    version = tomllib.loads(regular(manifest).decode())['package']['version']
+    require(args.target in STABLE_TARGETS, 'macOS remains experimental until native notices and platform qualification are complete')
+    root = Path(args.notices)
+    inventory = notices.verify(root, manifest.parent / 'Cargo.lock')
+    rustc = subprocess.check_output(['rustc', '--version'], text=True).strip()
+    require(inventory['rustc'] == rustc, 'Native notices were generated by another toolchain')
+    binary = 'spanreed.exe' if args.target.endswith('msvc') else 'spanreed'
+    files = {binary: regular(args.binary), 'LICENSE': regular(manifest.parent / 'LICENSE')}
+    for path in sorted(root.rglob('*')):
+        require(not path.is_symlink(), 'Notice payload contains symlinks')
+        if path.is_file():
+            files['notices/' + path.relative_to(root).as_posix()] = regular(path)
+    metadata = {'schema': 1, 'target': args.target, 'version': version, 'rustc': rustc, 'files': {name: digest(data) for name, data in files.items()}}
+    files['NATIVE-ARTIFACT.json'] = (json.dumps(metadata, indent=2) + '\n').encode()
+    verify_payload(files, args.target, version, manifest)
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    archive = output / f'spanreed-{version}-{args.target}{".zip" if binary.endswith(".exe") else ".tar.gz"}'
+    require(not archive.exists(), 'Refusing to overwrite native artifact')
+    if binary.endswith('.exe'):
+        with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as stream:
+            for name, data in sorted(files.items()):
+                stream.writestr(name, data)
+    else:
+        with tarfile.open(archive, 'w:gz') as stream:
+            for name, data in sorted(files.items()):
+                member = tarfile.TarInfo(name)
+                member.mode = 0o755 if name == binary else 0o644
+                member.size = len(data)
+                stream.addfile(member, io.BytesIO(data))
+    verify_archive(archive, args.target, version, manifest)
+    archive.with_name(archive.name + '.sha256').write_text(digest(regular(archive)) + '  ' + archive.name + '\n')
+    print(json.dumps({'packaged': archive.name, 'files': len(files), 'target': args.target, 'embeddedNotices': True}))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest='action', required=True)
+    create = sub.add_parser('build')
+    create.add_argument('--manifest', default='Cargo.toml')
+    create.add_argument('--target', required=True)
+    create.add_argument('--binary', required=True)
+    create.add_argument('--notices', required=True)
+    create.add_argument('--output', required=True)
+    check = sub.add_parser('verify')
+    check.add_argument('--manifest', default='Cargo.toml')
+    check.add_argument('--target', required=True)
+    check.add_argument('--version', required=True)
+    check.add_argument('--archive', required=True)
+    args = parser.parse_args()
+    if args.action == 'build':
+        build(args)
+    else:
+        verify_archive(args.archive, args.target, args.version, args.manifest)
+
+
+if __name__ == '__main__':
+    main()

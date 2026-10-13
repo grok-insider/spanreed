@@ -51,6 +51,7 @@ pub(super) fn print() {
          \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\
          \t                               evening timer + login/missed-run catch-up\n\
+         \tspanreed licenses            Print embedded source license and dependency notices\n\
          \tspanreed self-update         Install latest GitHub Release (sha256 verified)\n\
          \t  --check [--json]             Report only (exit 2 if newer)\n\
          \t  --yes --dry-run              Apply without prompt / download-only verify\n\

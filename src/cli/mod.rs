@@ -12,6 +12,7 @@ mod gui;
 mod help;
 mod history;
 mod json;
+mod licenses;
 mod list;
 mod privacy;
 mod probe;
@@ -56,6 +57,7 @@ const COMMANDS: &[(&str, Handler)] = &[
     ("widget", profile::widget),
     ("gui", gui::run),
     ("self-update", self_update::run),
+    ("licenses", licenses::run),
     ("tray", tray::run),
     ("account", account::run),
     ("addon", addon::run),
@@ -95,6 +97,9 @@ pub fn run_cli() -> ExitCode {
     if args.len() == 1 && matches!(args[0].as_str(), "--version" | "-V") {
         println!("spanreed {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
+    }
+    if args.first().is_some_and(|arg| arg == "licenses") {
+        return licenses::print(&args[1..]);
     }
     dispatch(&crate::compose::context(), &args)
 }
