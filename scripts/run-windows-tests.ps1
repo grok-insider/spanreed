@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('cross','desktop','probe','timeout-probe')][string]$Suite = 'cross',
+    [ValidateSet('cross','desktop','probe','timeout-probe','cargo-probe')][string]$Suite = 'cross',
     [string]$SourceRoot = (Get-Location).Path,
     [switch]$Child,
     [string]$Configuration,
@@ -31,6 +31,7 @@ if ($Child) {
             $start.Arguments = '-NoProfile -NonInteractive -Command "Start-Sleep -Seconds 3; [IO.File]::WriteAllText(''' + $escaped + ''',''escaped''); Start-Sleep -Seconds 60"'
             $start.UseShellExecute = $false
             $start.CreateNoWindow = $true
+            $start.WorkingDirectory = $config.source
             $descendant = [Diagnostics.Process]::Start($start)
             $report.descendantPid = $descendant.Id
             $report.descendantStarted = $descendant.StartTime.ToUniversalTime().Ticks
@@ -40,11 +41,13 @@ if ($Child) {
                 Start-Sleep -Seconds 60
             }
         } else {
-            $commands = if ($config.suite -eq 'cross') {
+            $commands = @(if ($config.suite -eq 'cross') {
                 @(@('check','--locked','--all-targets'), @('test','--locked','--all'), @('test','--locked','--workspace','--manifest-path','vendor/fabrials-libs/Cargo.toml'), @('check','--locked','--all-targets','--features','tray'), @('test','--locked','--all','--features','tray'))
-            } else {
+            } elseif ($config.suite -eq 'desktop') {
                 @(@('test','--locked','--features','contracts'), @('test','--locked','--lib','secret::platform::tests::credential_roundtrip','--','--ignored','--exact'))
-            }
+            } else {
+                ,@('metadata','--locked','--offline','--no-deps','--format-version','1')
+            })
             $index = 0
             foreach ($arguments in $commands) {
                 $log = Join-Path $config.logs ('cargo-' + $index + '.log')
@@ -53,6 +56,7 @@ if ($Child) {
                 $start.Arguments = $arguments -join ' '
                 $start.UseShellExecute = $false
                 $start.CreateNoWindow = $true
+                $start.WorkingDirectory = $config.source
                 $start.RedirectStandardOutput = $true
                 $start.RedirectStandardError = $true
                 $process = New-Object Diagnostics.Process
@@ -62,10 +66,16 @@ if ($Child) {
                 $stderr = $process.StandardError.ReadToEndAsync()
                 $process.WaitForExit()
                 $code = $process.ExitCode
-                [IO.File]::WriteAllText($log, $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult())
+                $output = $stdout.GetAwaiter().GetResult()
+                [IO.File]::WriteAllText($log, $output + $stderr.GetAwaiter().GetResult())
                 $process.Dispose()
                 $report.checks += @{command=('cargo ' + ($arguments -join ' '));exitCode=$code;log=[IO.Path]::GetFileName($log)}
                 if ($code -ne 0) { throw ('Cargo check failed; see ' + [IO.Path]::GetFileName($log)) }
+                if ($config.suite -eq 'cargo-probe') {
+                    $metadata = $output | ConvertFrom-Json
+                    if ($metadata.workspace_root -ne $config.source -or @($metadata.packages).Count -ne 1 -or $metadata.packages[0].manifest_path -ne (Join-Path $config.source 'Cargo.toml')) { throw 'Native Cargo did not execute in the isolated source directory' }
+                    $report.nativeWorkingDirectory = $metadata.workspace_root
+                }
                 $index++
             }
         }
@@ -108,13 +118,20 @@ try {
     }
     $commit = 'synthetic-probe'
     $cargo = ''
-    if ($Suite -in @('cross','desktop')) {
-        $commit = (& git -C $source rev-parse HEAD).Trim()
-        if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[a-f0-9]{40}$') { throw 'Cannot identify checkout commit' }
-        & git -C $source archive --format=tar ('--output=' + (Join-Path $root 'source.tar')) HEAD
-        if ($LASTEXITCODE -ne 0) { throw 'Cannot snapshot committed source' }
-        & tar.exe -xf (Join-Path $root 'source.tar') -C (Join-Path $root 'source')
-        if ($LASTEXITCODE -ne 0) { throw 'Cannot extract committed source' }
+    if ($Suite -in @('cross','desktop','cargo-probe')) {
+        if ($Suite -eq 'cargo-probe') {
+            $fixture = Join-Path $root 'source'
+            Set-Content -LiteralPath (Join-Path $fixture 'Cargo.toml') -Encoding ascii -Value "[package]`nname = `"windows-ci-cwd-probe`"`nversion = `"0.0.0`"`nedition = `"2024`"`n[lib]`npath = `"lib.rs`""
+            Set-Content -LiteralPath (Join-Path $fixture 'Cargo.lock') -Encoding ascii -Value "version = 4`n[[package]]`nname = `"windows-ci-cwd-probe`"`nversion = `"0.0.0`""
+            Set-Content -LiteralPath (Join-Path $fixture 'lib.rs') -Encoding ascii -Value ''
+        } else {
+            $commit = (& git -C $source rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[a-f0-9]{40}$') { throw 'Cannot identify checkout commit' }
+            & git -C $source archive --format=tar ('--output=' + (Join-Path $root 'source.tar')) HEAD
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot snapshot committed source' }
+            & tar.exe -xf (Join-Path $root 'source.tar') -C (Join-Path $root 'source')
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot extract committed source' }
+        }
         $cargo = (& rustup which cargo).Trim()
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cargo)) { throw 'Cannot locate installed Cargo' }
         $toolchain = Split-Path -Parent (Split-Path -Parent $cargo)
@@ -123,7 +140,7 @@ try {
         $cache = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path ([Environment]::GetFolderPath('UserProfile')) '.cargo' }
         foreach ($relative in @('registry\cache','registry\index')) {
             $cached = Join-Path $cache $relative
-            if (Test-Path -LiteralPath $cached) {
+            if ($Suite -ne 'cargo-probe' -and (Test-Path -LiteralPath $cached)) {
                 $destination = Join-Path (Join-Path $root 'cargo') $relative
                 New-Item -ItemType Directory -Path $destination -Force | Out-Null
                 Copy-Item -Path (Join-Path $cached '*') -Destination $destination -Recurse -Force

@@ -34,6 +34,7 @@ no test filter is added to the normal suites.
 ```powershell
 ./scripts/run-windows-tests.ps1 -Suite cross
 ./scripts/run-windows-tests.ps1 -Suite desktop
+./scripts/run-windows-tests.ps1 -Suite cargo-probe
 ```
 
 The wrapper deliberately tests committed `HEAD`, not uncommitted edits. Its
@@ -41,7 +42,7 @@ setup requires an elevated Windows CI process. It does not alter any existing
 account or its memberships. It is a correctness fixture for trusted CI source,
 not a sandbox for hostile Cargo build scripts.
 
-The final PowerShell/C# wrapper was tested in Windows 11 `win11-qa` without
+The PowerShell/C# wrapper was tested in Windows 11 `win11-qa` without
 compiling Rust: a successful probe and an expected-failure two-second timeout.
 Both used newly created non-administrator accounts, proved file ownership and
 source/environment isolation, terminated a sleeping descendant and removed
@@ -50,7 +51,17 @@ used to launch the elevated fixture was removed. The recorded source hashes and
 evidence hash are in the [report](evaluation/windows-ci-isolation-2026-10-14.json).
 Both workflow files pass `actionlint`.
 
-The complete Cargo suites have not yet been run through this wrapper. Only
+The first hosted Windows run reached Cargo but failed to find its manifest:
+PowerShell's `Set-Location` does not change the native working directory used by
+`.NET ProcessStartInfo`. The launcher now sets `WorkingDirectory` explicitly.
+The `cargo-probe` suite uses the same command runner to execute real Cargo
+`metadata --locked --offline --no-deps --format-version 1` against a synthetic
+read-only package, checking its reported manifest and workspace paths. This
+passes under a new limited account with Cargo 1.95.0; removing the working
+directory assignment reproduces the original failure. It compiles no source
+and copies no registry cache.
+
+The complete Cargo suites have not yet passed through this wrapper. Only
 their subsequent CI results can establish that the native compiler setup,
 dependencies and all tests work under the new account. These probes do not
 qualify a Windows release or enable the closed Windows self-update gate.

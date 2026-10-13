@@ -10,7 +10,7 @@ The CLI build sets `SPANREED_NATIVE_NOTICES` to the generated `THIRD-PARTY-NOTIC
 
 `scripts/package-cli.py build` verifies the native inventory, exact toolchain identity, selected platform/features, application license, embedded notice bytes and complete archive hashes. The archive contains `spanreed` or `spanreed.exe`, `LICENSE`, `NATIVE-ARTIFACT.json` and `notices/`, including the original source archives. Archive verification rejects traversal, symlinks, duplicates, oversized members, missing files and digest mismatches. CI additionally checks the executable's architecture/static-link contract and startup before packaging. The release producer's provenance and SHA256 sidecar bind that archive to the release commit.
 
-Validated so far:
+Earlier candidate validation (before `ce2692d`):
 
 - The complete Python suite passes 65 tests, including original-notice/closure verification, CLI/desktop packaging, release orchestration, offline/source-runtime verification and safe concurrent source downloads.
 - After the canonical libraries sync to `20c6b44`, actual native notice generation and verification passed for Linux GNU (387 packages, 811 original notice files, 370 original registry sources), Linux musl (387, 812, 370) and Windows/tray (395, 826, 377) against the final candidate lockfile. These platform inventories use the local Rust 1.98.1 identity, not a claim about another release runner toolchain.
@@ -20,7 +20,7 @@ Validated so far:
 Outstanding gates:
 
 - Qualify the actual Linux musl/Windows archive workflow. The GNU debug build does not qualify either distributed architecture/link target.
-- Qualify real Nix and Tauri native artifacts. Their notice generation, embedding and installation hooks are implemented; no full Nix build or Tauri installer execution has been performed in this integration pass.
+- Qualify full Nix and Tauri installer artifacts. The exact Linux Tauri executable and its native notice IPC were checked separately below; neither a full Nix product build nor a Tauri installer execution has been performed in this integration pass.
 - Exercise Windows DACL/Job/version fixtures and update/recover/rollback/installer lifecycle in the existing Windows QA guest. Windows apply remains disabled.
 - `block@0.1.6` and `malloc_buf@0.0.6` declare MIT but their exact historical sources do not supply standalone license text. The reviewed source pins match the released Rust files, but do not fill that legal gap. macOS stays excluded until it is resolved and native execution is qualified.
 - No OS power-loss test has been performed. Process termination coverage is not evidence of storage-controller or Windows crash durability.
@@ -37,4 +37,34 @@ The original registry payload counts exclude separately retained supplementary l
 
 The standalone `spanreed-remote-relay` Nix package is excluded from this distribution qualification. The public connection contract is direct and the managed relay remains disabled; these CLI/desktop notices do not qualify the relay artifact.
 
-Current integration checks: desktop typecheck and production renderer build; 27 existing desktop tests plus two original-notice tests; 65 Python tests; real desktop native notice generation with 465 packages, 932 original notice texts and 451 registry archives; real desktop redistribution staging; fully offline CLI generation from original sources (387 packages, 815 original notice texts, 370 registry archives); Nix derivation evaluation for CLI and desktop. No full Nix build was run on station. The Tauri Rust executable/installer still requires native compilation and execution qualification.
+Integration checks before the native runtime trial: desktop typecheck and production renderer build; 27 existing desktop tests plus two original-notice tests; 65 Python tests; real desktop native notice generation with 465 packages, 932 original notice texts and 451 registry archives; real desktop redistribution staging; fully offline CLI generation from original sources (387 packages, 815 original notice texts, 370 registry archives); Nix derivation evaluation for CLI and desktop. No full Nix build was run on station.
+
+## Exact native runtime trial, 2026-10-14
+
+The clean source `ce2692d2c7f7ca7db4d15f25c213a2a050baabba` includes canonical
+libraries `6ae91bd`, the multidevice PWA and the Unix updater lock fix. The GNU
+CLI built with required original notices; its license output is 4,417,799 bytes,
+SHA256 `54e86dfbf0bdafc7216896404157f5df925c25f846a5e79345528deb86083e75`.
+Eighteen lifecycle checks passed. The binary SHA256 is
+`e4fa51029b1d601f577808ec8e9dee2f8588542804d75e61081d0e8d467aca07`.
+It was activated in station's independent QA Nix profile and service, preserving
+identity and pairings. That small wrapper copies the verified binary and its
+runtime/source/notice closure; it is not a full native Nix product build.
+
+The Linux GNU debug Tauri executable built with custom protocol and no installer,
+with required original notices. In Syl's hidden Sway, Settings → View licenses
+returned exactly 5,068,946 bytes after the textarea's normal newline conversion,
+SHA256 `3c24e36b9653115979a7facf85fb1d26d410591697e8b20d31164295fcdf1c00`.
+`package-desktop.py verify` independently found the complete 5,069,785 original
+bytes in the binary. The frozen source was clean; its executable SHA256 is
+`3bd8e49d002ba2ea536e999925c09b98782eb9949fbd8684633720a2d1657233`.
+The [IPC receipt](evaluation/native-notices-ipc-2026-10-14.json) records the
+native extraction method and limits. The owned application, launcher and hidden
+compositor were closed afterwards. The filesystem profile was separate, but the
+host network was shared; this was not a security sandbox.
+
+Unix updater tests now pass 32 cases, including an inherited-lock regression
+that fails when explicit unlock is removed. Windows updater/security evidence
+is separate in [windows-updater-qualification.md](windows-updater-qualification.md).
+Actual `.deb`/NSIS installation, published musl/Windows archives, Windows apply,
+power-loss durability and full platform release qualification remain pending.

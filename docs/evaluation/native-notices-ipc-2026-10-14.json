@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-10-13T23:33:12.405769+00:00",
+  "sourceCommit": "ce2692d2c7f7ca7db4d15f25c213a2a050baabba",
+  "sourceWorktreeClean": true,
+  "binary": "/tmp/remote-native-8b12b86-20261014/tauri-target/debug/spanreed-desktop",
+  "binarySha256": "3bd8e49d002ba2ea536e999925c09b98782eb9949fbd8684633720a2d1657233",
+  "buildKind": "Linux GNU debug Tauri executable, no installer",
+  "settingsLicensesNativeIpc": "passed",
+  "selectionMethod": "native WebKit textarea context menu Select All then Copy; nested Wayland wl-paste",
+  "textareaBytes": 5068946,
+  "textareaSha256": "3c24e36b9653115979a7facf85fb1d26d410591697e8b20d31164295fcdf1c00",
+  "expectedMatch": true,
+  "originalEmbeddedPayloadBytes": 5069785,
+  "originalEmbeddedPayloadSha256": "6abb2db1e80670ac653f8a4e89e6a029b17a1700a7fbc3ee75c1d170b362a3c1",
+  "newlineNormalization": "textarea converts CRLF and CR to LF; embedded bytes independently verified by package-desktop.py verify",
+  "readOnlyEvidence": "textarea source readOnly; native menu Cut, Paste and Delete disabled",
+  "screenshot": "/tmp/remote-native-8b12b86-20261014/desktop-licenses-ce2692d.png",
+  "screenshotDimensions": [
+    2560,
+    1440
+  ],
+  "interactionDimensions": [
+    1280,
+    720
+  ],
+  "hiddenDisplay": "wayland-2",
+  "mainDesktopInputUsed": false,
+  "limitations": [
+    "Not a release installer or full Nix product artifact test",
+    "Filesystem profile isolated; network shared with host; initial overview read local host daemon metadata, not retained as evidence",
+    "Host/pinned GTK portal and font configuration warnings present in private runtime log",
+    "Installed Syl hardcodes 1280x720 pointer bounds; final screenshot output changed to 2560x1440 after interaction",
+    "Keyboard copy produced no clipboard; native context menu successfully extracted exact text"
+  ],
+  "cleanup": "private GUI closed; native app, launcher and hidden compositor exited"
+}
