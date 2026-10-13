@@ -345,9 +345,6 @@ impl SessionReviewState {
             let Some(id) = bounded_optional(Some(id), 128) else {
                 continue;
             };
-            if !crate::models::is_grok_model_id(&id) {
-                continue;
-            }
             self.models.insert(
                 id,
                 ModelMetadata {
@@ -386,9 +383,6 @@ impl SessionReviewState {
 
     /// Apply the model selected by a standard ACP update or host operation.
     pub fn set_model(&mut self, model: &str) {
-        if !crate::models::is_grok_model_id(model) {
-            return;
-        }
         let Some(model) = bounded_optional(Some(model), 128) else {
             return;
         };

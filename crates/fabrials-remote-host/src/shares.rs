@@ -84,9 +84,11 @@ impl Shares {
         host: &Arc<HostState>,
         directory: &Path,
         public_key: &str,
+        web_origin: &str,
     ) -> Result<Self, String> {
-        let publications = match crate::publications::Publications::new(host, directory, public_key)
-        {
+        let publications = match crate::publications::Publications::new(
+            host, directory, public_key, web_origin,
+        ) {
             Ok(service) => Some(Arc::new(service)),
             Err(_) => {
                 eprintln!(

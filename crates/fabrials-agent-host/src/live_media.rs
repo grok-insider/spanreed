@@ -33,6 +33,48 @@ impl HostState {
         let Some(session_id) = params.get("sessionId").and_then(Value::as_str) else {
             return true;
         };
+        if self.journal.lock().await.is_restoring(session_id) {
+            let permit = self.image_decoders.clone().try_acquire_owned();
+            let block = params["update"]["content"].clone();
+            let image = if let Ok(permit) = permit {
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    PromptImage::from_acp(&block)
+                })
+                .await
+                .ok()
+                .and_then(Result::ok)
+            } else {
+                None
+            };
+            if let Some(image) = &image {
+                self.session
+                    .lock()
+                    .await
+                    .transcript_media
+                    .remember(session_id, std::slice::from_ref(image));
+            }
+            let Ok(key) = crate::pairing::random_hex() else {
+                return true;
+            };
+            self.emit_event(
+                Event::MessageImage {
+                    session_id: session_id.into(),
+                    role: role.into(),
+                    image_id: format!("image-{}", key.expose()),
+                    phase: if image.is_some() {
+                        "ready"
+                    } else {
+                        "unavailable"
+                    }
+                    .into(),
+                    image: image.as_ref().map(PromptImage::descriptor),
+                },
+                None,
+            )
+            .await;
+            return true;
+        }
         let Some(opened_at) = self
             .session
             .lock()
@@ -128,6 +170,40 @@ mod tests {
     use super::*;
     use crate::dispatch::LiveSession;
     use crate::journal::ReplayOutcome;
+
+    #[tokio::test]
+    async fn restored_image_is_projected_before_the_live_session_exists() {
+        let state = Arc::new(HostState::new(
+            crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21219).unwrap(),
+        ));
+        state.journal.lock().await.begin_restore("s");
+        let image = image::RgbImage::from_pixel(32, 32, image::Rgb([1, 2, 3]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        let image = PromptImage::normalize(bytes.get_ref()).unwrap();
+        assert!(state.absorb_image(&serde_json::json!({"sessionId":"s","_meta":{"isReplay":true},"update":{"sessionUpdate":"user_message_chunk","content":image.acp_block()}})).await);
+        let mut journal = state.journal.lock().await;
+        assert_eq!(journal.emitted_through(), 0);
+        journal.finish_restore(Event::SessionSnapshot {
+            session_id: "s".into(),
+            messages: vec![],
+            tools: vec![],
+            members: vec![],
+            workflows: vec![],
+            background_tasks: vec![],
+        });
+        let (_, frames) = journal.snapshot_frames();
+        assert!(frames.iter().any(|frame|matches!(&frame.event,Event::SessionSnapshot {messages,..} if messages.len()==1 && messages[0].images==[image.descriptor()])));
+        assert!(
+            state
+                .session
+                .lock()
+                .await
+                .transcript_media
+                .chunk("s", &image.descriptor().sha256, 0)
+                .is_ok()
+        );
+    }
 
     #[tokio::test]
     async fn live_images_keep_a_stable_slot_and_hide_internal_content() {

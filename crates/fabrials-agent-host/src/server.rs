@@ -117,6 +117,13 @@ pub trait DirectConnection: std::fmt::Debug + Send + Sync {
 /// Mutable host state shared by every request.
 #[derive(Debug)]
 pub struct HostState {
+    pub(crate) execution: Mutex<crate::execution::ExecutionStore>,
+    pub(crate) drainers: std::sync::Mutex<crate::multiwriter::Drainers>,
+    pub(crate) targeted_cancel_supported: std::sync::atomic::AtomicBool,
+    pub(crate) agent_reconciling: std::sync::atomic::AtomicBool,
+    pub(crate) model_states:
+        Mutex<std::collections::HashMap<String, crate::models::SessionModelState>>,
+    pub(crate) session_openings: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     pub(crate) workspace_updates: Mutex<()>,
     pub(crate) remote_experiments: crate::remote_management::RemoteExperiments,
     pub(crate) remote_projects: Mutex<crate::remote_projects::RemoteProjects>,
@@ -127,8 +134,8 @@ pub struct HostState {
     direct_slots: Arc<tokio::sync::Semaphore>,
     #[allow(missing_docs)]
     pub agent_mode: crate::acp::AgentMode,
-    receipts: Mutex<crate::receipts::Receipts>,
-    inflight_commands: Arc<tokio::sync::Semaphore>,
+    pub(crate) receipts: Mutex<crate::receipts::Receipts>,
+    pub(crate) inflight_commands: Arc<tokio::sync::Semaphore>,
     pub(crate) image_decoders: Arc<tokio::sync::Semaphore>,
     /// Canonical loopback origin for this installation.
     pub origin: LocalOrigin,
@@ -176,7 +183,7 @@ impl HostState {
     }
 
     pub(crate) fn remote_control_transfer_enabled(&self) -> bool {
-        self.remote_experiments.control_transfer && self.agent_mode == crate::acp::AgentMode::Shared
+        false
     }
 
     pub(crate) async fn notify_remote_devices(&self) {
@@ -203,6 +210,10 @@ impl HostState {
     ) -> Result<Self, crate::journal::JournalError> {
         let directory = directory.into();
         self.journal = Mutex::new(Journal::open(&directory)?);
+        self.execution = Mutex::new(
+            crate::execution::ExecutionStore::open(&directory)
+                .map_err(|_| crate::journal::JournalError::Storage)?,
+        );
         self.receipts = Mutex::new(
             crate::receipts::Receipts::open(&directory)
                 .map_err(|_| crate::journal::JournalError::Storage)?,
@@ -313,7 +324,9 @@ impl HostState {
             .lock()
             .await
             .record_event(event, session_revision);
-        self.event_notify.notify_waiters();
+        if envelope.event_sequence > 0 {
+            self.event_notify.notify_waiters();
+        }
         envelope
     }
 
@@ -350,14 +363,33 @@ impl HostState {
         agent: Arc<AgentHandle>,
         mut events: tokio::sync::mpsc::Receiver<AgentEvent>,
     ) {
+        self.agent_reconciling.store(
+            self.agent_mode == crate::acp::AgentMode::Shared,
+            std::sync::atomic::Ordering::Release,
+        );
         {
             *self.agent.lock().await = Some(Arc::clone(&agent));
+            self.model_states.lock().await.clear();
         }
         let recovering = if self.agent_mode == crate::acp::AgentMode::Shared {
             let state = self.clone();
             let agent = agent.clone();
             Some(tokio::spawn(async move {
                 state.reconcile_shared(&agent).await;
+                state
+                    .agent_reconciling
+                    .store(false, std::sync::atomic::Ordering::Release);
+                let ids = state
+                    .session
+                    .lock()
+                    .await
+                    .sessions
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for id in ids {
+                    crate::multiwriter::drain(&state, &id);
+                }
             }))
         } else {
             None
@@ -365,7 +397,11 @@ impl HostState {
         loop {
             tokio::select! {
                 event = events.recv() => match event {
-                    Some(event) => self.absorb(event).await,
+                    Some(event) => {
+                        let exited = matches!(event, AgentEvent::Exited);
+                        self.absorb(event).await;
+                        if exited { break; }
+                    },
                     None => break,
                 },
                 () = self.shutdown_requested() => {
@@ -399,16 +435,58 @@ impl HostState {
                 .collect()
         };
         for (session_id, path) in sessions {
+            self.journal.lock().await.begin_restore(&session_id);
             match agent.load_session(&session_id, &path).await {
                 Ok(result) => {
-                    let running = result
-                        .get("_meta")
-                        .and_then(|meta| meta.get("x.ai/runningPromptId"))
-                        .and_then(serde_json::Value::as_str)
-                        .is_some();
+                    if agent.flush_events().await.is_err() {
+                        self.journal.lock().await.abandon_restore(&session_id);
+                        continue;
+                    }
+                    let running = self
+                        .journal
+                        .lock()
+                        .await
+                        .restored_running(&session_id)
+                        .unwrap_or_else(|| {
+                            result
+                                .pointer("/_meta/x.ai~1runningPromptId")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some()
+                        });
                     self.session.lock().await.set_running(&session_id, running);
+                    crate::session_models::capture_open(self, &session_id, &result).await;
+                    let restored = crate::session_catalog::rehydrate_session_async(
+                        path.clone(),
+                        session_id.clone(),
+                    )
+                    .await;
+                    self.session
+                        .lock()
+                        .await
+                        .transcript_media
+                        .remember(&session_id, &restored.images);
+                    let tasks = self
+                        .session
+                        .lock()
+                        .await
+                        .runtime
+                        .session(&session_id)
+                        .map(|runtime| runtime.snapshot_tasks(crate::now_ms()))
+                        .unwrap_or_default();
+                    self.journal.lock().await.finish_restore(
+                        crate::session_catalog::snapshot_from_rehydrate_with_runtime(
+                            &crate::session_catalog::grok_home(),
+                            Some(&path),
+                            session_id.clone(),
+                            restored,
+                            tasks,
+                        ),
+                    );
+                    self.event_notify.notify_waiters();
+                    self.replay_session_status(&session_id).await;
                 }
                 Err(_) => {
+                    self.journal.lock().await.abandon_restore(&session_id);
                     self.session.lock().await.sessions.remove(&session_id);
                     self.emit_event(
                         Event::SessionStatus {
@@ -421,7 +499,6 @@ impl HostState {
                 }
             }
         }
-        self.replay_open_sessions().await;
         self.emit_event(Event::WorkspacesChanged, None).await;
     }
 
@@ -448,6 +525,14 @@ impl HostState {
             match AgentHandle::spawn(&command) {
                 Ok((agent, events)) => match agent.initialize().await {
                     Ok(initialized) => {
+                        self.targeted_cancel_supported.store(
+                            initialized
+                                .meta
+                                .get("agentVersion")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("1.0.52"),
+                            std::sync::atomic::Ordering::Release,
+                        );
                         *self.upstream_prompt.lock().await = Some((&initialized).into());
                         self.emit_event(
                             Event::HostStatus {
@@ -459,6 +544,8 @@ impl HostState {
                         .await;
                         self.run_agent(agent, events).await;
                         *self.upstream_prompt.lock().await = None;
+                        self.targeted_cancel_supported
+                            .store(false, std::sync::atomic::Ordering::Release);
                     }
                     Err(error) => {
                         eprintln!(
@@ -578,6 +665,7 @@ impl HostState {
         let journal = self.journal.lock().await;
         let session = self.session.lock().await;
         Ok(DispatchOutcome::Workspaces {
+            observation_epoch: journal.observation_epoch(),
             workspaces: session.project_workspaces(),
             projects: session.project_projects(),
             open_sessions: session.project_sessions(),
@@ -614,6 +702,10 @@ impl HostState {
     /// leaves when the previous finishes, which is what keeps Light's queue and
     /// the agent's own from both holding the same message.
     pub(crate) fn drain_queue(self: &Arc<Self>, session_id: &str) {
+        if self.agent_mode == crate::acp::AgentMode::Shared {
+            crate::multiwriter::drain(self, session_id);
+            return;
+        }
         let state = Arc::clone(self);
         let session_id = session_id.to_owned();
         tokio::spawn(async move {
@@ -918,6 +1010,7 @@ impl HostState {
                     .await;
                 }
             }
+            crate::session_models::capture_update(self, params).await;
             if let Some((session_id, tool_call_id)) = crate::interactions::resolved(params) {
                 let mut session = self.session.lock().await;
                 let mut keys: Vec<String> = session
@@ -1039,6 +1132,9 @@ impl HostState {
     /// Fold one agent event into host state.
     async fn absorb(self: &Arc<Self>, event: AgentEvent) {
         match event {
+            AgentEvent::Barrier(sender) => {
+                let _ = sender.send(());
+            }
             AgentEvent::InteractionRequest {
                 method,
                 request_id,
@@ -1047,10 +1143,10 @@ impl HostState {
                 if let Some(pending) =
                     crate::interactions::PendingInteraction::parse(&method, request_id, &params)
                 {
-                    let key = format!(
-                        "interaction-{}",
-                        self.journal.lock().await.emitted_through() + 1
-                    );
+                    let Ok(key) = crate::pairing::random_hex() else {
+                        return;
+                    };
+                    let key = format!("interaction-{}", key.expose());
                     let event = pending.event(&key);
                     let mut session = self.session.lock().await;
                     if session.pending_interactions.len() >= 64 {
@@ -1062,7 +1158,12 @@ impl HostState {
                 }
             }
             AgentEvent::Update(params) => {
+                crate::session_models::capture_update(self, &params).await;
                 if self.agent_mode == crate::acp::AgentMode::Shared
+                    && params
+                        .pointer("/_meta/isReplay")
+                        .and_then(serde_json::Value::as_bool)
+                        != Some(true)
                     && matches!(
                         params
                             .pointer("/update/sessionUpdate")
@@ -1152,7 +1253,10 @@ impl HostState {
                     return;
                 };
 
-                let key = format!("perm-{}", self.journal.lock().await.emitted_through() + 1);
+                let Ok(key) = crate::pairing::random_hex() else {
+                    return;
+                };
+                let key = format!("perm-{}", key.expose());
                 if let Some(tool_call_id) = params
                     .pointer("/toolCall/toolCallId")
                     .or_else(|| params.pointer("/toolCall/id"))
@@ -1287,6 +1391,12 @@ impl HostState {
     #[must_use]
     pub fn new(origin: LocalOrigin) -> Self {
         Self {
+            execution: Mutex::new(crate::execution::ExecutionStore::default()),
+            drainers: std::sync::Mutex::new(crate::multiwriter::Drainers::default()),
+            targeted_cancel_supported: std::sync::atomic::AtomicBool::new(false),
+            agent_reconciling: std::sync::atomic::AtomicBool::new(false),
+            model_states: Mutex::new(std::collections::HashMap::new()),
+            session_openings: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             workspace_updates: Mutex::new(()),
             remote_experiments: crate::remote_management::RemoteExperiments::from_environment(),
             remote_projects: Mutex::new(crate::remote_projects::RemoteProjects::default()),
@@ -1796,6 +1906,7 @@ pub(crate) async fn command(
     if let Ok(probe) = serde_json::from_slice::<VersionProbe>(&body)
         && probe.protocol_version != PROTOCOL_VERSION
         && probe.protocol_version != crate::protocol::CONTENT_PROTOCOL_VERSION
+        && probe.protocol_version != crate::protocol::MULTI_WRITER_PROTOCOL_VERSION
     {
         return (
             StatusCode::CONFLICT,
@@ -1814,7 +1925,19 @@ pub(crate) async fn command(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let control_authorized = if envelope.operation.requires_control() {
+    if state.agent_mode == crate::acp::AgentMode::Shared
+        && envelope.protocol_version != crate::protocol::MULTI_WRITER_PROTOCOL_VERSION
+        && (envelope.operation.requires_control() || envelope.operation.has_side_effect())
+        && !matches!(
+            envelope.operation,
+            crate::protocol::Operation::AcknowledgeEvents { .. }
+        )
+    {
+        return command_error(&envelope.request_id, "client_upgrade_required");
+    }
+    let control_authorized = if envelope.operation.requires_control()
+        && state.agent_mode != crate::acp::AgentMode::Shared
+    {
         let lease = state.lease.lock().await;
         let epoch = envelope.controller_epoch.unwrap_or(0);
         if state.agent_mode == crate::acp::AgentMode::Shared
@@ -1861,6 +1984,116 @@ pub(crate) async fn command(
     {
         return command_error(&envelope.request_id, error);
     }
+    let durable = state.agent_mode == crate::acp::AgentMode::Shared
+        && envelope.operation.has_side_effect()
+        && !crate::multiwriter::handles(&envelope.operation)
+        && !crate::media_commands::handles(&envelope.operation);
+    if durable {
+        return durable_command(state, principal, headers, envelope).await;
+    }
+    command_authorized(state, principal, headers, envelope).await
+}
+
+async fn durable_command(
+    state: Arc<HostState>,
+    principal: String,
+    headers: HeaderMap,
+    mut envelope: CommandEnvelope,
+) -> Response {
+    let Some(public_key) = envelope.idempotency_key.clone() else {
+        return command_error(&envelope.request_id, "idempotency_key_required");
+    };
+    let key = crate::receipts::scoped_key(&principal, &public_key);
+    let Ok(_permit) = state.inflight_commands.clone().try_acquire_owned() else {
+        return command_error(&envelope.request_id, "too_many_commands");
+    };
+    {
+        let mut receipts = state.receipts.lock().await;
+        if state
+            .execution
+            .lock()
+            .await
+            .status(&principal, &public_key)
+            .is_some()
+        {
+            return command_error(&envelope.request_id, "idempotency_conflict");
+        }
+        let previous = receipts.get(&key).is_some();
+        match receipts.begin(
+            key.clone(),
+            public_key,
+            &serde_json::to_value(&envelope.operation).expect("operation serializes"),
+        ) {
+            Ok(receipt) if previous => {
+                return receipt_response(&envelope.request_id, "commandStatus", &receipt);
+            }
+            Ok(_) => {}
+            Err(error) => return command_error(&envelope.request_id, error),
+        }
+    }
+    envelope.idempotency_key = Some(key.clone());
+    let request_id = envelope.request_id.clone();
+    let response = command_authorized(state.clone(), principal, headers, envelope).await;
+    let (parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, 8 * 1024 * 1024).await else {
+        return command_error(&request_id, "completion_not_durable");
+    };
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default();
+    let error = value
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    let uncertain = error.as_deref().is_some_and(|code| {
+        matches!(
+            code,
+            "agent_failed" | "not_replayable" | "effect_failed" | "completion_not_durable"
+        )
+    }) || parts.status.is_server_error();
+    if let Err(error) =
+        state
+            .receipts
+            .lock()
+            .await
+            .finish(&key, value.get("result").cloned(), error, uncertain)
+    {
+        return command_error(&request_id, error);
+    }
+    Response::from_parts(parts, axum::body::Body::from(bytes))
+}
+
+async fn command_authorized(
+    state: Arc<HostState>,
+    principal: String,
+    headers: HeaderMap,
+    envelope: CommandEnvelope,
+) -> Response {
+    if state.agent_mode == crate::acp::AgentMode::Shared {
+        if crate::multiwriter::handles(&envelope.operation) {
+            return crate::multiwriter::command(state.clone(), &principal, &envelope).await;
+        }
+        if matches!(
+            envelope.operation,
+            crate::protocol::Operation::GetSessionModels { .. }
+                | crate::protocol::Operation::SetSessionConfiguration { .. }
+        ) {
+            let result = crate::session_models::command(&state, &envelope).await;
+            return crate::multiwriter::response(
+                &envelope,
+                result
+                    .as_ref()
+                    .map(|value| serde_json::to_value(value).expect("model response"))
+                    .map_err(crate::dispatch::DispatchError::code),
+            );
+        }
+        if matches!(
+            envelope.operation,
+            crate::protocol::Operation::CancelTurn { .. }
+                | crate::protocol::Operation::SendNow { .. }
+                | crate::protocol::Operation::SetSessionModel { .. }
+        ) {
+            return command_error(&envelope.request_id, "client_upgrade_required");
+        }
+    }
     if crate::remote_management::handles(&envelope.operation) {
         return crate::remote_management::command(
             &state,
@@ -1890,7 +2123,18 @@ pub(crate) async fn command(
         if broker.persist().is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
+        let affected = state.execution.lock().await.revoke(session_id);
         drop(broker);
+        match affected {
+            Ok(ids) => {
+                for session_id in ids {
+                    state
+                        .emit_event(Event::SessionExecutionChanged { session_id }, None)
+                        .await;
+                }
+            }
+            Err(_) => return command_error(&envelope.request_id, "queue_storage_unavailable"),
+        }
         state.session.lock().await.media.revoke(session_id);
         state.remote_connections.lock().await.revoke(session_id);
         let mut lease = state.lease.lock().await;
@@ -1903,6 +2147,14 @@ pub(crate) async fn command(
     }
 
     if let crate::protocol::Operation::GetCommandStatus { idempotency_key } = &envelope.operation {
+        if let Some(receipt) = state
+            .execution
+            .lock()
+            .await
+            .status(&principal, idempotency_key)
+        {
+            return crate::multiwriter::response(&envelope, Ok(receipt));
+        }
         let key = crate::receipts::scoped_key(&principal, idempotency_key);
         return match state.receipts.lock().await.get(&key) {
             Some(mut receipt) => {
@@ -1951,6 +2203,7 @@ pub(crate) async fn command(
                 &state.session,
                 agent.as_ref(),
                 None,
+                &state,
             )
             .await
         };
@@ -2051,6 +2304,7 @@ async fn accept_detached(
             &state.session,
             agent.as_ref(),
             Some((&state, public_key.as_str())),
+            &state,
         )
         .await;
         let failed_effect = apply_command_effects(&state, &envelope, &outcome)
@@ -2241,44 +2495,21 @@ async fn apply_command_effects(
         )
     ) {
         let session_id = addressed_session(&envelope.operation).cloned()?;
-        let restored = state.session.lock().await.pending_rehydrate.take();
-        // Parent-scoped members/workflows need the workspace cwd; resolve from
-        // the open session's enrolled workspace when present.
-        let (cwd, live_tasks) = {
-            let guard = state.session.lock().await;
-            let cwd = guard
-                .sessions
-                .get(&session_id)
-                .and_then(|live| guard.workspaces.get(&live.workspace_id))
-                .map(|ws| ws.path.clone());
-            let live_tasks = guard
-                .runtime
-                .session(&session_id)
-                .map(|rt| rt.snapshot_tasks(crate::now_ms()))
-                .unwrap_or_default();
-            (cwd, live_tasks)
-        };
-        if let Some(restored) = restored {
-            state
-                .session
-                .lock()
-                .await
-                .transcript_media
-                .remember(&session_id, &restored.images);
-            state
-                .emit_event(
-                    crate::session_catalog::snapshot_from_rehydrate_with_runtime(
-                        &crate::session_catalog::grok_home(),
-                        cwd.as_deref(),
-                        session_id.clone(),
-                        restored,
-                        live_tasks,
-                    ),
-                    None,
-                )
-                .await;
-        }
         state.replay_session_status(&session_id).await;
+    }
+    if matches!(outcome, Ok(DispatchOutcome::Closed))
+        && let Some(session_id) = addressed_session(&envelope.operation)
+    {
+        state.model_states.lock().await.remove(session_id);
+        state
+            .emit_event(
+                Event::SessionStatus {
+                    session_id: session_id.clone(),
+                    state: "closed".into(),
+                },
+                None,
+            )
+            .await;
     }
     if matches!(
         outcome,
@@ -2322,6 +2553,11 @@ async fn events(
     let Ok(connection_id) = crate::pairing::random_hex() else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
+    let multiwriter = state.agent_mode == crate::acp::AgentMode::Shared
+        && uri.query().is_some_and(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .any(|(key, value)| key == "protocolVersion" && value == "4")
+        });
     let after_sequence = uri.query().and_then(|query| {
         url::form_urlencoded::parse(query.as_bytes())
             .find(|(key, _)| key == "afterSequence")
@@ -2331,7 +2567,14 @@ async fn events(
     upgrade
         .protocols([WS_SUBPROTOCOL])
         .on_upgrade(move |socket| {
-            drive_events(socket, state, session_id, connection_id, after_sequence)
+            drive_events(
+                socket,
+                state,
+                session_id,
+                connection_id,
+                after_sequence,
+                multiwriter,
+            )
         })
 }
 
@@ -2367,6 +2610,7 @@ async fn drive_events(
     session_id: String,
     connection_secret: crate::pairing::Secret,
     after_sequence: Option<u64>,
+    multiwriter: bool,
 ) {
     let connection_id = connection_secret.expose();
     if state
@@ -2378,7 +2622,9 @@ async fn drive_events(
     {
         return;
     }
-    let acquired = {
+    let acquired = if state.agent_mode == crate::acp::AgentMode::Shared {
+        Err(crate::lease::LeaseError::Held)
+    } else {
         let mut lease = state.lease.lock().await;
         lease.acquire(&session_id, connection_id, now_ms())
     };
@@ -2404,6 +2650,7 @@ async fn drive_events(
                     serde_json::json!({
                         "protocolVersion": PROTOCOL_VERSION,
                         "eventSequence": 0,
+                        "observationEpoch": state.journal.lock().await.observation_epoch(),
                         "event": { "kind": "error", "code": "controller_held" }
                     })
                     .to_string()
@@ -2416,12 +2663,18 @@ async fn drive_events(
     };
 
     let mut last_sent = after_sequence.unwrap_or(0);
+    let observation_epoch = state.journal.lock().await.observation_epoch();
     let hello = EventEnvelope {
+        observation_epoch,
         protocol_version: PROTOCOL_VERSION,
         event_sequence: 0,
         session_revision: None,
         event: Event::HostStatus {
-            state: epoch.map_or_else(|| "watching".into(), |epoch| format!("controlling:{epoch}")),
+            state: if multiwriter {
+                "writable".into()
+            } else {
+                epoch.map_or_else(|| "watching".into(), |epoch| format!("controlling:{epoch}"))
+            },
             controller_token: (epoch.is_some() || state.remote_control_transfer_enabled())
                 .then(|| connection_id.to_owned()),
         },
@@ -2435,7 +2688,12 @@ async fn drive_events(
             state.journal.lock().await.replay_after(last_sent),
             ReplayOutcome::SnapshotRequired
         );
-    if needs_snapshot {
+    if state.agent_mode == crate::acp::AgentMode::Shared {
+        match push_snapshot(&mut socket, &state).await {
+            Ok(cursor) => last_sent = cursor,
+            Err(()) => return,
+        }
+    } else if needs_snapshot {
         last_sent = state.journal.lock().await.emitted_through();
         state.emit_event(Event::ReplayReset, None).await;
         state.replay_open_sessions().await;
@@ -2473,6 +2731,7 @@ async fn drive_events(
                 .connection_epoch(connection_id, now_ms());
             if current != epoch {
                 let status = EventEnvelope {
+                    observation_epoch,
                     protocol_version: PROTOCOL_VERSION,
                     event_sequence: 0,
                     session_revision: None,
@@ -2547,6 +2806,10 @@ async fn push_pending_events<S: Sink<Message> + Unpin>(
             // events the browser already missed.
             ReplayOutcome::SnapshotRequired => {
                 drop(journal);
+                if state.agent_mode == crate::acp::AgentMode::Shared {
+                    *last_sent = push_snapshot(socket, state).await?;
+                    return Ok(());
+                }
                 *last_sent = state.journal.lock().await.emitted_through();
                 state.emit_event(Event::ReplayReset, None).await;
                 state.replay_open_sessions().await;
@@ -2567,6 +2830,17 @@ async fn push_pending_events<S: Sink<Message> + Unpin>(
         *last_sent = envelope.event_sequence;
     }
     Ok(())
+}
+
+async fn push_snapshot<S: Sink<Message> + Unpin>(
+    socket: &mut S,
+    state: &HostState,
+) -> Result<u64, ()> {
+    let (cursor, events) = state.journal.lock().await.snapshot_frames();
+    for event in events {
+        send_event_frame(socket, &event).await?;
+    }
+    Ok(cursor)
 }
 
 async fn send_event_frame<S: Sink<Message> + Unpin>(
@@ -2659,6 +2933,7 @@ mod private_delivery_tests {
             },
         ));
         let envelope = EventEnvelope {
+            observation_epoch: 0,
             protocol_version: PROTOCOL_VERSION,
             event_sequence: 1,
             session_revision: None,
@@ -2700,6 +2975,7 @@ async fn dispatch_unlocked(
     session: &Mutex<SessionState>,
     agent: Option<&Arc<crate::acp::AgentHandle>>,
     prompt_event: Option<(&HostState, &str)>,
+    host: &HostState,
 ) -> Result<DispatchOutcome, crate::dispatch::DispatchError> {
     use crate::dispatch::DispatchError;
     use crate::journal::BeginOutcome;
@@ -2722,7 +2998,7 @@ async fn dispatch_unlocked(
     }
 
     let key = envelope.idempotency_key.clone();
-    let result = run_unlocked(envelope, journal, session, agent, prompt_event).await;
+    let result = run_unlocked(envelope, journal, session, agent, prompt_event, host).await;
 
     // Classify the outcome exactly once, while the turn is still fresh.
     if let Some(key) = key
@@ -2755,76 +3031,171 @@ async fn dispatch_unlocked(
 /// canonical path here rather than taken from the browser (light ADR 0009),
 /// and both refuse while a session is already open — so they are one function
 /// with resume as the optional half.
+struct OpeningReservation {
+    registry: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    id: String,
+}
+impl Drop for OpeningReservation {
+    fn drop(&mut self) {
+        if let Ok(mut registry) = self.registry.lock() {
+            registry.remove(&self.id);
+        }
+    }
+}
+
 async fn open_session(
     workspace_id: &str,
     resume: Option<&str>,
     session: &Mutex<SessionState>,
     agent: Option<&Arc<crate::acp::AgentHandle>>,
+    host: &HostState,
 ) -> Result<DispatchOutcome, crate::dispatch::DispatchError> {
     use crate::dispatch::DispatchError;
-
+    let reservation = resume.map(str::to_owned).unwrap_or_else(|| {
+        crate::pairing::random_hex()
+            .expect("entropy")
+            .expose()
+            .to_owned()
+    });
     let workspace = {
         let session = session.lock().await;
-        // Already live in this browser host: return success so the client can
-        // focus that tab instead of treating reopen as an error.
+        let mut openings = host.session_openings.lock().expect("opening registry");
         if let Some(id) = resume
             && session.sessions.contains_key(id)
         {
-            return Ok(crate::dispatch::DispatchOutcome::SessionCreated {
-                session_id: id.to_owned(),
+            return Ok(DispatchOutcome::SessionCreated {
+                session_id: id.into(),
             });
         }
-        if session.sessions.len() >= crate::bounds::MAX_LIVE_SESSIONS {
+        if openings.contains(&reservation) {
+            return Err(DispatchError::Refused("session_opening"));
+        }
+        if session.sessions.len() + openings.len() >= crate::bounds::MAX_LIVE_SESSIONS {
             return Err(DispatchError::TooManySessions);
         }
-        session
+        let workspace = session
             .workspaces
             .get(workspace_id)
             .ok_or(DispatchError::UnknownWorkspace)?
-            .clone()
+            .clone();
+        openings.insert(reservation.clone());
+        workspace
     };
-    let path = workspace.path.clone();
-    let agent = agent.ok_or(DispatchError::NoSession)?;
-
-    let (session_id, restored, open_result) = match resume {
-        None => {
-            let (id, result) = agent
-                .new_session(&path)
-                .await
-                .map_err(|error| map_dispatch_agent_error(&error))?;
-            (id, None, result)
-        }
-        Some(id) => {
-            let result = agent
-                .load_session(id, &path)
-                .await
-                .map_err(|error| map_dispatch_agent_error(&error))?;
-            // Rehydration is best effort by ADR 0010: a load that succeeded
-            // with no transcript on disk still opens the session.
-            let restored =
-                crate::session_catalog::rehydrate_session_async(path.clone(), id.to_owned()).await;
-            (id.to_owned(), Some(restored), result)
-        }
+    let _reservation = OpeningReservation {
+        registry: host.session_openings.clone(),
+        id: reservation,
     };
-
+    if host.agent_mode == crate::acp::AgentMode::Shared
+        && let Some(id) = resume
     {
-        let mut session = session.lock().await;
-        session.open_session(crate::dispatch::LiveSession {
-            id: session_id.clone(),
-            workspace_id: workspace.id.clone(),
-            workspace_name: workspace.display_name.clone(),
-            running: open_result
-                .get("_meta")
-                .and_then(|meta| meta.get("x.ai/runningPromptId"))
-                .and_then(serde_json::Value::as_str)
-                .is_some(),
-            queued: Vec::new(),
-            opened_at_ms: crate::now_ms(),
-        })?;
-        session.capture_review_open_result(&session_id, &open_result);
-        session.pending_rehydrate = restored;
+        host.journal.lock().await.begin_restore(id);
     }
-    Ok(DispatchOutcome::SessionCreated { session_id })
+    let result = async {
+        let agent = agent.ok_or(DispatchError::NoSession)?;
+        let (id, raw) = match resume {
+            Some(id) => (
+                id.to_owned(),
+                agent
+                    .load_session(id, &workspace.path)
+                    .await
+                    .map_err(|error| map_dispatch_agent_error(&error))?,
+            ),
+            None => agent
+                .new_session(&workspace.path)
+                .await
+                .map_err(|error| map_dispatch_agent_error(&error))?,
+        };
+        if resume.is_some() && host.agent_mode == crate::acp::AgentMode::Shared {
+            agent
+                .flush_events()
+                .await
+                .map_err(|error| map_dispatch_agent_error(&error))?;
+        }
+        let restored = if resume.is_some() {
+            Some(
+                crate::session_catalog::rehydrate_session_async(workspace.path.clone(), id.clone())
+                    .await,
+            )
+        } else {
+            None
+        };
+        let running = if host.agent_mode == crate::acp::AgentMode::Shared {
+            host.journal.lock().await.restored_running(&id)
+        } else {
+            None
+        }
+        .unwrap_or_else(|| {
+            raw.pointer("/_meta/x.ai~1runningPromptId")
+                .and_then(serde_json::Value::as_str)
+                .is_some()
+        });
+        {
+            let mut session = session.lock().await;
+            if session.workspaces.get(workspace_id) != Some(&workspace) {
+                return Err(DispatchError::UnknownWorkspace);
+            }
+            session.open_session(crate::dispatch::LiveSession {
+                id: id.clone(),
+                workspace_id: workspace.id.clone(),
+                workspace_name: workspace.display_name.clone(),
+                running,
+                queued: Vec::new(),
+                opened_at_ms: crate::now_ms(),
+            })?;
+            session.capture_review_open_result(&id, &raw);
+        }
+        crate::session_models::capture_open(host, &id, &raw).await;
+        if let Some(restored) = restored {
+            host.session
+                .lock()
+                .await
+                .transcript_media
+                .remember(&id, &restored.images);
+            let tasks = host
+                .session
+                .lock()
+                .await
+                .runtime
+                .session(&id)
+                .map(|runtime| runtime.snapshot_tasks(crate::now_ms()))
+                .unwrap_or_default();
+            let snapshot = crate::session_catalog::snapshot_from_rehydrate_with_runtime(
+                &crate::session_catalog::grok_home(),
+                Some(&workspace.path),
+                id.clone(),
+                restored,
+                tasks,
+            );
+            if host.agent_mode == crate::acp::AgentMode::Shared {
+                host.journal.lock().await.finish_restore(snapshot);
+                host.event_notify.notify_waiters();
+                host.emit_event(
+                    Event::SessionModelsChanged {
+                        session_id: id.clone(),
+                    },
+                    None,
+                )
+                .await;
+                host.emit_event(
+                    Event::SessionExecutionChanged {
+                        session_id: id.clone(),
+                    },
+                    None,
+                )
+                .await;
+            } else {
+                host.emit_event(snapshot, None).await;
+            }
+        }
+        Ok(DispatchOutcome::SessionCreated { session_id: id })
+    }
+    .await;
+    if result.is_err()
+        && let Some(id) = resume
+    {
+        host.journal.lock().await.abandon_restore(id);
+    }
+    result
 }
 
 /// Send a prompt, or hold it if the conversation is mid-turn.
@@ -3014,6 +3385,7 @@ async fn run_unlocked(
     session: &Mutex<SessionState>,
     agent: Option<&Arc<crate::acp::AgentHandle>>,
     prompt_event: Option<(&HostState, &str)>,
+    host: &HostState,
 ) -> Result<DispatchOutcome, crate::dispatch::DispatchError> {
     use crate::dispatch::DispatchError;
     use crate::protocol::Operation;
@@ -3023,6 +3395,7 @@ async fn run_unlocked(
             let journal = journal.lock().await;
             let session = session.lock().await;
             Ok(DispatchOutcome::Workspaces {
+                observation_epoch: journal.observation_epoch(),
                 workspaces: session.project_workspaces(),
                 projects: session.project_projects(),
                 open_sessions: session.project_sessions(),
@@ -3181,12 +3554,12 @@ async fn run_unlocked(
             })
         }
         Operation::CreateSession { workspace_id } => {
-            open_session(workspace_id, None, session, agent).await
+            open_session(workspace_id, None, session, agent, host).await
         }
         Operation::LoadSession {
             workspace_id,
             session_id,
-        } => open_session(workspace_id, Some(session_id), session, agent).await,
+        } => open_session(workspace_id, Some(session_id), session, agent, host).await,
         Operation::CancelTurn { session_id } => {
             session.lock().await.session(session_id)?;
             let agent = agent.ok_or(DispatchError::NoSession)?;
@@ -3196,6 +3569,21 @@ async fn run_unlocked(
                 .map_err(|error| map_dispatch_agent_error(&error))?;
             session.lock().await.interrupt_review_turn(session_id);
             Ok(DispatchOutcome::Cancelled)
+        }
+        Operation::CloseSession { session_id }
+            if host.agent_mode == crate::acp::AgentMode::Shared =>
+        {
+            let mut session = session.lock().await;
+            if session.session(session_id)?.running {
+                return Err(DispatchError::Refused("session_busy"));
+            }
+            host.execution
+                .lock()
+                .await
+                .close(session_id)
+                .map_err(DispatchError::Refused)?;
+            session.close_session(session_id)?;
+            Ok(DispatchOutcome::Closed)
         }
         Operation::AnswerInteraction {
             session_id,
@@ -3333,6 +3721,7 @@ fn run_without_begin(
         Operation::Bootstrap | Operation::ListWorkspaces => {
             // Handled above; kept for exhaustiveness.
             Ok(DispatchOutcome::Workspaces {
+                observation_epoch: journal.observation_epoch(),
                 workspaces: session.project_workspaces(),
                 projects: session.project_projects(),
                 open_sessions: session.project_sessions(),
@@ -3416,7 +3805,15 @@ fn run_without_begin(
         Operation::RevokeBrowserPairing { .. } | Operation::ForgetBrowserPairing => {
             Ok(DispatchOutcome::Acknowledged)
         }
-        Operation::GetRemoteCapabilities
+        Operation::GetSessionExecution { .. }
+        | Operation::GetSessionModels { .. }
+        | Operation::SetSessionConfiguration { .. }
+        | Operation::SetQueuePaused { .. }
+        | Operation::ClearQueuedPrompts { .. }
+        | Operation::CancelSessionTurn { .. }
+        | Operation::ReviewUncertainTurn { .. }
+        | Operation::InterruptAndEnqueue { .. }
+        | Operation::GetRemoteCapabilities
         | Operation::ReadImageChunk { .. }
         | Operation::PromptContent { .. }
         | Operation::StartImageUpload { .. }

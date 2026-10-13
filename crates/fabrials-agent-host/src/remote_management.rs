@@ -72,7 +72,15 @@ pub(crate) async fn verify_workspace(
         | Operation::ListTools {
             workspace_id: Some(workspace_id),
         } => Some(workspace_id.clone()),
-        Operation::Prompt { session_id, .. }
+        Operation::GetSessionExecution { session_id }
+        | Operation::GetSessionModels { session_id }
+        | Operation::SetSessionConfiguration { session_id, .. }
+        | Operation::SetQueuePaused { session_id, .. }
+        | Operation::ClearQueuedPrompts { session_id, .. }
+        | Operation::CancelSessionTurn { session_id, .. }
+        | Operation::ReviewUncertainTurn { session_id, .. }
+        | Operation::InterruptAndEnqueue { session_id, .. }
+        | Operation::Prompt { session_id, .. }
         | Operation::PromptContent { session_id, .. }
         | Operation::SendNow { session_id, .. }
         | Operation::GetSessionChanges { session_id, .. }
@@ -159,6 +167,11 @@ async fn dispatch(
             device_panel: flags.device_panel,
             upstream_prompt: *state.upstream_prompt.lock().await,
             content_protocol_version: crate::protocol::CONTENT_PROTOCOL_VERSION,
+            multi_writer: state.agent_mode == crate::acp::AgentMode::Shared,
+            multi_writer_protocol_version: crate::protocol::MULTI_WRITER_PROTOCOL_VERSION,
+            targeted_cancel_supported: state
+                .targeted_cancel_supported
+                .load(std::sync::atomic::Ordering::Acquire),
         }),
         Operation::ListRemoteProjects {
             directory_id,
@@ -192,6 +205,7 @@ async fn dispatch(
             let journal = state.journal.lock().await;
             let session = state.session.lock().await;
             Ok(DispatchOutcome::Workspaces {
+                observation_epoch: journal.observation_epoch(),
                 workspaces: session.project_workspaces(),
                 projects: session.project_projects(),
                 open_sessions: session.project_sessions(),

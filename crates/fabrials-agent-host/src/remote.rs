@@ -17,6 +17,7 @@ pub struct RemoteAccess {
     principal: String,
     connection: String,
     public_key: Option<[u8; 32]>,
+    protocol_version: std::sync::atomic::AtomicU32,
 }
 
 impl Drop for RemoteAccess {
@@ -66,6 +67,7 @@ impl RemoteAccess {
             principal,
             connection,
             public_key,
+            protocol_version: std::sync::atomic::AtomicU32::new(2),
         })
     }
 
@@ -135,8 +137,28 @@ impl RemoteAccess {
         self.verify().await.map_err(|_| "session_invalid")
     }
 
+    pub fn is_multiwriter(&self) -> bool {
+        self.state.agent_mode == crate::acp::AgentMode::Shared
+    }
+
+    pub async fn authorize_protocol(&self, version: u32) -> Result<(), &'static str> {
+        self.verify_access().await?;
+        if self.is_multiwriter() && version != crate::protocol::MULTI_WRITER_PROTOCOL_VERSION {
+            return Err("client_upgrade_required");
+        }
+        Ok(())
+    }
+
     pub async fn authorize_control(&self, epoch: u64) -> Result<(), &'static str> {
         self.verify_access().await?;
+        if self.is_multiwriter() {
+            return self
+                .authorize_protocol(
+                    self.protocol_version
+                        .load(std::sync::atomic::Ordering::Acquire),
+                )
+                .await;
+        }
         self.state
             .lease
             .lock()
@@ -146,12 +168,26 @@ impl RemoteAccess {
     }
 
     pub async fn connect(&self) -> Result<u64, &'static str> {
+        self.connect_version(2).await
+    }
+
+    pub async fn connect_version(&self, version: u32) -> Result<u64, &'static str> {
+        self.protocol_version
+            .store(version, std::sync::atomic::Ordering::Release);
         self.verify().await.map_err(|_| "session_invalid")?;
         self.state
             .remote_connections
             .lock()
             .await
             .register(&self.principal, &self.connection)?;
+        if self.is_multiwriter() {
+            self.state.notify_remote_devices().await;
+            return if version == 4 {
+                Ok(0)
+            } else {
+                Err("controller_held")
+            };
+        }
         let epoch = self
             .state
             .lease
@@ -182,6 +218,9 @@ impl RemoteAccess {
 
     pub async fn heartbeat(&self, epoch: u64) -> Result<(), &'static str> {
         self.verify().await.map_err(|_| "session_invalid")?;
+        if self.is_multiwriter() {
+            return Ok(());
+        }
         let mut lease = self.state.lease.lock().await;
         lease
             .authorize(&self.connection, epoch, crate::now_ms())
@@ -204,6 +243,13 @@ impl RemoteAccess {
         Ok(self.state.journal.lock().await.replay_after(after_sequence))
     }
 
+    pub async fn snapshot_frames(
+        &self,
+    ) -> Result<(u64, Vec<crate::protocol::EventEnvelope>), &'static str> {
+        self.verify_access().await?;
+        Ok(self.state.journal.lock().await.snapshot_frames())
+    }
+
     pub async fn snapshot(&self) -> Result<u64, &'static str> {
         self.verify().await.map_err(|_| "session_invalid")?;
         let before = self.state.journal.lock().await.emitted_through();
@@ -220,6 +266,7 @@ impl RemoteAccess {
             };
         }
         if envelope.operation.requires_control()
+            && !self.is_multiwriter()
             && self
                 .authorize_control(envelope.controller_epoch.unwrap_or(0))
                 .await
@@ -279,7 +326,7 @@ mod tests {
             HostState::new(
                 crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
             )
-            .with_agent_mode(AgentMode::Shared),
+            .with_agent_mode(AgentMode::Isolated),
         )
     }
 
@@ -305,6 +352,12 @@ mod tests {
             deadline_ms: None,
             operation,
         }
+    }
+
+    fn shared_command(operation: Operation, epoch: u64, key: &str) -> CommandEnvelope {
+        let mut envelope = command(operation, epoch, key);
+        envelope.protocol_version = 4;
+        envelope
     }
 
     #[tokio::test]
@@ -339,7 +392,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn consent_transfer_and_device_registry_follow_live_connections() {
+    async fn shared_devices_are_all_writers_without_transfer_requests() {
         let state = Arc::new(
             HostState::new(
                 crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
@@ -351,82 +404,32 @@ mod tests {
                 projects: false,
             }),
         );
-        let (owner, _) = pair(&state).await;
-        let (observer, paired) = pair(&state).await;
-        let same_browser =
-            RemoteAccess::authenticate(state.clone(), paired.session_token, paired.csrf_token)
-                .await
-                .unwrap();
-        let epoch = owner.connect().await.unwrap();
-        assert_eq!(observer.connect().await, Err("controller_held"));
-        assert_eq!(same_browser.connect().await, Err("controller_held"));
-        let requested = observer
-            .command(command(
-                Operation::RequestControlTransfer,
-                0,
-                "request-transfer",
-            ))
-            .await;
-        assert_eq!(requested.status, 202, "{:?}", requested.body);
-        let request_id = requested.body["result"]["request"]["requestId"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let stolen = same_browser
-            .command(command(
-                Operation::CancelControlTransfer {
-                    request_id: request_id.clone(),
-                },
-                0,
-                "stolen-cancel",
-            ))
-            .await;
-        assert_eq!(stolen.status, 422);
-        let listed = owner
-            .command(command(Operation::ListBrowserDevices, epoch, "devices"))
+        let (phone, _) = pair(&state).await;
+        let (desktop, _) = pair(&state).await;
+        phone.connect_version(4).await.unwrap();
+        desktop.connect_version(4).await.unwrap();
+        assert!(!phone.control_transfer_enabled());
+        for operation in [
+            Operation::RequestControlTransfer,
+            Operation::ApproveControlTransfer {
+                request_id: "retired".into(),
+            },
+            Operation::CancelControlTransfer {
+                request_id: "retired".into(),
+            },
+        ] {
+            let reply = phone.command(shared_command(operation, 0, "retired")).await;
+            assert_eq!(reply.status, 422);
+        }
+        let listed = desktop
+            .command(shared_command(Operation::ListBrowserDevices, 0, "devices"))
             .await;
         assert_eq!(
             listed.body["result"]["devices"].as_array().unwrap().len(),
             2
         );
-        assert_eq!(
-            listed.body["result"]["controlTransferRequests"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        let approved = owner
-            .command(command(
-                Operation::ApproveControlTransfer {
-                    request_id: request_id.clone(),
-                },
-                epoch,
-                "approve-transfer",
-            ))
-            .await;
-        assert_eq!(approved.status, 202, "{:?}", approved.body);
-        assert!(approved.body["result"].get("epoch").is_none());
-        assert!(!approved.body.to_string().contains(&observer.connection));
-        assert_eq!(owner.control_epoch().await.unwrap(), None);
-        assert_eq!(observer.control_epoch().await.unwrap(), Some(epoch + 1));
-        assert_eq!(same_browser.control_epoch().await.unwrap(), None);
-        assert!(owner.authorize_control(epoch).await.is_err());
-        assert!(same_browser.authorize_control(epoch + 1).await.is_err());
-        observer.disconnect().await;
-        assert!(observer.authorize_control(epoch + 1).await.is_err());
-        let listed = same_browser
-            .command(command(Operation::ListBrowserDevices, 0, "devices-after"))
-            .await;
-        let current = listed.body["result"]["devices"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|device| device["currentBrowser"] == true)
-            .unwrap();
-        assert_eq!(current["connectionCount"], 1);
-        assert_eq!(current["currentController"], false);
-        assert!(current["lastSeen"].is_null());
+        assert_eq!(phone.authorize_control(0).await, Ok(()));
+        assert_eq!(desktop.authorize_control(0).await, Ok(()));
     }
 
     #[cfg(unix)]
@@ -439,7 +442,7 @@ mod tests {
             HostState::new(
                 crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
             )
-            .with_agent_mode(AgentMode::Shared)
+            .with_agent_mode(AgentMode::Isolated)
             .with_remote_experiments(crate::remote_management::RemoteExperiments {
                 projects: true,
                 ..Default::default()
@@ -554,7 +557,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn simultaneous_transfer_requests_and_approvals_choose_exactly_one_controller() {
+    async fn shared_host_refuses_retired_transfer_operations() {
         let state = Arc::new(
             HostState::new(
                 crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
@@ -562,71 +565,36 @@ mod tests {
             .with_agent_mode(AgentMode::Shared)
             .with_remote_experiments(crate::remote_management::RemoteExperiments {
                 control_transfer: true,
-                ..Default::default()
+                device_panel: true,
+                projects: false,
             }),
         );
-        let (owner, _) = pair(&state).await;
-        let (b, _) = pair(&state).await;
-        let (c, _) = pair(&state).await;
-        let epoch = owner.connect().await.unwrap();
-        assert_eq!(b.connect().await, Err("controller_held"));
-        assert_eq!(c.connect().await, Err("controller_held"));
-        let (request_b, request_c) = tokio::join!(
-            b.command(command(Operation::RequestControlTransfer, 0, "request-b")),
-            c.command(command(Operation::RequestControlTransfer, 0, "request-c")),
-        );
-        assert_eq!(request_b.status, 202);
-        assert_eq!(request_c.status, 202);
-        let id_b = request_b.body["result"]["request"]["requestId"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let id_c = request_c.body["result"]["request"]["requestId"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        assert_ne!(id_b, id_c);
-        let (approve_b, approve_c) = tokio::join!(
-            owner.command(command(
-                Operation::ApproveControlTransfer { request_id: id_b },
-                epoch,
-                "approve-b"
-            )),
-            owner.command(command(
-                Operation::ApproveControlTransfer { request_id: id_c },
-                epoch,
-                "approve-c"
-            )),
-        );
+        let (phone, _) = pair(&state).await;
+        let (desktop, _) = pair(&state).await;
+        phone.connect_version(4).await.unwrap();
+        desktop.connect_version(4).await.unwrap();
+        assert!(!phone.control_transfer_enabled());
+        for operation in [
+            Operation::RequestControlTransfer,
+            Operation::ApproveControlTransfer {
+                request_id: "retired".into(),
+            },
+            Operation::CancelControlTransfer {
+                request_id: "retired".into(),
+            },
+        ] {
+            let reply = phone.command(shared_command(operation, 0, "retired")).await;
+            assert_eq!(reply.status, 422);
+        }
+        let listed = desktop
+            .command(shared_command(Operation::ListBrowserDevices, 0, "devices"))
+            .await;
         assert_eq!(
-            [&approve_b, &approve_c]
-                .iter()
-                .filter(|reply| reply.status == 202)
-                .count(),
-            1
+            listed.body["result"]["devices"].as_array().unwrap().len(),
+            2
         );
-        assert!(
-            [&approve_b, &approve_c]
-                .iter()
-                .filter(|reply| reply.status != 202)
-                .all(|reply| matches!(reply.status, 409 | 422)
-                    && reply.body["error"] == "controller_required")
-        );
-        let b_epoch = b.control_epoch().await.unwrap();
-        let c_epoch = c.control_epoch().await.unwrap();
-        assert_eq!(
-            [b_epoch, c_epoch].into_iter().flatten().collect::<Vec<_>>(),
-            vec![epoch + 1]
-        );
-        assert!(owner.authorize_control(epoch).await.is_err());
-        assert!(
-            state
-                .remote_connections
-                .lock()
-                .await
-                .requests(crate::now_ms())
-                .is_empty()
-        );
+        assert_eq!(phone.authorize_control(0).await, Ok(()));
+        assert_eq!(desktop.authorize_control(0).await, Ok(()));
     }
 
     #[tokio::test]
@@ -771,10 +739,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disconnect_preserves_shared_work_and_new_epoch_invalidates_previous() {
-        let state = state();
+    async fn disconnect_preserves_shared_work_without_an_exclusive_epoch() {
+        let state = Arc::new(
+            HostState::new(
+                crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
+            )
+            .with_agent_mode(AgentMode::Shared),
+        );
         let (access, paired) = pair(&state).await;
-        let epoch = access.connect().await.unwrap();
+        let epoch = access.connect_version(4).await.unwrap();
         state
             .journal
             .lock()
@@ -789,9 +762,9 @@ mod tests {
             RemoteAccess::authenticate(state.clone(), paired.session_token, paired.csrf_token)
                 .await
                 .unwrap();
-        let next = resumed.connect().await.unwrap();
-        assert!(next > epoch);
-        assert!(access.heartbeat(epoch).await.is_err());
+        let next = resumed.connect_version(4).await.unwrap();
+        assert_eq!(next, epoch);
+        assert!(access.heartbeat(epoch).await.is_ok());
         assert!(resumed.heartbeat(next).await.is_ok());
     }
 
@@ -837,11 +810,16 @@ mod tests {
 
     #[tokio::test]
     async fn shared_shell_shortcut_is_refused_before_an_effect_is_recorded() {
-        let state = state();
+        let state = Arc::new(
+            HostState::new(
+                crate::origin::LocalOrigin::new("0123456789abcdef0123456789abcdef", 21001).unwrap(),
+            )
+            .with_agent_mode(AgentMode::Shared),
+        );
         let (access, _) = pair(&state).await;
-        let epoch = access.connect().await.unwrap();
+        let epoch = access.connect_version(4).await.unwrap();
         let response = access
-            .command(command(
+            .command(shared_command(
                 Operation::Prompt {
                     session_id: "s".into(),
                     text: "! echo secret".into(),

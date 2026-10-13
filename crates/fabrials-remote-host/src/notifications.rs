@@ -280,11 +280,13 @@ impl Notifications {
         if access.verify_access().await.is_err() {
             return (403, json!({"error":"revoked"}));
         }
-        if body.get("protocolVersion").and_then(Value::as_u64) != Some(2)
-            || body
-                .get("requestId")
-                .and_then(Value::as_str)
-                .is_none_or(|id| !opaque(id))
+        if !matches!(
+            body.get("protocolVersion").and_then(Value::as_u64),
+            Some(2 | 4)
+        ) || body
+            .get("requestId")
+            .and_then(Value::as_str)
+            .is_none_or(|id| !opaque(id))
         {
             return (400, json!({"error":"invalid_request"}));
         }

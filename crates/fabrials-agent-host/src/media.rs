@@ -57,6 +57,45 @@ pub struct ImageDescriptor {
 }
 
 impl PromptImage {
+    pub(crate) fn normalized_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn from_normalized(
+        bytes: &[u8],
+        descriptor: &ImageDescriptor,
+    ) -> Result<Self, MediaError> {
+        if bytes.len() != descriptor.byte_length
+            || bytes.is_empty()
+            || bytes.len() > MAX_NORMALIZED_IMAGE_BYTES
+            || format!("{:x}", Sha256::digest(bytes)) != descriptor.sha256
+        {
+            return Err(MediaError::Integrity);
+        }
+        let mime_type = match descriptor.mime_type.as_str() {
+            "image/png" => "image/png",
+            "image/jpeg" => "image/jpeg",
+            _ => return Err(MediaError::Format),
+        };
+        let reader = ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .map_err(|_| MediaError::Format)?;
+        if reader
+            .into_dimensions()
+            .map_err(|_| MediaError::Dimensions)?
+            != (descriptor.width, descriptor.height)
+        {
+            return Err(MediaError::Integrity);
+        }
+        Ok(Self {
+            bytes: bytes.into(),
+            mime_type,
+            width: descriptor.width,
+            height: descriptor.height,
+            sha256: descriptor.sha256.clone(),
+        })
+    }
+
     pub fn normalize(bytes: &[u8]) -> Result<Self, MediaError> {
         if bytes.is_empty() || bytes.len() > MAX_ORIGINAL_BYTES {
             return Err(MediaError::Size);

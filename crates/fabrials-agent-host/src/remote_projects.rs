@@ -308,6 +308,9 @@ impl RemoteProjects {
         if identity(&opened)? != root.filesystem_identity {
             return Err("remote_directory_changed");
         }
+        #[cfg(windows)]
+        let root_final_path =
+            crate::win_fs::final_path(&opened).map_err(|_| "remote_directory_changed")?;
         for component in handle.relative.components() {
             let std::path::Component::Normal(name) = component else {
                 return Err("remote_directory_changed");
@@ -325,11 +328,12 @@ impl RemoteProjects {
         if identity(&opened)? != handle.identity {
             return Err("remote_directory_changed");
         }
-        Ok((
-            opened,
-            root.canonical_path.join(&handle.relative),
-            handle.clone(),
-        ))
+        #[cfg(windows)]
+        let path = crate::win_fs::confined_path(&root_final_path, &opened)
+            .map_err(|_| "remote_directory_changed")?;
+        #[cfg(not(windows))]
+        let path = root.canonical_path.join(&handle.relative);
+        Ok((opened, path, handle.clone()))
     }
 
     pub(crate) fn list(
@@ -410,6 +414,13 @@ impl RemoteProjects {
                 .open_dir(&name)
                 .map_err(|_| "remote_directory_changed")?;
             let child_identity = identity(&child)?;
+            #[cfg(windows)]
+            {
+                let parent_path =
+                    crate::win_fs::final_path(&opened).map_err(|_| "remote_directory_changed")?;
+                crate::win_fs::confined_path(&parent_path, &child)
+                    .map_err(|_| "remote_directory_changed")?;
+            }
             children.push((handle.relative.join(name), child_identity));
         }
         let new_handles = children
@@ -688,5 +699,47 @@ mod tests {
             projects.list("a", Some(id), Some(&cursor), 100).unwrap(),
             second
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn reparse_children_are_not_listed_and_replaced_handles_are_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("root");
+        let outside = directory.path().join("outside");
+        let child = root.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let junction = root.join("escape");
+        let created = std::process::Command::new("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(created.status.success(), "junction creation failed");
+        let mut projects = RemoteProjects::default();
+        projects.authorize(directory.path(), &root).unwrap();
+        let root_id = projects.list("phone", None, None, 1).unwrap().entries[0]
+            .directory_id
+            .clone();
+        let page = projects.list("phone", Some(&root_id), None, 2).unwrap();
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].label, "child");
+        let child_id = page.entries[0].directory_id.clone();
+        std::fs::rename(&child, root.join("original")).unwrap();
+        std::fs::create_dir(&child).unwrap();
+        assert_eq!(
+            projects
+                .list("phone", Some(&child_id), None, 3)
+                .unwrap_err(),
+            "remote_directory_changed"
+        );
+        assert!(projects.list("other", Some(&root_id), None, 3).is_err());
+        std::fs::remove_dir(junction).unwrap();
     }
 }

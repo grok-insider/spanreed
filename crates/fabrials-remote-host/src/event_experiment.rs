@@ -3,11 +3,18 @@ use super::*;
 use fabrials_agent_host::protocol::Event;
 
 async fn subscribe(channel: &mut TestChannel, after: u64) {
-    channel.send(json!({"id":"experiment-subscribe","method":"subscribe","body":{"afterSequence":after}})).await;
+    drop(subscribe_snapshot(channel, after).await);
+}
+
+async fn subscribe_snapshot(channel: &mut TestChannel, after: u64) -> Vec<Value> {
+    channel.send(json!({"id":"experiment-subscribe","method":"subscribe","body":{"afterSequence":after,"protocolVersion":4}})).await;
+    let mut events = Vec::new();
     loop {
-        if channel.receive().await["id"] == "experiment-subscribe" {
-            return;
+        let response = channel.receive().await;
+        if response["id"] == "experiment-subscribe" {
+            return events;
         }
+        events.push(response);
     }
 }
 
@@ -46,7 +53,7 @@ async fn notified_delivery_does_not_wait_for_fallback_tick() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn subscription_drains_already_recorded_events_without_new_notification() {
+async fn subscription_snapshots_already_recorded_events_without_new_notification() {
     let mut channel = TestChannel::with_delivery(EventDelivery::Notified).await;
     let first = channel
         .state
@@ -58,9 +65,12 @@ async fn subscription_drains_already_recorded_events_without_new_notification() 
         .await;
     tokio::time::advance(Duration::from_millis(200)).await;
     tokio::task::yield_now().await;
-    subscribe(&mut channel, first.event_sequence).await;
     let before = tokio::time::Instant::now();
-    assert_eq!(next_sequence(&mut channel).await, second.event_sequence);
+    let frames = subscribe_snapshot(&mut channel, first.event_sequence).await;
+    assert_eq!(
+        frames.last().unwrap()["event"]["eventSequence"],
+        second.event_sequence
+    );
     assert_eq!(tokio::time::Instant::now(), before);
     close(channel).await;
 }
@@ -138,10 +148,15 @@ async fn notified_revocation_closes_an_idle_unsubscribed_channel() {
 #[tokio::test(start_paused = true)]
 async fn notified_future_cursor_resets_before_sending_new_events() {
     let mut channel = TestChannel::with_delivery(EventDelivery::Notified).await;
-    subscribe(&mut channel, u64::MAX).await;
+    let frames = subscribe_snapshot(&mut channel, u64::MAX).await;
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame["event"]["event"]["kind"] == "replayReset")
+    );
     assert_eq!(
-        channel.receive().await["event"]["event"]["kind"],
-        "replayReset"
+        frames.last().unwrap()["event"]["event"]["kind"],
+        "workspacesChanged"
     );
     let next = channel
         .state
@@ -194,10 +209,15 @@ async fn notified_expired_cursor_resets_before_sending_the_next_event() {
             .emit_event(Event::WorkspacesChanged, None)
             .await;
     }
-    subscribe(&mut channel, 1).await;
+    let frames = subscribe_snapshot(&mut channel, 1).await;
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame["event"]["event"]["kind"] == "replayReset")
+    );
     assert_eq!(
-        channel.receive().await["event"]["event"]["kind"],
-        "replayReset"
+        frames.last().unwrap()["event"]["event"]["kind"],
+        "workspacesChanged"
     );
     let next = channel
         .state

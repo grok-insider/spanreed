@@ -163,6 +163,7 @@ impl DirectHost {
             host,
             directory,
             &identity.public_key,
+            &identity.web_origin,
         )?);
         let worker = publisher.clone();
         let owner = Arc::downgrade(host);

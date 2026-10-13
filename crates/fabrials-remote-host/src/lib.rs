@@ -511,6 +511,7 @@ async fn drive_channel_with_delivery(
     .await?;
     let (reply_tx, mut replies) = mpsc::channel(16);
     let permits = Arc::new(Semaphore::new(16));
+    let observation_epoch = host.journal.lock().await.observation_epoch();
     let mut subscribed = false;
     let mut control_epoch = None;
     let mut cursor = 0;
@@ -524,7 +525,7 @@ async fn drive_channel_with_delivery(
                 let current = access.control_epoch().await.map_err(str::to_owned)?;
                 if current != control_epoch {
                     let status = current.map_or_else(|| "watching".into(), |value| format!("controlling:{value}"));
-                    encrypted(&output,id,&mut channel,json!({"type":"event","event":{"protocolVersion":2,"eventSequence":0,"event":{"kind":"hostStatus","state":status}}})).await?;
+                    encrypted(&output,id,&mut channel,json!({"type":"event","event":{"protocolVersion":2,"eventSequence":0,"observationEpoch":observation_epoch,"event":{"kind":"hostStatus","state":status}}})).await?;
                     control_epoch = current;
                 }
             }
@@ -547,14 +548,14 @@ async fn drive_channel_with_delivery(
                         Method::Subscribe => {
                             cursor = request.body.get("afterSequence").and_then(Value::as_u64).ok_or("invalid_cursor")?;
                             if !subscribed {
-                                control_epoch = match access.connect().await { Ok(epoch) => Some(epoch), Err("controller_held") => None, Err(_) => return Err("revoked".into()) };
-                                let status = control_epoch.map_or_else(|| "watching".into(), |epoch| format!("controlling:{epoch}"));
-                                encrypted(&output,id,&mut channel,json!({"type":"event","event":{"protocolVersion":2,"eventSequence":0,"event":{"kind":"hostStatus","state":status}}})).await?;
+                                control_epoch = match access.connect_version(request.body.get("protocolVersion").and_then(Value::as_u64).unwrap_or(2) as u32).await { Ok(epoch) => Some(epoch), Err("controller_held") => None, Err(_) => return Err("revoked".into()) };
+                                let status = if access.is_multiwriter() && control_epoch.is_some() { "writable".into() } else { control_epoch.map_or_else(|| "watching".into(), |epoch| format!("controlling:{epoch}")) };
+                                encrypted(&output,id,&mut channel,json!({"type":"event","event":{"protocolVersion":2,"eventSequence":0,"observationEpoch":observation_epoch,"event":{"kind":"hostStatus","state":status}}})).await?;
                                 subscribed = true;
                             }
-                            if cursor == 0 {
-                                encrypted(&output,id,&mut channel,json!({"type":"event","event":{"protocolVersion":2,"eventSequence":0,"event":{"kind":"replayReset"}}})).await?;
-                                cursor = access.snapshot().await.map_err(str::to_owned)?;
+                            if cursor == 0 || access.is_multiwriter() {
+                                encrypted(&output,id,&mut channel,json!({"type":"event","event":{"protocolVersion":2,"eventSequence":0,"observationEpoch":observation_epoch,"event":{"kind":"replayReset"}}})).await?;
+                                cursor = deliver_snapshot(&access,&output,id,&mut channel).await?;
                             }
                             encrypted(&output,id,&mut channel,json!({"type":"response","id":request.id,"status":200,"body":{}})).await?;
                         }
@@ -613,6 +614,23 @@ async fn drive_channel_with_delivery(
     result
 }
 
+async fn deliver_snapshot(
+    access: &RemoteAccess,
+    output: &mpsc::Sender<Message>,
+    id: &str,
+    channel: &mut Channel,
+) -> Result<u64, String> {
+    if !access.is_multiwriter() {
+        return access.snapshot().await.map_err(str::to_owned);
+    }
+    let (cursor, events) = access.snapshot_frames().await.map_err(str::to_owned)?;
+    for event in events {
+        access.verify_access().await.map_err(str::to_owned)?;
+        encrypted(output, id, channel, json!({"type":"event","event":event})).await?;
+    }
+    Ok(cursor)
+}
+
 async fn drain_events(
     access: &RemoteAccess,
     output: &mpsc::Sender<Message>,
@@ -644,8 +662,9 @@ async fn drain_events(
             }
         }
         ReplayOutcome::SnapshotRequired => {
-            encrypted(output, id, channel, json!({"type":"event","event":{"protocolVersion":2,"eventSequence":0,"event":{"kind":"replayReset"}}})).await?;
-            *cursor = access.snapshot().await.map_err(str::to_owned)?;
+            let observation_epoch = host.journal.lock().await.observation_epoch();
+            encrypted(output, id, channel, json!({"type":"event","event":{"protocolVersion":2,"eventSequence":0,"observationEpoch":observation_epoch,"event":{"kind":"replayReset"}}})).await?;
+            *cursor = deliver_snapshot(access, output, id, channel).await?;
         }
     }
     Ok(())
@@ -684,6 +703,33 @@ async fn dispatch(
         .pointer("/operation/kind")
         .and_then(Value::as_str)
         .unwrap_or("");
+    if access.is_multiwriter()
+        && body.get("protocolVersion").and_then(Value::as_u64) != Some(4)
+        && !matches!(
+            kind,
+            "getRemoteCapabilities"
+                | "bootstrap"
+                | "getHostStatus"
+                | "listWorkspaces"
+                | "listModels"
+                | "listSessions"
+                | "getSessionInspector"
+                | "getSessionChanges"
+                | "listTools"
+                | "listContext"
+                | "listBrowserDevices"
+                | "getCommandStatus"
+                | "readImageChunk"
+                | "getNotificationStatus"
+                | "listPublications"
+                | "previewPublication"
+                | "getPublicationStatus"
+                | "previewShare"
+                | "listRemoteProjects"
+        )
+    {
+        return (409, json!({"error":"client_upgrade_required"}));
+    }
     if publications::handles(kind) {
         return match &publisher.publications {
             Some(publications) => publications.dispatch(&access, body).await,
@@ -948,95 +994,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn control_transfer_sends_each_noise_channel_only_its_own_authority() {
-        let state = Arc::new(
-            HostState::new(
-                fabrials_agent_host::origin::LocalOrigin::new(
-                    "0123456789abcdef0123456789abcdef",
-                    21001,
-                )
-                .unwrap(),
-            )
-            .with_agent_mode(fabrials_agent_host::acp::AgentMode::Shared)
-            .with_remote_experiments(
-                fabrials_agent_host::remote_management::RemoteExperiments {
-                    control_transfer: true,
-                    device_panel: true,
-                    projects: false,
-                },
-            ),
-        );
-        let mut owner = TestChannel::with_state(state.clone(), EventDelivery::Notified).await;
-        let mut observer = TestChannel::with_state(state.clone(), EventDelivery::Notified).await;
-        for (channel, expected) in [(&mut owner, "controlling:1"), (&mut observer, "watching")] {
-            channel
-                .send(json!({"id":"subscribe", "method":"subscribe", "body":{"afterSequence":0}}))
-                .await;
-            assert_eq!(channel.receive().await["event"]["event"]["state"], expected);
+    async fn shared_noise_writers_never_need_a_transfer_or_lease() {
+        let mut first = TestChannel::with_delivery(EventDelivery::Notified).await;
+        let mut second =
+            TestChannel::with_state(first.state.clone(), EventDelivery::Notified).await;
+        for channel in [&mut first, &mut second] {
+            channel.send(json!({"id":"subscribe","method":"subscribe","body":{"afterSequence":0,"protocolVersion":4}})).await;
+            let hello = channel.receive().await;
+            assert_eq!(hello["event"]["event"]["state"], "writable");
+            assert!(hello["event"]["observationEpoch"].is_u64());
             while channel.receive().await["id"] != "subscribe" {}
         }
-        observer.send(json!({"id":"request", "method":"command", "body":{"protocolVersion":2,"requestId":"request","idempotencyKey":"request","operation":{"kind":"requestControlTransfer"}}})).await;
-        let request_id = loop {
-            let reply = observer.receive().await;
-            if reply["id"] == "request" {
-                assert_eq!(reply["status"], 202, "{reply}");
-                break reply["body"]["result"]["request"]["requestId"]
-                    .as_str()
-                    .unwrap()
-                    .to_owned();
-            }
-        };
-        owner.send(json!({"id":"approve", "method":"command", "body":{"protocolVersion":2,"requestId":"approve","idempotencyKey":"approve","controllerEpoch":1,"operation":{"kind":"approveControlTransfer","requestId":request_id}}})).await;
-        let mut acknowledged = false;
-        let mut watching = false;
-        while !acknowledged || !watching {
-            let reply = owner.receive().await;
-            if reply["id"] == "approve" {
-                assert_eq!(reply["status"], 202, "{reply}");
-                acknowledged = true;
-            }
-            if reply["event"]["event"]["kind"] == "hostStatus" {
-                assert_eq!(reply["event"]["event"]["state"], "watching");
-                assert!(reply["event"]["event"].get("controllerToken").is_none());
-                watching = true;
-            }
-            assert!(!reply.to_string().contains("controlling:2"));
-        }
+        second.send(json!({"id":"transfer","method":"command","body":{"protocolVersion":4,"requestId":"transfer","idempotencyKey":"transfer","operation":{"kind":"requestControlTransfer"}}})).await;
         loop {
-            let reply = observer.receive().await;
-            if reply["event"]["event"]["kind"] == "hostStatus" {
-                assert_eq!(reply["event"]["event"]["state"], "controlling:2");
+            let reply = second.receive().await;
+            if reply["id"] == "transfer" {
+                assert_eq!(reply["status"], 422);
                 break;
             }
         }
-        owner
-            .send(json!({"id":"old-heartbeat", "method":"heartbeat", "body":{"epoch":1}}))
-            .await;
-        owner.send(json!({"id":"still-watching", "method":"command", "body":{"protocolVersion":2,"requestId":"still-watching","operation":{"kind":"bootstrap"}}})).await;
+        assert!(first.state.lease.lock().await.holder_session().is_none());
+        drop(first.input);
+        assert!(first.task.await.unwrap().is_ok());
+        second.send(json!({"id":"still-writable","method":"command","body":{"protocolVersion":4,"requestId":"still-writable","operation":{"kind":"bootstrap"}}})).await;
         loop {
-            let reply = owner.receive().await;
-            if reply["id"] == "still-watching" {
+            let reply = second.receive().await;
+            if reply["id"] == "still-writable" {
                 assert_eq!(reply["status"], 202);
                 break;
             }
         }
-        if let ReplayOutcome::Replay(events) = state.journal.lock().await.replay_after(0) {
-            assert!(events.iter().all(|envelope| !matches!(&envelope.event, fabrials_agent_host::protocol::Event::HostStatus { state, .. } if state.starts_with("controlling:"))));
-        }
-        drop(owner.input);
-        drop(observer.input);
-        assert!(owner.task.await.unwrap().is_ok());
-        assert!(observer.task.await.unwrap().is_ok());
+        drop(second.input);
+        assert!(second.task.await.unwrap().is_ok());
     }
 
     #[tokio::test]
     async fn real_noise_pairing_carries_commands_subscriptions_and_events() {
         let mut channel = TestChannel::new().await;
         channel
-            .send(json!({"id":"subscribe", "method":"subscribe", "body":{"afterSequence":0}}))
+            .send(json!({"id":"subscribe", "method":"subscribe", "body":{"afterSequence":0,"protocolVersion":4}}))
             .await;
         let hello = channel.receive().await;
-        assert_eq!(hello["event"]["event"]["state"], "controlling:1");
+        assert_eq!(hello["event"]["event"]["state"], "writable");
         loop {
             if channel.receive().await["id"] == "subscribe" {
                 break;
@@ -1123,8 +1122,8 @@ mod tests {
         let (other, _) = RemoteAccess::pair(channel.state.clone(), nonce.expose())
             .await
             .unwrap();
-        let epoch = other.connect().await.unwrap();
-        channel.send(json!({"id":"forget", "method":"command", "body":{"protocolVersion":2,"requestId":"forget","operation":{"kind":"forgetBrowserPairing"}}})).await;
+        let epoch = other.connect_version(4).await.unwrap();
+        channel.send(json!({"id":"forget", "method":"command", "body":{"protocolVersion":4,"requestId":"forget","operation":{"kind":"forgetBrowserPairing"}}})).await;
         let response = channel.receive().await;
         assert_eq!(response["type"], "response");
         assert_eq!(response["id"], "forget");
