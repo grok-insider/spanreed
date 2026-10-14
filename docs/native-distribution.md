@@ -68,3 +68,26 @@ that fails when explicit unlock is removed. Windows updater/security evidence
 is separate in [windows-updater-qualification.md](windows-updater-qualification.md).
 Actual `.deb`/NSIS installation, published musl/Windows archives, Windows apply,
 power-loss durability and full platform release qualification remain pending.
+
+## Shared engine lifetime follow-up
+
+Canonical libraries `2f5eba7f96a0ef4afc218bb9939d51631a7efa93` separate a Shared
+ACP client's Linux systemd scope from the host service. A newly started leader
+can therefore survive a host restart. An existing leader is never moved by this
+code. Failure to create the required scope fails before agent execution instead
+of falling back to an unsafe service-owned process. Outside a systemd service,
+the direct launch path is retained.
+
+Both ACP APIs share process ownership and bounded stderr draining. Isolated
+Unix cleanup covers the inherited process group; it does not contain a child
+that deliberately creates a new group. On Windows, explicit shutdown closes the
+isolated Job even while another handle reference remains alive; Shared children
+remain independent.
+
+The [receipt](evaluation/acp-lifetime-2026-10-14.json) binds all changed files to
+the synced canonical source. It records 538 host tests, strict Clippy, Linux
+service stop/restart and missing-manager trials, three caught Linux mutations,
+and the native Windows retained-reference trial with a caught mutation. The
+Windows trial ran without an active administrator role and left no synthetic
+agent process or temporary task. These source-level trials are distinct from
+the earlier installed `ce2692d` artifact and do not qualify a new installer.
