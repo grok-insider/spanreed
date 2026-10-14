@@ -95,7 +95,17 @@ async fn setup() -> (
     agent.new_session(directory.path()).await.unwrap();
     state.attach_agent(agent.clone(), events);
     tokio::time::timeout(Duration::from_secs(2), async {
-        while state.agent.lock().await.is_none() {
+        loop {
+            let attached = state.agent.lock().await.is_some();
+            let reconciled = match state.journal.lock().await.replay_after(0) {
+                fabrials_agent_host::journal::ReplayOutcome::Replay(events) => events
+                    .iter()
+                    .any(|event| matches!(event.event, Event::WorkspacesChanged)),
+                fabrials_agent_host::journal::ReplayOutcome::SnapshotRequired => false,
+            };
+            if attached && reconciled {
+                break;
+            }
             tokio::task::yield_now().await;
         }
     })
