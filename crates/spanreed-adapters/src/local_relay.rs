@@ -615,6 +615,78 @@ mod tests {
         }
     }
 
+    struct TestRelay(Mutex<LocalRelay>);
+
+    impl ConnectionHost for TestRelay {
+        fn bind(&self) -> &str {
+            "127.0.0.1:0"
+        }
+        fn ready(&self, address: SocketAddr) {
+            let mut relay = self.0.lock().unwrap();
+            relay.bind = address.to_string();
+            relay.ready(address);
+        }
+        fn log(&self, _: &str) {}
+        fn control_prefix(&self) -> routes::ControlPrefix {
+            self.0.lock().unwrap().control_prefix()
+        }
+        fn classify(&self, path: &str) -> listener::AdmissionClass {
+            self.0.lock().unwrap().classify(path)
+        }
+        fn body_reservation(
+            &self,
+            head: &listener::PreflightHead,
+            class: listener::AdmissionClass,
+        ) -> usize {
+            self.0.lock().unwrap().body_reservation(head, class)
+        }
+        fn handle(&self, stream: TcpStream, cursor: &Mutex<usize>) -> Result<(), String> {
+            self.0.lock().unwrap().handle(stream, cursor)
+        }
+    }
+
+    struct StopListener(Arc<AtomicBool>);
+
+    impl Drop for StopListener {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn response_body(response: &str) -> Vec<u8> {
+        let (headers, body) = response.split_once("\r\n\r\n").expect("response headers");
+        assert!(headers.starts_with("HTTP/1.1 200 "), "{response}");
+        let headers = headers.to_ascii_lowercase();
+        assert!(headers.lines().any(|line| line == "connection: close"));
+        assert!(
+            headers
+                .lines()
+                .any(|line| line == "transfer-encoding: chunked")
+        );
+        let mut remaining = body.as_bytes();
+        let mut decoded = Vec::new();
+        loop {
+            let end = remaining
+                .windows(2)
+                .position(|pair| pair == b"\r\n")
+                .expect("chunk size terminator");
+            let size = usize::from_str_radix(std::str::from_utf8(&remaining[..end]).unwrap(), 16)
+                .expect("chunk size");
+            remaining = &remaining[end + 2..];
+            if size == 0 {
+                assert_eq!(
+                    remaining, b"\r\n",
+                    "complete final chunk without trailing data"
+                );
+                return decoded;
+            }
+            assert!(remaining.len() >= size + 2, "complete chunk body");
+            decoded.extend_from_slice(&remaining[..size]);
+            assert_eq!(&remaining[size..size + 2], b"\r\n", "chunk terminator");
+            remaining = &remaining[size + 2..];
+        }
+    }
+
     fn check_forward(provider_id: &'static str, xai_compat: bool) {
         let forward_wait = std::time::Duration::from_secs(5);
         let upstream_token = if xai_compat {
@@ -672,13 +744,21 @@ mod tests {
         });
         let usage = Arc::new(TestUsage(Mutex::new(Vec::new())));
         relay.usage = usage.clone();
-        let inbound = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = inbound.local_addr().unwrap();
-        relay.bind = address.to_string();
-        let worker = std::thread::spawn(move || {
-            let socket = accept_within(&inbound, forward_wait);
-            relay.handle(socket, &Mutex::new(0)).unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        relay = relay.with_ready_handler(move |address| {
+            ready_tx.send(address).unwrap();
         });
+        let stop = StopListener(Arc::new(AtomicBool::new(false)));
+        let listener_stop = stop.0.clone();
+        let worker = std::thread::spawn(move || {
+            listener::serve_embedded(
+                Arc::new(TestRelay(Mutex::new(relay))),
+                listener_stop,
+                64,
+                BODY_MEMORY_LIMIT_BYTES,
+            )
+        });
+        let address = ready_rx.recv_timeout(forward_wait).expect("listener ready");
         let mut client = TcpStream::connect(address).unwrap();
         client
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
@@ -691,10 +771,18 @@ mod tests {
         };
         write!(client, "POST {path} HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer client-fixture\r\nCookie: fixture-private\r\nX-Forwarded-For: 1.2.3.4\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
         let mut response = String::new();
-        client.read_to_string(&mut response).unwrap();
-        join_within(worker, forward_wait);
+        (&mut client)
+            .take(8193)
+            .read_to_string(&mut response)
+            .unwrap();
+        assert!(response.len() < 8193, "bounded response reached EOF");
+        drop(stop);
+        join_within(worker, forward_wait).unwrap();
         join_within(upstream_worker, forward_wait);
-        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&response_body(&response)).unwrap(),
+            serde_json::json!({"model":"fixture-model","usage":{"input_tokens":2,"output_tokens":1}}),
+        );
         let records = usage.0.lock().unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(
