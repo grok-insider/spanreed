@@ -5,7 +5,7 @@
     "wasmRustflags": "--cfg getrandom_backend=\"wasm_js\"",
     "wasmTarget": "wasm32-unknown-unknown"
   },
-  "bundleSha256": "059457ec8c2a6d35a390c92ac1496bb531d43df23737175cc3d94490c749b138",
+  "bundleSha256": "30452ed2282ea3223d4a0094cb06ec2785acb3da28840f015c50edf307c46145",
   "files": {
     "assets/ibm-plex-mono-cyrillic-400-normal-BSMlKf0J.woff2": "7635422bd10ddbbcb0e0caa1154b928298f5c8319b8c00b30978d4395f4783ce",
     "assets/ibm-plex-mono-cyrillic-400-normal-CEL4l2ZJ.woff": "42da81a28bbcddda6768a25a4b3105ee291e69d5fa6c74747bc51bbc6718c538",
@@ -43,15 +43,15 @@
     "assets/ibm-plex-sans-latin-ext-wght-normal-CIII54If.woff2": "d160e20920ae4d6556518d352d3af27a74e9b0de3d8fe17b1c1044fc75aa2f81",
     "assets/ibm-plex-sans-latin-wght-normal-IvpUvPa2.woff2": "e2291e842cf5af167122a22881a740c7f2dda7716f1e8cd76680264f4a859470",
     "assets/ibm-plex-sans-vietnamese-wght-normal-Dg1JeJN0.woff2": "73e7f7b1c980416ae0c2461268b14c7cfcce0668e683dc43fbb11a82a227b9f2",
-    "assets/index-CTUrwgTE.js": "707da441f9c66ea47994540439131e57a80515594e08477c1e29b905a418df8c",
-    "assets/index-F2gpq_iE.css": "e5f5c146452011b49f85e7926b9fff3a388b85c62860182a227ea57e61fa9346",
+    "assets/index-BOTrB-6j.js": "cc090e96be79a5ddaff8a3bd1bc7ecbc97b49dee059bf971d40613a3f141f7a1",
+    "assets/index-DSWSIHcy.css": "ef55ef23f8a88e03c802d09800b794c4b4f575bad1866e88b3d0158cddd701e7",
     "crypto/f585e4ce86fe11dca440/fabrials_remote_noise.js": "973ece4d8b6e8da4ff2f33ab72e605f26cbcf8fb349434541886d15dcfadfdf4",
     "crypto/f585e4ce86fe11dca440/fabrials_remote_noise_bg.wasm": "cf2363e54a412168928a3f1eb87a016190b46441d5bb318d1bf5f4c88d1dd81d",
     "icon-192.png": "79ac730539be7d842b1909bebe93b724fda47e5d47f38b442439a170e2a326c3",
     "icon-512.png": "55e368e942acfe395dbe45ed5b35884330effd15a9b314d96b6963d7de21142b",
-    "index.html": "58577054a38ae75ba4d9ad9ad4a192796666f7680edbf70668de1c310cb2add4",
+    "index.html": "f7f6bff858ee4296974a09c1bd5991c851ec9a829af49be7dcef6b153c56dee7",
     "manifest.webmanifest": "19fd710a663ceb6bce6566943b8c4f2da67072c23d0aa7d2310f9f6cd64c4645",
-    "sw.js": "46100b3d82665cf770271b7092b17298df89e523acfc265dbc2f193e5665b79a",
+    "sw.js": "66d70bbb5a8ad99a7005177a963713bd14a828bc9c240f92f0c5d1edd5b8a096",
     "theme-init.js": "f2fa96dca0e6ae34229619c3b7509917ae43eb9056e6f77b925d1696fd43b771",
     "third-party-notices.txt": "ac43b37d00d1074a0871f12d4e95ce660d272c3ddb1fbfd155cc92dc3276922c"
   },
@@ -70,7 +70,7 @@
         "tools/remote-bindgen/Cargo.toml": "e9e212f8cc46e990ab1e5106603863598d17a02e7a240371794d3344f356db30",
         "tools/remote-bindgen/src/main.rs": "a031f5db3c41125b0d1d908ee956d99ce7608a59260ab3cb9c14f97184589648"
       },
-      "head": "9d78bcfc5a0d60f4518d78e48ecbe834e4b91877",
+      "head": "ee3060d023c5f5f34196e1ef7f439b65be9d0bb8",
       "repository": "grok-insider/fabrials-libs",
       "treeSha256": "8ac116aec1b473fb1cd99c9c26705f9b3673c8c2432cd376c9fb577e6c96f406"
     },
@@ -119,7 +119,7 @@
         "apps/web/src/RelayRoot.test.tsx": "6dee8a55c842b43ae53e47cff6b9c45e4716f309422033c407891ac07497f240",
         "apps/web/src/RelayRoot.tsx": "c0a431c54ef6e7e6615f3b78d65d4a0b791930098f62f083a7e6221c6a9e8f58",
         "apps/web/src/RemoteRoot.test.tsx": "72b3bced0cded74077fc9da63854897e4b142d6dfafd8914958486a8a039a9e9",
-        "apps/web/src/RemoteRoot.tsx": "b237f90d2d8a659cdf31e84d10d08b1581b7a26ab61bf3ebf7a812c3faa32225",
+        "apps/web/src/RemoteRoot.tsx": "52cf7e3d74695477c33baec3c64387490c9d968d64dc1ad84372440c0ec48b8d",
         "apps/web/src/components/ApplicationLayout.test.tsx": "3ca1db665f8fe076b6f764365094b56921418f2fa1aa48ee4b526159c95c5331",
         "apps/web/src/components/ApplicationLayout.tsx": "f9cde96d6d5661c383bfbb7bb17585312c8b53af5a974c4ce1062649c10afe80",
         "apps/web/src/components/CommandReceiptNotice.test.tsx": "4486bca5788f6aca6166393f2c64c0cd8a7551f72e43a5d01319dede7daa9a92",
@@ -314,10 +314,13 @@
         "scripts/prepare-public.mjs": "a40e82510348a1d5c03e3897a3169091bea2dc7b807945eb3f25da6c5650fe82",
         "scripts/prepare-public.test.mjs": "d8a0bd3adf24a3df1937170c0bc06efb4c0742e9cd19e79f8be88c823ed6a9ae",
         "scripts/probe-acp-capabilities.py": "4acef8c4c7e90353412c5fd47d4fe9594faf285a34ff599c50fd60df3fb91db4",
+        "scripts/qa/direct-multihost.ts": "dfd8d9118d9340b72d18b716f33a8762110723f188b2f39091df3dc2fa278bc1",
         "scripts/qa/qualify-acp-runtime.py": "190140642d1434bd1d356ec8241598f198f18c9ea55de630c2b4a801c8f14f9c",
+        "scripts/qa/qualify-live-pairing.mjs": "f010e1af8c38d29918636f1c767334228b02578136555314bda97011daf3d33d",
+        "scripts/qa/qualify-terminal-continuity.ts": "a285291da6ec7918dbc97ae31d71eb2b162c7d1c18955fbc09e36aa4448e4fd7",
         "scripts/qualify-acp-vision.py": "e44a274041b0d9f90e67e6c28d71656e94f7d52560607c65039563852652ab01",
         "scripts/qualify-coolify-http.py": "b93492b7aa9b83c074e1ff5438a147efb0805dc497be0d29703deca08a3d0249",
-        "scripts/qualify-direct-browser.ts": "6ae09b3d8d9f4097eab675156f0c1281438792f4e35238f8e16adabb7f973e85",
+        "scripts/qualify-direct-browser.ts": "8c01e8de00117d2aaf96978d79aed82675fa549ca7398bda47287ba5427e6216",
         "scripts/qualify-draft-recovery.ts": "e178b325e5a5d479dfad0bce77cf80aecfaff4e7f76af630b2853c82a84ba47e",
         "scripts/qualify-managed-browser.ts": "f6b314017c32915d246b77a3d8f2876a627fcf87f461e523ccb7c2ef5b1b89cd",
         "scripts/qualify-managed-extras.ts": "1257a7b193ccd2a47e6449cf8b807064f16c93ae1289179f3c097d785ab47153",
@@ -340,9 +343,9 @@
         "scripts/wasm-notices.test.py": "ac15f36de82b8611faea02cc4c6782fcbcb7780943b35bc960fa89f355cbbae6",
         "scripts/worker-manifest.mjs": "3b150f462ac741fadc027b73d722fa592642a6f52e3359647a16a2a7f6548d26"
       },
-      "head": "00393e13e45b7dfbbfcc9844b46d758f2a582486",
+      "head": "abe4f35895aacda102a09c3b50475379febf3b6c",
       "repository": "grok-insider/grok-desktop-portable",
-      "treeSha256": "e62347dff5d7ed33523730986b297c41f6914c89f61d219c539e93ace4b4630b"
+      "treeSha256": "4d1c95e331ed1416da2d1c31575680062cd43e68c95f8c63fb84a1fc00138970"
     }
   }
 }
