@@ -82,6 +82,7 @@ impl Candidate {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
             .map_err(|error| format!("persist update candidate: {error}"))?;
+        drop(file);
         #[cfg(windows)]
         fabrials_agent_host::win_acl::set_owner_only(&candidate.staged)
             .map_err(|error| format!("secure update candidate: {error}"))?;
@@ -250,6 +251,7 @@ pub(super) fn version_probe(path: &Path, version: &str, timeout: Duration) -> Re
 
 #[cfg(not(windows))]
 pub(super) fn version_probe(path: &Path, version: &str, timeout: Duration) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
     let mut command = Command::new(path);
     command
         .arg("--version")
@@ -261,10 +263,29 @@ pub(super) fn version_probe(path: &Path, version: &str, timeout: Duration) -> Re
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let child = command
-        .spawn()
-        .map_err(|error| format!("start candidate version check: {error}"))?;
+    let child = loop {
+        if Instant::now() >= deadline {
+            return Err("candidate version check timed out".into());
+        }
+        match command.spawn() {
+            Ok(child) => break child,
+            #[cfg(target_os = "linux")]
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if !remaining.is_zero() {
+                    std::thread::sleep(remaining.min(Duration::from_millis(10)));
+                }
+                if Instant::now() >= deadline {
+                    return Err("candidate version check timed out while executable is busy".into());
+                }
+            }
+            Err(error) => return Err(format!("start candidate version check: {error}")),
+        }
+    };
     let mut guard = VersionProcess(child);
+    if Instant::now() >= deadline {
+        return Err("candidate version check timed out".into());
+    }
     let stdout = guard
         .0
         .stdout
@@ -276,7 +297,6 @@ pub(super) fn version_probe(path: &Path, version: &str, timeout: Duration) -> Re
         let result = stdout.take(4097).read_to_end(&mut output).map(|_| output);
         let _ = send.send(result);
     });
-    let deadline = Instant::now() + timeout;
     let status = loop {
         match guard.0.try_wait() {
             Ok(Some(status)) => break status,
@@ -522,13 +542,15 @@ mod tests {
         let fixture = Fixture::new();
         let destination = fixture.destination();
         fs::write(&destination, b"previous").unwrap();
-        assert!(
+        assert_eq!(
             Candidate::prepare(
                 &destination,
                 b"#!/bin/sh\nprintf 'spanreed 1.2.3\\n'\n",
                 "1.2.4"
             )
-            .is_err()
+            .err()
+            .unwrap(),
+            "candidate version differs from the selected release"
         );
         assert_eq!(fs::read(&destination).unwrap(), b"previous");
         assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 1);
@@ -541,6 +563,95 @@ mod tests {
         .install("1.2.4")
         .unwrap();
         version_probe(&destination, "1.2.4", Duration::from_secs(1)).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn version_probe_waits_for_an_inherited_cloexec_writer() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+
+        struct ForkedWriter(libc::pid_t);
+        impl Drop for ForkedWriter {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::kill(self.0, libc::SIGKILL);
+                    libc::waitpid(self.0, std::ptr::null_mut(), 0);
+                }
+            }
+        }
+
+        let fixture = Fixture::new();
+        let candidate = Candidate::stage(
+            &fixture.destination(),
+            b"#!/bin/sh\nprintf 'spanreed 1.2.4\\n'\n",
+        )
+        .unwrap();
+        let writer = OpenOptions::new()
+            .write(true)
+            .open(&candidate.staged)
+            .unwrap();
+        assert_ne!(
+            unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
+            0
+        );
+        let (mut release, hold) = UnixStream::pair().unwrap();
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0);
+        if pid == 0 {
+            unsafe {
+                libc::close(release.as_raw_fd());
+                let mut byte = 0_u8;
+                libc::read(hold.as_raw_fd(), (&mut byte as *mut u8).cast(), 1);
+                libc::_exit(0);
+            }
+        }
+        let _child = ForkedWriter(pid);
+        drop(hold);
+        drop(writer);
+        assert_eq!(
+            Command::new(&candidate.staged)
+                .stdout(Stdio::null())
+                .status()
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::ETXTBSY)
+        );
+        let closer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(75));
+            release.write_all(&[1]).unwrap();
+        });
+        let result = version_probe(&candidate.staged, "1.2.4", Duration::from_secs(1));
+        closer.join().unwrap();
+        result.unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn version_probe_bounds_busy_writers_and_preserves_permanent_errors() {
+        let fixture = Fixture::new();
+        let candidate = Candidate::stage(
+            &fixture.destination(),
+            b"#!/bin/sh\nprintf 'spanreed 1.2.4\\n'\n",
+        )
+        .unwrap();
+        let writer = OpenOptions::new()
+            .write(true)
+            .open(&candidate.staged)
+            .unwrap();
+        let started = Instant::now();
+        let error =
+            version_probe(&candidate.staged, "1.2.4", Duration::from_millis(100)).unwrap_err();
+        assert_eq!(
+            error,
+            "candidate version check timed out while executable is busy"
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(writer);
+        let error =
+            version_probe(&fixture.0.join("absent"), "1.2.4", Duration::from_secs(1)).unwrap_err();
+        assert!(error.starts_with("start candidate version check:"));
+        assert!(!error.contains("timed out"));
     }
 
     #[cfg(unix)]
