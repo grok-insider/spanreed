@@ -232,7 +232,7 @@ def generate(args):
     command = ['cargo', 'metadata', '--locked', '--format-version=1', '--manifest-path', str(manifest), '--filter-platform', args.target]
     if args.features:
         command += ['--features', args.features]
-    metadata = json.loads(subprocess.check_output(command, text=True))
+    metadata = json.loads(subprocess.check_output(command, encoding='utf-8'))
     packages = closure(metadata, args.package)
     locked = {(p['name'], p['version']): p for p in lock['package'] if p.get('source') == 'registry+https://github.com/rust-lang/crates.io-index'}
     out = Path(args.output)
@@ -277,7 +277,7 @@ def generate(args):
         sections.extend((identity, path, content) for path, content in notices)
         shutil.copyfile(archive, sources / filename)
         entries.append({'name': name, 'version': version, 'license': package['license'], 'source': 'crate-sources/' + filename, 'sha256': digest, 'noticePaths': [p for p, _ in notices], 'supplemental': supplemental})
-    rustc = subprocess.check_output(['rustc', '--version'], text=True).strip()
+    rustc = subprocess.check_output(['rustc', '--version'], encoding='utf-8').strip()
     runtime, runtime_provenance = toolchain_notices(rustc, args.target, args.rust_notices, getattr(args, 'rust_source_archive', None))
     content, index = render(sections + runtime)
     (out / 'THIRD-PARTY-NOTICES.txt').write_bytes(content)
@@ -296,7 +296,7 @@ def verify(output, lock_path, expected_packages=None):
         command = ['cargo', 'metadata', '--locked', '--format-version=1', '--manifest-path', str(Path(lock_path).parent / 'Cargo.toml'), '--filter-platform', descriptor['target']]
         if descriptor['features']:
             command += ['--features', ','.join(descriptor['features'])]
-        expected_packages = closure(json.loads(subprocess.check_output(command, text=True)), descriptor['package'])
+        expected_packages = closure(json.loads(subprocess.check_output(command, encoding='utf-8')), descriptor['package'])
     expected = {(p['name'], p['version'], p['license'], p.get('source') is None) for p in expected_packages}
     actual_packages = {(p['name'], p['version'], p['license'], p['source'] == 'release-corresponding-source') for p in descriptor['packages']}
     require(expected == actual_packages, 'Native dependency closure differs from selected target/features')

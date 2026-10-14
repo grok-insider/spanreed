@@ -1,6 +1,9 @@
 import importlib.util
+import argparse
 import io
 import json
+import subprocess
+import sys
 from pathlib import Path
 import tarfile
 import tempfile
@@ -14,6 +17,50 @@ spec.loader.exec_module(notices)
 
 
 class NativeNoticesTests(unittest.TestCase):
+    def test_cargo_utf8_is_independent_of_windows_locale_and_preserves_original_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / 'Cargo.toml'
+            manifest.write_bytes(b'[package]\nname="fixture"\nversion="1.0.0"\n')
+            lock = root / 'Cargo.lock'
+            lock.write_bytes(b'version=4\n[[package]]\nname="fixture"\nversion="1.0.0"\n')
+            metadata = {'packages': [{'id': 'fixture', 'name': 'fixture', 'version': '1.0.0', 'license': 'MIT', 'source': None, 'authors': ['Łukasz']}], 'resolve': {'nodes': [{'id': 'fixture', 'deps': []}]}}
+            metadata_bytes = json.dumps(metadata, ensure_ascii=False).encode('utf-8')
+            original = 'Copyright Łukasz\r\nOriginal notice\n'.encode('utf-8')
+            archive_path = root / 'rust.tar.gz'
+            with tarfile.open(archive_path, 'w:gz') as archive:
+                files = {name: original for name in ['LICENSE-MIT', 'LICENSE-APACHE', 'COPYRIGHT', 'LICENSES/Unicode-3.0.txt', 'library/compiler-builtins/LICENSE.txt', 'library/compiler-builtins/libm/LICENSE.txt']}
+                files['version'] = b'1.2.3 (abcdef123 2026-01-01)\n'
+                for name, data in files.items():
+                    member = tarfile.TarInfo('rustc-1.2.3-src/' + name)
+                    member.size = len(data)
+                    archive.addfile(member, io.BytesIO(data))
+            archive_hash = notices.sha(archive_path.read_bytes())
+            args = argparse.Namespace(manifest=str(manifest), package='fixture', target='x86_64-pc-windows-msvc', output=str(root / 'output'), features='', cargo_home=str(root), rust_notices=None, rust_source_archive=str(archive_path))
+            actual_output = subprocess.check_output
+            def emitted(data):
+                return [sys.executable, '-c', f'import sys; sys.stdout.buffer.write({data!r})']
+            def command_output(command, **options):
+                data = metadata_bytes if command[0] == 'cargo' else b'rustc 1.2.3 (abcdef123 2026-01-01)\n'
+                return actual_output(emitted(data), **options)
+            with patch.object(subprocess, '_text_encoding', return_value='cp1252'):
+                with self.assertRaises(UnicodeDecodeError):
+                    actual_output(emitted(metadata_bytes), text=True)
+                with patch.object(notices.subprocess, 'check_output', side_effect=command_output):
+                    notices.generate(args)
+                    inventory = notices.verify(args.output, lock)
+                    content = (Path(args.output) / 'THIRD-PARTY-NOTICES.txt').read_bytes()
+                    for section in inventory['sections']:
+                        data = content[section['offset']:section['offset'] + section['bytes']]
+                        self.assertEqual(data, original)
+                        self.assertEqual(notices.sha(data), section['sha256'])
+                    metadata_bytes = b'\xff'
+                    with self.assertRaises(UnicodeDecodeError):
+                        notices.generate(args)
+                    with self.assertRaises(UnicodeDecodeError):
+                        notices.verify(args.output, lock)
+            self.assertEqual(notices.sha(archive_path.read_bytes()), archive_hash)
+
     def test_original_rust_source_identity_and_nested_bytes_are_verified(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / 'rust.tar.gz'

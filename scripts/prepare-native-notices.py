@@ -10,7 +10,7 @@ import urllib.request
 
 
 def prepare(args):
-    rustc = subprocess.check_output(['rustc', '--version'], text=True).strip()
+    rustc = subprocess.check_output(['rustc', '--version'], encoding='utf-8').strip()
     version = re.fullmatch(r'rustc (\d+\.\d+\.\d+) \([^)]+\)(?: \(built from a source tarball\))?', rustc)
     if version is None:
         raise ValueError('Unsupported distribution toolchain')
