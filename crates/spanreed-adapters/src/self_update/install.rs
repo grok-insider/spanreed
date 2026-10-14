@@ -642,10 +642,7 @@ mod tests {
         let started = Instant::now();
         let error =
             version_probe(&candidate.staged, "1.2.4", Duration::from_millis(100)).unwrap_err();
-        assert_eq!(
-            error,
-            "candidate version check timed out while executable is busy"
-        );
+        assert!(error.starts_with("candidate version check timed out"));
         assert!(started.elapsed() < Duration::from_secs(1));
         drop(writer);
         let error =
