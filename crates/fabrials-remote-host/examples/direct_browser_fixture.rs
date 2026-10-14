@@ -29,6 +29,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let web_origin = std::env::var("DIRECT_BROWSER_QA_WEB_ORIGIN")
         .unwrap_or_else(|_| fabrials_agent_host::origin::PRODUCTION_WEB_ORIGIN.into());
     fabrials_agent_host::origin::validate_hosted_web_origin(&web_origin)?;
+    let endpoint = std::env::var("DIRECT_BROWSER_QA_ENDPOINT")
+        .unwrap_or_else(|_| "https://direct-fixture.test".into());
+    let label = std::env::var("DIRECT_BROWSER_QA_LABEL")
+        .unwrap_or_else(|_| "Synthetic direct QA - no Grok process".into());
+    let marker = std::env::var("DIRECT_BROWSER_QA_MARKER")
+        .unwrap_or_else(|_| "Synthetic direct connection QA. No Grok process is running.".into());
     let directory = PathBuf::from(std::env::var("DIRECT_BROWSER_QA_DIRECTORY")?);
     ensure_private_directory(&directory)?;
     let grok_home = directory.join("synthetic-grok");
@@ -36,12 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("an isolated synthetic GROK_HOME is required".into());
     }
     let identity = fabrials_agent_host::state::load_or_create(&directory)?;
-    let direct = prepare_for_web_origin(
-        &directory,
-        &identity.install_id,
-        "https://direct-fixture.test",
-        &web_origin,
-    )?;
+    let direct = prepare_for_web_origin(&directory, &identity.install_id, &endpoint, &web_origin)?;
     let host_key = direct.public_key.clone();
     let host = Arc::new(
         HostState::new(identity.origin()?)
@@ -69,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "summary.json",
         &json!({"info":{"id":"synthetic-direct-session","cwd":workspace},"session_summary":"Synthetic direct QA - no Grok process","updated_at":"2026-10-13T00:00:00Z","num_messages":2,"session_kind":"conversation"}),
     )?;
-    let updates = [("user_message_chunk", "Synthetic direct connection QA. No Grok process is running."), ("agent_message_chunk", "This is synthetic fixture history, not a model response.")].into_iter().map(|(kind,text)| json!({"params":{"sessionId":"synthetic-direct-session","update":{"sessionUpdate":kind,"content":{"type":"text","text":text}}}}).to_string()).collect::<Vec<_>>().join("\n") + "\n";
+    let updates = [("user_message_chunk", marker.as_str()), ("agent_message_chunk", "This is synthetic fixture history, not a model response.")].into_iter().map(|(kind,text)| json!({"params":{"sessionId":"synthetic-direct-session","update":{"sessionUpdate":kind,"content":{"type":"text","text":text}}}}).to_string()).collect::<Vec<_>>().join("\n") + "\n";
     std::fs::write(transcript.join("updates.jsonl"), updates)?;
     host.session.lock().await.open_session(LiveSession {
         id: "synthetic-direct-session".into(),
@@ -139,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     write_private_json(
         &directory,
         "ready.json",
-        &json!({"port":host.origin.port(),"pairing":{"endpoint":"https://direct-fixture.test","installationId":identity.install_id,"hostPublicKey":host_key,"nonce":nonce.expose(),"label":"Synthetic direct QA - no Grok process"}}),
+        &json!({"port":host.origin.port(),"pairing":{"endpoint":endpoint,"installationId":identity.install_id,"hostPublicKey":host_key,"nonce":nonce.expose(),"label":label}}),
     )?;
     let serving = tokio::spawn(fabrials_agent_host::server::serve(listeners, host.clone()));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1800);
@@ -154,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             write_private_json(
                 &directory,
                 "pair-next.json",
-                &json!({"endpoint":"https://direct-fixture.test","installationId":identity.install_id,"hostPublicKey":host_key,"nonce":nonce.expose(),"label":"Synthetic second client"}),
+                &json!({"endpoint":endpoint,"installationId":identity.install_id,"hostPublicKey":host_key,"nonce":nonce.expose(),"label":label}),
             )?;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
