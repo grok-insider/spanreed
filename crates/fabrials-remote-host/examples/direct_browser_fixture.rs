@@ -108,6 +108,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         command
             .env
             .push(("FAKE_MULTIWRITER_CATALOGUE".into(), "1".into()));
+        if std::env::var("DIRECT_BROWSER_QA_IMAGES").as_deref() == Ok("1") {
+            command
+                .env
+                .push(("FAKE_MULTIWRITER_IMAGES".into(), "1".into()));
+        }
         let (agent, events) = fabrials_agent_host::acp::AgentHandle::spawn(&command)?;
         agent.initialize().await?;
         let before = host.journal.lock().await.emitted_through();

@@ -21,6 +21,7 @@ fn main() {
     let mut accepted = Vec::<Value>::new();
     let mut created = 0u64;
     let catalogue = std::env::var("FAKE_MULTIWRITER_CATALOGUE").as_deref() == Ok("1");
+    let images = std::env::var("FAKE_MULTIWRITER_IMAGES").as_deref() == Ok("1");
     let mut models = BTreeMap::<String, (String, String)>::new();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else {
@@ -35,7 +36,7 @@ fn main() {
         match message["method"].as_str().unwrap_or("") {
             "initialize" => reply(
                 id,
-                json!({"protocolVersion":1,"agentCapabilities":{"loadSession":true},"authMethods":[],"_meta":{"agentVersion":"fake-multiwriter"}}),
+                json!({"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":images}},"authMethods":[],"_meta":{"agentVersion":"fake-multiwriter"}}),
             ),
             "session/load" => {
                 if session == "history" {
