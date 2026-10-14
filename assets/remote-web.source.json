@@ -70,7 +70,7 @@
         "tools/remote-bindgen/Cargo.toml": "e9e212f8cc46e990ab1e5106603863598d17a02e7a240371794d3344f356db30",
         "tools/remote-bindgen/src/main.rs": "a031f5db3c41125b0d1d908ee956d99ce7608a59260ab3cb9c14f97184589648"
       },
-      "head": "6ae91bdca8fa9fcdae6971618363cb976d410087",
+      "head": "2f5eba7f96a0ef4afc218bb9939d51631a7efa93",
       "repository": "grok-insider/fabrials-libs",
       "treeSha256": "8ac116aec1b473fb1cd99c9c26705f9b3673c8c2432cd376c9fb577e6c96f406"
     },
@@ -340,7 +340,7 @@
         "scripts/wasm-notices.test.py": "ac15f36de82b8611faea02cc4c6782fcbcb7780943b35bc960fa89f355cbbae6",
         "scripts/worker-manifest.mjs": "3b150f462ac741fadc027b73d722fa592642a6f52e3359647a16a2a7f6548d26"
       },
-      "head": "5bdcf17b493a25feb7101fba33fbde8a8a145713",
+      "head": "4e96874a3e03f98d26cdbaa3dbb31ffa614b2af3",
       "repository": "grok-insider/grok-desktop-portable",
       "treeSha256": "eaf6205f6c0812aadb6b5e673a8a9a878d05ee41d83e2982a49da052192cf405"
     }
