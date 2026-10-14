@@ -46,6 +46,9 @@ impl Snapshots {
             messages,
             tools,
             background_tasks: live_tasks,
+            omitted_messages,
+            omitted_tools,
+            history_truncated,
             ..
         }) = self.sessions.get(session_id)
         else {
@@ -65,6 +68,9 @@ impl Snapshots {
             } else {
                 live_tasks.clone()
             },
+            omitted_messages: *omitted_messages,
+            omitted_tools: *omitted_tools,
+            history_truncated: *history_truncated,
         }
     }
 
@@ -143,7 +149,10 @@ impl Snapshots {
                 detail,
             } => {
                 if let Event::SessionSnapshot {
-                    messages, tools, ..
+                    messages,
+                    tools,
+                    omitted_tools,
+                    ..
                 } = self.session(session_id)
                 {
                     if !tools.iter().any(|tool| tool.tool_call_id == *tool_call_id) {
@@ -161,6 +170,7 @@ impl Snapshots {
                         });
                         if tools.len() > 128 {
                             tools.remove(0);
+                            *omitted_tools = omitted_tools.saturating_add(1);
                         }
                     }
                 }
@@ -281,6 +291,9 @@ impl Snapshots {
                 members: Vec::new(),
                 workflows: Vec::new(),
                 background_tasks: Vec::new(),
+                omitted_messages: 0,
+                omitted_tools: 0,
+                history_truncated: false,
             })
     }
 
@@ -293,7 +306,11 @@ impl Snapshots {
         new: bool,
     ) {
         if let Event::SessionSnapshot {
-            messages, tools, ..
+            messages,
+            tools,
+            omitted_messages,
+            history_truncated,
+            ..
         } = self.session(id)
         {
             let seq = next_seq(messages, tools);
@@ -325,9 +342,11 @@ impl Snapshots {
                         crate::bounds::MAX_REHYDRATE_CHARS,
                     )
                     .0;
+                    *history_truncated = true;
                     break;
                 }
                 messages.remove(0);
+                *omitted_messages = omitted_messages.saturating_add(1);
             }
         }
     }
@@ -431,6 +450,115 @@ mod tests {
         });
         assert_eq!(snapshots.pending.len(), 1);
         assert!(snapshots.pending.contains_key(&("b".into(), "same".into())));
+    }
+
+    #[test]
+    fn a_bounded_window_counts_the_messages_and_tools_it_leaves_out() {
+        let mut snapshots = Snapshots::default();
+        for index in 0..600 {
+            snapshots.absorb(&Event::PromptSent {
+                session_id: "s".into(),
+                text: format!("q{index}"),
+                images: vec![],
+                idempotency_key: None,
+            });
+            snapshots.absorb(&Event::MessageDelta {
+                session_id: "s".into(),
+                text: format!("a{index}"),
+            });
+        }
+        for index in 0..130 {
+            snapshots.absorb(&Event::ToolStart {
+                session_id: "s".into(),
+                tool_call_id: format!("t{index}"),
+                name: "read".into(),
+                action: "read".into(),
+                read_only: true,
+                provider: None,
+                detail: None,
+            });
+        }
+        let Some(event) = snapshots.current("s") else {
+            panic!("snapshot");
+        };
+        let Event::SessionSnapshot {
+            messages,
+            tools,
+            omitted_messages,
+            omitted_tools,
+            history_truncated,
+            ..
+        } = &event
+        else {
+            panic!("snapshot");
+        };
+        assert_eq!(messages.len(), 512);
+        assert_eq!(*omitted_messages, 688);
+        assert_eq!(messages[0].text, "q344");
+        assert_eq!(tools.len(), 128);
+        assert_eq!(*omitted_tools, 2);
+        assert!(!history_truncated);
+        let wire = serde_json::to_value(&event).expect("serializes");
+        assert_eq!(wire["omittedMessages"], 688);
+        assert_eq!(wire["omittedTools"], 2);
+        assert!(wire.get("historyTruncated").is_none());
+        let restored = snapshots.restore(Event::SessionSnapshot {
+            session_id: "s".into(),
+            messages: vec![],
+            tools: vec![],
+            members: vec![],
+            workflows: vec![],
+            background_tasks: vec![],
+            omitted_messages: 0,
+            omitted_tools: 0,
+            history_truncated: false,
+        });
+        assert!(matches!(
+            restored,
+            Event::SessionSnapshot {
+                omitted_messages: 688,
+                omitted_tools: 2,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_complete_snapshot_keeps_the_previous_wire_shape() {
+        let mut snapshots = Snapshots::default();
+        snapshots.absorb(&Event::MessageDelta {
+            session_id: "s".into(),
+            text: "answer".into(),
+        });
+        let wire =
+            serde_json::to_value(snapshots.current("s").expect("snapshot")).expect("serializes");
+        for field in ["omittedMessages", "omittedTools", "historyTruncated"] {
+            assert!(
+                wire.get(field).is_none(),
+                "{field} must stay off the wire when nothing was left out"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_message_cut_to_the_text_bound_marks_the_history_truncated() {
+        let mut snapshots = Snapshots::default();
+        snapshots.absorb(&Event::MessageDelta {
+            session_id: "s".into(),
+            text: "x".repeat(crate::bounds::MAX_REHYDRATE_CHARS + 10),
+        });
+        let Some(Event::SessionSnapshot {
+            messages,
+            omitted_messages,
+            history_truncated,
+            ..
+        }) = snapshots.current("s")
+        else {
+            panic!("snapshot");
+        };
+        assert_eq!(messages.len(), 1);
+        assert_eq!(omitted_messages, 0);
+        assert!(history_truncated);
     }
 
     #[test]

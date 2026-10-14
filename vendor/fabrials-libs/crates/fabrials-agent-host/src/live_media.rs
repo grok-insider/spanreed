@@ -191,6 +191,9 @@ mod tests {
             members: vec![],
             workflows: vec![],
             background_tasks: vec![],
+            omitted_messages: 0,
+            omitted_tools: 0,
+            history_truncated: false,
         });
         let (_, frames) = journal.snapshot_frames();
         assert!(frames.iter().any(|frame|matches!(&frame.event,Event::SessionSnapshot {messages,..} if messages.len()==1 && messages[0].images==[image.descriptor()])));

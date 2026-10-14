@@ -163,6 +163,10 @@ pub struct RehydratedSession {
     pub messages: Vec<RestoredMessage>,
     /// Tool rows (bounded projection only).
     pub tools: Vec<RestoredTool>,
+    /// Tool rows skipped after the tool bound was reached.
+    pub omitted_tools: u64,
+    /// Reading stopped at the text bound, so later history is missing.
+    pub history_truncated: bool,
 }
 
 /// Maximum tool rows restored for one session (matches a scannable transcript).
@@ -712,6 +716,9 @@ pub fn snapshot_from_rehydrate_with_runtime(
         members,
         workflows,
         background_tasks,
+        omitted_messages: 0,
+        omitted_tools: restored.omitted_tools,
+        history_truncated: restored.history_truncated,
     }
 }
 
@@ -1070,6 +1077,8 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
 
     let mut messages: Vec<RestoredMessage> = Vec::new();
     let mut tools: Vec<RestoredTool> = Vec::new();
+    let mut omitted_tools = 0_u64;
+    let mut history_truncated = offset > 0;
     // Open tool rows keyed by id while we walk updates.
     let mut open_tools: HashMap<String, usize> = HashMap::new();
     let mut current_role: Option<&'static str> = None;
@@ -1178,6 +1187,7 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
                     let remaining = MAX_REHYDRATE_CHARS.saturating_sub(total);
                     let (clipped, _) = crate::bounds::truncate_utf8(text, remaining);
                     current_text.push_str(&clipped);
+                    history_truncated = true;
                     break;
                 }
                 total = total.saturating_add(text.len());
@@ -1185,6 +1195,7 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
             }
             Some("tool_call") => {
                 if tools.len() >= MAX_REHYDRATE_TOOLS {
+                    omitted_tools = omitted_tools.saturating_add(1);
                     continue;
                 }
                 let Some(id) = update
@@ -1305,6 +1316,8 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
         messages,
         tools,
         images,
+        omitted_tools,
+        history_truncated,
     }
 }
 
@@ -2126,5 +2139,15 @@ mod tests {
             restored[0].text.contains(crate::bounds::TRUNCATION_MARKER),
             "a clipped restore must be marked"
         );
+        let session = rehydrate_session_in(root.path(), std::path::Path::new(cwd), "s-mark");
+        assert!(session.history_truncated);
+        let wire = serde_json::to_value(super::snapshot_from_rehydrate_in(
+            root.path(),
+            None,
+            "s-mark".into(),
+            session,
+        ))
+        .expect("serializes");
+        assert_eq!(wire["historyTruncated"], true);
     }
 }
