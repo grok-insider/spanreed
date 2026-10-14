@@ -40,6 +40,7 @@
 //! the grok-desktop-portable repository, which owns the SPA and the contract.
 
 pub mod acp;
+mod agent_process;
 pub mod assets;
 pub mod bash;
 pub mod bounds;
