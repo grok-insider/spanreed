@@ -51,9 +51,45 @@ jobs:
     uses: ./.github/workflows/desktop.yml
     with:
       source_sha: ${{ needs.validate.outputs.sha }}
+  source:
+    needs: validate
+    if: ${{ needs.validate.outputs.complete != 'true' && !inputs.artifacts_run_id }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+          path: spanreed
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Resolve the embedded PWA source revision
+        id: inputs
+        run: python3 spanreed/scripts/source-bundle.py inputs >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: grok-insider/grok-desktop-portable
+          ref: ${{ steps.inputs.outputs.portable_sha }}
+          persist-credentials: false
+          path: portable
+      - name: Package and verify corresponding source
+        working-directory: spanreed
+        env:
+          RELEASE_SHA: ${{ needs.validate.outputs.sha }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          python3 scripts/source-bundle.py build --portable ../portable --sha "$RELEASE_SHA" --version "$RELEASE_VERSION" --output "../release-source/spanreed-${RELEASE_VERSION}-source.tar.gz"
+          python3 scripts/release.py provenance --directory ../release-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spanreed-release-source
+          path: release-source/*
+          if-no-files-found: error
+          retention-days: 1
   publish:
-    needs: [validate, cli, desktop]
-    if: ${{ !cancelled() && needs.validate.outputs.complete != 'true' && needs.validate.result == 'success' && (inputs.artifacts_run_id || (needs.cli.result == 'success' && needs.desktop.result == 'success')) }}
+    needs: [validate, cli, desktop, source]
+    if: ${{ !cancelled() && needs.validate.outputs.complete != 'true' && needs.validate.result == 'success' && (inputs.artifacts_run_id || (needs.cli.result == 'success' && needs.desktop.result == 'success' && needs.source.result == 'success')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

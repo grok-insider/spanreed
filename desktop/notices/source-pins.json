@@ -1,0 +1,33 @@
+{
+  "embla-carousel-react@8.6.0": {
+    "path": "embla-carousel-8.6.0-LICENSE",
+    "source": "https://raw.githubusercontent.com/davidjerleke/embla-carousel/0fe65834136f1aa35e4c1a4a477e5ccb4bb5ee54/LICENSE",
+    "sha256": "992490064b90ec94c302fe5f29dcc14cb44145857064e46f9ffe6c8f511c1093",
+    "registryIntegrity": "sha512-0/PjqU7geVmo6F734pmPqpyHqiM99olvyecY7zdweCw+6tKEXnrE90pBiBbMMU8s5tICemzpQ3hi5EpxzGW+JA=="
+  },
+  "embla-carousel@8.6.0": {
+    "path": "embla-carousel-8.6.0-LICENSE",
+    "source": "https://raw.githubusercontent.com/davidjerleke/embla-carousel/0fe65834136f1aa35e4c1a4a477e5ccb4bb5ee54/LICENSE",
+    "sha256": "992490064b90ec94c302fe5f29dcc14cb44145857064e46f9ffe6c8f511c1093",
+    "registryIntegrity": "sha512-SjWyZBHJPbqxHOzckOfo8lHisEaJWmwd23XppYFYVh10bU66/Pn5tkVkbkCMZVdbUE5eTCI2nD8OyIP4Z+uwkA=="
+  },
+  "embla-carousel-reactive-utils@8.6.0": {
+    "path": "embla-carousel-8.6.0-LICENSE",
+    "source": "https://raw.githubusercontent.com/davidjerleke/embla-carousel/0fe65834136f1aa35e4c1a4a477e5ccb4bb5ee54/LICENSE",
+    "sha256": "992490064b90ec94c302fe5f29dcc14cb44145857064e46f9ffe6c8f511c1093",
+    "registryIntegrity": "sha512-fMVUDUEx0/uIEDM0Mz3dHznDhfX+znCCDCeIophYb1QGVM7YThSWX+wz11zlYwWFOr74b4QLGg0hrGPJeG2s4A=="
+  },
+  "react-remove-scroll-bar@2.3.8": {
+    "path": "react-remove-scroll-bar-2.3.8-LICENSE",
+    "source": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/8ca9ba5ea52de03308fe8ced94f7b159a44d28ff/LICENSE",
+    "sha256": "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84",
+    "registryIntegrity": "sha512-9r+yi9+mgU33AKcj6IbT9oRCO78WriSj6t/cF8DWBZJ9aOGPOTEDvdUDz1FwKim7QXWwmHqtdHnRJfhAxEG46Q==",
+    "sourceVerification": "All src blobs unchanged from npm 2.3.7 gitHead29e9fcd to upstreamlicensecommit8ca9ba5; all dist files npm2.3.7 and2.3.8 identical.",
+    "sourceFiles": {
+      "src/component.tsx": "2864b76f2d5c84e9c96d190aa858cc0d10b72ede",
+      "src/constants.ts": "ae51ad09478d07eef8ce6c52d66444e468d83aca",
+      "src/index.ts": "888f312acc5cb6f01a66e8ae53e064dcd9ee4b76",
+      "src/utils.ts": "a8ab29ab1914696a488be9aeefc62e837f755356"
+    }
+  }
+}

@@ -1,0 +1,219 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-10-14T09:54:13.9142707Z",
+  "sourceCommit": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+  "workflowRun": 38504260236,
+  "version": "0.7.1",
+  "installerSha256": "d0220e5fb1ab462b94649d78e3dd7e31de7d78557eaf4a7d4b2eea0ef2af71bd",
+  "installedBinarySha256": "70def19b0f4048d5ac0664e2218080f6984ad1e73126a438fdb9780e2f1aef45",
+  "installedBinaryMatchesCiExtraction": true,
+  "qualificationScope": "Interactive current-user NSIS installer, first graphical start, tray and graphical uninstall of the exact e6 unsigned review artifact, as a new standard user in a second console session of the existing Windows 11 QA VM",
+  "platform": "Windows 11 x86_64 QA VM (libvirt, no GPU passthrough)",
+  "temporaryUser": {
+    "standardUser": true,
+    "administratorRoleActive": false,
+    "session": 2,
+    "newProfile": true,
+    "installationAbsentBefore": true,
+    "registrationAbsentBefore": true
+  },
+  "existingUserSessionPreserved": true,
+  "startedAt": "2026-10-14T09:17:49.3612278Z",
+  "installer": {
+    "finishedAt": "2026-10-14T09:25:22.7346991Z",
+    "exitCode": 0,
+    "pagesShown": [
+      "welcome",
+      "license",
+      "install location under the user's LocalAppData",
+      "completion with optional run"
+    ],
+    "smartScreenExercised": false,
+    "uacPromptObserved": false,
+    "uacObservationBasis": "No elevation prompt appears in the captures from launch to the welcome page; the VM policy has PromptOnSecureDesktop=0, so a prompt would have been on the captured desktop. Current-user mode does not request elevation."
+  },
+  "firstStart": {
+    "at": "2026-10-14T09:23:36.6065814Z",
+    "processCount": 1,
+    "processSession": 2,
+    "processBinarySha256": "70def19b0f4048d5ac0664e2218080f6984ad1e73126a438fdb9780e2f1aef45",
+    "registrationVersion": "0.7.1",
+    "webview2Processes": 12,
+    "viewsShown": [
+      "overview",
+      "settings",
+      "rendered AGPL license text"
+    ],
+    "trayMenuEntries": [
+      "Open dashboard",
+      "Settings",
+      "Start agent host",
+      "Quit Spanreed"
+    ]
+  },
+  "applicationErrors": [],
+  "uninstall": {
+    "at": "2026-10-14T09:26:49.3130489Z",
+    "exitCode": 0,
+    "installationRemoved": true,
+    "registrationRemoved": true,
+    "desktopShortcutRemoved": true,
+    "applicationProcesses": 0,
+    "userDataFilesRetained": 4,
+    "deleteApplicationDataCheckboxUncheckedAtConfirmation": true
+  },
+  "cleanup": {
+    "completedAt": "2026-10-14T09:53:02.2572784Z",
+    "runAs": "nt authority\\system",
+    "rebootUsed": false,
+    "temporaryAccountRemoved": true,
+    "temporaryProfileRemoved": true,
+    "temporaryProfileDirectoryRemoved": true,
+    "temporaryProfileListKeyRemoved": true,
+    "temporaryHiveRemoved": true,
+    "temporaryClassesHiveRemoved": true,
+    "temporaryRightsBefore": [],
+    "temporaryRightsAfter": [],
+    "temporaryTasks": 0,
+    "temporaryAclEntriesRemaining": 0,
+    "securityPreserved": true
+  },
+  "cleanupGuardComparison": {
+    "friendFiles": true,
+    "friendFileCount": true,
+    "friendRegistration": true,
+    "machineRegistration": true,
+    "services": false,
+    "normalizedServices": false,
+    "defender": true
+  },
+  "cleanupGuardServiceDiff": [
+    {
+      "Name": "IsolationSession",
+      "StartMode": "Auto",
+      "SideIndicator": "=>"
+    },
+    {
+      "Name": "IsolationSession",
+      "StartMode": "Manual",
+      "SideIndicator": "<="
+    }
+  ],
+  "finalReadOnlyComparison": {
+    "checkedAt": "2026-10-14T09:54:13.9142707Z",
+    "allEqual": true,
+    "comparison": {
+      "friendFiles": true,
+      "friendFileCount": true,
+      "friendRegistration": true,
+      "machineRegistration": true,
+      "services": true,
+      "normalizedServices": true,
+      "defender": true
+    },
+    "serviceInventoryDiffCount": 0,
+    "securityPreserved": true,
+    "before": {
+      "friendFiles": "bd964d57a3c38f71063a4be91437a5cf344fc5eeefeefb17ad8bdec9477f3209",
+      "friendFileCount": 351,
+      "friendRegistration": "d2cb31c6a42ee4dd45a639e33bef73d81570509cdf3fd76b267fbad13e6d79e7",
+      "machineRegistration": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "services": "a9adacedee5d6c147d5cc07cea4b16cabce9a0537d6256cfdaa14b6c928d285c",
+      "normalizedServices": "09e35f50c8ff35fbae18486ae8f160318b8998106a91ef0ee6c7c8477ec9cf7c",
+      "defender": "e9556026afa3868d24f4795bf41866b4e74777a9d1e11731a0f331671f3f76c4"
+    },
+    "after": {
+      "friendFiles": "bd964d57a3c38f71063a4be91437a5cf344fc5eeefeefb17ad8bdec9477f3209",
+      "friendFileCount": 351,
+      "friendRegistration": "d2cb31c6a42ee4dd45a639e33bef73d81570509cdf3fd76b267fbad13e6d79e7",
+      "machineRegistration": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "services": "a9adacedee5d6c147d5cc07cea4b16cabce9a0537d6256cfdaa14b6c928d285c",
+      "normalizedServices": "09e35f50c8ff35fbae18486ae8f160318b8998106a91ef0ee6c7c8477ec9cf7c",
+      "defender": "e9556026afa3868d24f4795bf41866b4e74777a9d1e11731a0f331671f3f76c4"
+    }
+  },
+  "serviceChangeEvents": [
+    {
+      "at": "2026-10-14T09:52:59.0486407Z",
+      "id": 7040,
+      "user": "S-1-5-18",
+      "message": "The start type of the IsolationSession service was changed from demand start to auto start."
+    },
+    {
+      "at": "2026-10-14T09:38:56.6213702Z",
+      "id": 7040,
+      "user": "S-1-5-18",
+      "message": "The start type of the Background Intelligent Transfer Service service was changed from auto start to demand start."
+    },
+    {
+      "at": "2026-10-14T09:20:17.7514279Z",
+      "id": 7040,
+      "user": "S-1-5-18",
+      "message": "The start type of the Background Intelligent Transfer Service service was changed from demand start to auto start."
+    },
+    {
+      "at": "2026-10-14T09:20:08.6735523Z",
+      "id": 7040,
+      "user": "S-1-5-18",
+      "message": "The start type of the IsolationSession service was changed from auto start to demand start."
+    },
+    {
+      "at": "2026-10-14T09:19:15.6132241Z",
+      "id": 7040,
+      "user": "S-1-5-18",
+      "message": "The start type of the IsolationSession service was changed from demand start to auto start."
+    },
+    {
+      "at": "2026-10-14T09:13:29.9143645Z",
+      "id": 7040,
+      "user": "S-1-5-18",
+      "message": "The start type of the Background Intelligent Transfer Service service was changed from auto start to demand start."
+    }
+  ],
+  "serviceChangeInterpretation": "Service Control Manager, as LocalSystem, toggled BITS before the run started and IsolationSession during account creation and again during account removal. Both returned to Manual without intervention; the final read-only comparison found raw and normalized service inventories equal. The toggles are not attributed to Spanreed, and this receipt does not prove their cause.",
+  "evidence": {
+    "01-temporary-run-dialog.png": "ddbb28740ab718b3de4bfb3753f0de0c121f76d01ae9cbee101d29a20368dfd2",
+    "02-installer-welcome.png": "f042221706f6e7146d0c442b531d05e0880bf9b05fd777c0c593c8bb99e60620",
+    "03-installer-license.png": "aed4d54befc87e1cd1d616685e9b39810d6165824670cfd5f46a5929c0b15a18",
+    "04-installer-user-directory.png": "c0016eba9ba9c9d4b0b4a1284f084ffd2c409aea413230796b9eff3fc6564ce0",
+    "05-installer-complete.png": "ec681de149f4e17fe35ad5d61327ece4cfdf4d33a43163cdbecdfc392c91735f",
+    "06-installer-run-selection.png": "8b8a4f5e78496e19fc5ee6dd86db1d91343fc70e2eb6559c2ee7f3ab3627a77e",
+    "07-first-desktop-start.png": "b607efb958278d415fea40c3fd6cea5d3245d3ace81a02300c4ec88812d5a74d",
+    "08-settings.png": "18a3b4525a77950af53dfcf4466d18d5af2c8587c147728752a7edecbb38c91a",
+    "09-license-rendered.png": "8b2caf95563d48c72fd007651033017ce871e263235b550db40ba4c44f8a216b",
+    "10-tray-menu.png": "e9be3c92f3bc5d59c04a504f76738489e1e8fbdfa2d2a83b1f8ad6b5ef57ca99",
+    "11-uninstall-confirmation.png": "82adbf4bd9add33ca56aca39967f454b5d4e13a408fae74ec419724e2b742864",
+    "12-uninstall-complete.png": "4045ad4f166da3f3ee09795abe85d003e59270b5dde1dee0e80c9ae57110d106",
+    "13-original-session-restored.png": "079c9862d125696897ff4093b8fdcebdadebf30f9ff68ddb1a30f5d52bd2fd0a",
+    "interactive-start.json": "e167f49e46ff5ca7f551ba3c6e1a97fcd89b0b123f5787473993ef804b8121b6",
+    "interactive-install.json": "0b2e4ae1742e177cca8e4c9ee18e9b7654e3d7216b184dc1dd1eeba19ff4dcba",
+    "first-start-processes.json": "a84c746c2e827bcd186b07354961025c150c12a33639a3570167e7831b8f46fc",
+    "application-errors.json": "84b1c14e68260082e3e79edff0a78f4ebf1942cfd6c593246044ec2149cbb87d",
+    "interactive-uninstall.json": "5b00633aa24f0baa5705d9cd6731336697dd35cc9f3e008177dd2ef7c3ab07da",
+    "cleanup.json": "a0d5996e161ea04dbd218e5bbd6e47e57d5991bcea6f2e86acc1905d046df418",
+    "final-baseline.json": "77838d573adb51cb9738bb18958a0f084d6e421aadfa8183f14661d04a843753",
+    "service-change-events.json": "8d6e29ee3f5f3cc5c71ecc12496ba1184ba26fca9a149d42da41f347d835e0c0",
+    "guest metadata.json": "680b6ab7aeeb2e97405485f85178cfa94c8159ea9377e1c1ed6e86debebb8fb0"
+  },
+  "scriptHashes": {
+    "prepare.ps1": "b405b5c1479cacb89a1c4a7cab57b14292582f87e8f4b17aa98a62cd115e3832",
+    "baseline.ps1": "484bb1372a8bb9a56bf0e2ad3c1944b5d063cbbf30c3166354d2860c434d5c85",
+    "launch.ps1": "dce1c42f8087d40401002e026d70bc5c833ba83b643817d101c1140ba8ff25bc",
+    "uninstall.ps1": "6fa234db82ae534e22f6156951b3abc00bf4b1567f77e620a815b47da410de93",
+    "cleanup.ps1": "f1a27d1b94ef7aded026dacf7d874093fe62d69e0a80c992ce7b6074ca721d77",
+    "final-baseline.ps1": "d0dd6be0f48dec381775285a97a5e9f8ff4f5759bbdcca60bf909b0d39f1c72f"
+  },
+  "harnessNotes": [
+    "The run was driven by two Codex agents through Syl; the session ended after the graphical uninstall. Cleanup and the final comparison were completed afterwards through the QEMU guest agent as LocalSystem, with the scripts whose hashes are listed.",
+    "Two cleanup invocations failed to parse before the successful run, because the host shell interpreted the backslash sequence in the script path argument; a read-only state check after each confirmed that neither changed anything."
+  ],
+  "notQualified": [
+    "UAC and SmartScreen (current-user mode needs no elevation; the locally copied installer had no Mark of the Web)",
+    "Signed release artifact",
+    "Machine-wide MSI installation",
+    "CLI self-update replacement and rollback",
+    "Upgrade while the application is running",
+    "Power loss and physical Windows hardware",
+    "Windows accessibility tools (Narrator, high contrast)"
+  ]
+}

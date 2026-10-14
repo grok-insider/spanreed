@@ -19,7 +19,7 @@ use std::path::Path;
 use std::ptr;
 use std::sync::Arc;
 
-use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer};
 
 use super::{
     CONTROL_PIPE_NAME_FILE, CONTROL_SOCKET_NAME, ControlError, ControlRequest, ControlResponse,
@@ -127,20 +127,7 @@ fn read_pipe_path(directory: &Path) -> Result<String, ControlError> {
 }
 
 fn create_server_instance(pipe_path: &str, first: bool) -> Result<NamedPipeServer, ControlError> {
-    // Prefer a restrictive DACL. If security descriptor setup fails, fall back
-    // to Tokio's default create with reject_remote_clients — still better than
-    // a well-known open pipe name.
-    match create_server_with_user_dacl(pipe_path, first) {
-        Ok(server) => Ok(server),
-        Err(_) => {
-            let mut options = ServerOptions::new();
-            options.reject_remote_clients(true);
-            if first {
-                options.first_pipe_instance(true);
-            }
-            options.create(pipe_path).map_err(ControlError::Io)
-        }
-    }
+    create_server_with_user_dacl(pipe_path, first)
 }
 
 /// Create a named pipe server whose DACL allows only the current user (and SYSTEM).
@@ -185,7 +172,7 @@ fn create_server_with_user_dacl(
             return Err(ControlError::Io(std::io::Error::last_os_error()));
         }
 
-        let mut sa = SECURITY_ATTRIBUTES {
+        let sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: sd,
             bInheritHandle: FALSE,
@@ -209,7 +196,7 @@ fn create_server_with_user_dacl(
             65536,
             65536,
             0,
-            &mut sa,
+            &sa,
         );
 
         LocalFree(sd as *mut _);

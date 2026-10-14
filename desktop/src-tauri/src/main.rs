@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod commands;
+mod licenses;
 mod notifications;
 mod shell;
 
@@ -12,6 +13,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(ctx)
         .invoke_handler(tauri::generate_handler![
+            licenses::licenses,
             commands::take_desktop_route,
             commands::disconnect_usage_source,
             commands::connect_usage_source,

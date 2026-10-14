@@ -15,6 +15,18 @@ pub const ORIGIN_SUFFIX: &str = ".grok-light.localhost";
 /// Production hosted Work UI document origin (ADR light 0016).
 pub const PRODUCTION_WEB_ORIGIN: &str = "https://desktop.grok.me";
 
+#[allow(missing_docs)]
+pub const QUALIFICATION_WEB_ORIGIN: &str = "https://grok.fabrials.com";
+
+#[allow(missing_docs)]
+pub fn validate_hosted_web_origin(value: &str) -> Result<(), OriginError> {
+    if matches!(value, PRODUCTION_WEB_ORIGIN | QUALIFICATION_WEB_ORIGIN) {
+        Ok(())
+    } else {
+        Err(OriginError::OriginMismatch)
+    }
+}
+
 /// Closed allowlist of document origins permitted to call the loopback API.
 ///
 /// Release builds include only the production site. Dev origins must be
@@ -75,6 +87,9 @@ pub const PORT_RANGE_END: u16 = 32_767;
 /// Errors produced while constructing or validating a local origin.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum OriginError {
+    #[allow(missing_docs)]
+    #[error("private origin must be an exact HTTPS origin with a valid hostname")]
+    InvalidPrivateOrigin,
     /// The install identifier was empty, oversized, or not lowercase hex.
     #[error("invalid install identifier")]
     InvalidInstallId,
@@ -84,6 +99,36 @@ pub enum OriginError {
     /// A request carried a `Host` or `Origin` that is not the canonical value.
     #[error("request origin did not match the canonical origin")]
     OriginMismatch,
+}
+
+#[allow(missing_docs)]
+pub fn validate_private_origin(value: &str) -> Result<(), OriginError> {
+    let parsed = url::Url::parse(value).map_err(|_| OriginError::InvalidPrivateOrigin)?;
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none_or(|host| {
+            host.len() > 253
+                || !host.contains('.')
+                || host.parse::<std::net::IpAddr>().is_ok()
+                || host.split('.').any(|label| {
+                    label.is_empty()
+                        || label.len() > 63
+                        || label.starts_with('-')
+                        || label.ends_with('-')
+                        || !label
+                            .bytes()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'-')
+                })
+        })
+        || parsed.origin().ascii_serialization() != value
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(OriginError::InvalidPrivateOrigin);
+    }
+    Ok(())
 }
 
 /// The canonical loopback origin for one installation.
@@ -519,6 +564,32 @@ mod tests {
         assert!(is_allowed_web_origin(PRODUCTION_WEB_ORIGIN));
         assert!(!is_allowed_web_origin("https://evil.example"));
         assert!(!is_allowed_web_origin("http://desktop.grok.me"));
+        assert!(!is_allowed_web_origin(super::QUALIFICATION_WEB_ORIGIN));
+    }
+
+    #[test]
+    fn qualification_web_origin_requires_exact_explicit_selection() {
+        assert!(super::validate_hosted_web_origin(PRODUCTION_WEB_ORIGIN).is_ok());
+        assert!(super::validate_hosted_web_origin(super::QUALIFICATION_WEB_ORIGIN).is_ok());
+        for invalid in [
+            "https://grok.fabrials.com/",
+            "https://grok.fabrials.com:443",
+            "https://grok.fabrials.com:8443",
+            "https://grok.fabrials.com.evil.example",
+            "https://grok.fabrials.com@evil.example",
+            "https://grok.fabrials.com/#pair=x",
+            "https://grok.fabrials.com?x=1",
+            "http://grok.fabrials.com",
+            "https://GROK.fabrials.com",
+            " https://grok.fabrials.com",
+            "https://remote.fabrials.com",
+            "https://evil.example",
+        ] {
+            assert!(
+                super::validate_hosted_web_origin(invalid).is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]

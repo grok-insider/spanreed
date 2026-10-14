@@ -113,6 +113,12 @@ pub fn wire_session_kind(session_kind: Option<&str>) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoredMessage {
+    #[allow(missing_docs)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::media::ImageDescriptor>,
+    #[allow(missing_docs)]
+    #[serde(default)]
+    pub unavailable_images: usize,
     /// `user` or `agent`.
     pub role: String,
     /// Plain text (agent side may still contain markdown).
@@ -151,10 +157,16 @@ pub struct RestoredTool {
 /// Messages + tools rebuilt from `updates.jsonl` for one session.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RehydratedSession {
+    #[allow(missing_docs)]
+    pub images: Vec<crate::media::PromptImage>,
     /// User/agent text turns.
     pub messages: Vec<RestoredMessage>,
     /// Tool rows (bounded projection only).
     pub tools: Vec<RestoredTool>,
+    /// Tool rows skipped after the tool bound was reached.
+    pub omitted_tools: u64,
+    /// Reading stopped at the text bound, so later history is missing.
+    pub history_truncated: bool,
 }
 
 /// Maximum tool rows restored for one session (matches a scannable transcript).
@@ -586,6 +598,30 @@ pub fn rehydrate_transcript_in(home: &Path, cwd: &Path, session_id: &str) -> Vec
 /// closed projection the live path uses. Order is preserved via `seq` so the
 /// SPA can interleave tools with turns after a refresh.
 #[must_use]
+#[allow(missing_docs)]
+pub async fn rehydrate_session_async(
+    cwd: std::path::PathBuf,
+    session_id: String,
+) -> RehydratedSession {
+    static LIMIT: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    let Ok(permit) = LIMIT
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(2)))
+        .clone()
+        .acquire_owned()
+        .await
+    else {
+        return RehydratedSession::default();
+    };
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        rehydrate_session(&cwd, &session_id)
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[allow(missing_docs)]
 pub fn rehydrate_session(cwd: &Path, session_id: &str) -> RehydratedSession {
     rehydrate_session_in(&grok_home(), cwd, session_id)
 }
@@ -655,6 +691,8 @@ pub fn snapshot_from_rehydrate_with_runtime(
             .messages
             .into_iter()
             .map(|message| crate::protocol::SnapshotMessage {
+                images: message.images,
+                unavailable_images: message.unavailable_images,
                 role: message.role,
                 text: message.text,
                 seq: message.seq,
@@ -678,6 +716,9 @@ pub fn snapshot_from_rehydrate_with_runtime(
         members,
         workflows,
         background_tasks,
+        omitted_messages: 0,
+        omitted_tools: restored.omitted_tools,
+        history_truncated: restored.history_truncated,
     }
 }
 
@@ -1013,16 +1054,39 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
         .join(encoded)
         .join(session_id)
         .join("updates.jsonl");
-    let Ok(raw) = fs::read_to_string(updates) else {
+    use std::io::{Read, Seek};
+    let Ok(mut file) = fs::File::open(updates) else {
         return RehydratedSession::default();
+    };
+    let limit = 64 * 1024 * 1024;
+    let size = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+    let offset = size.saturating_sub(limit);
+    if file.seek(std::io::SeekFrom::Start(offset)).is_err() {
+        return RehydratedSession::default();
+    }
+    let mut bytes = Vec::new();
+    if file.take(limit).read_to_end(&mut bytes).is_err() {
+        return RehydratedSession::default();
+    }
+    let raw = String::from_utf8_lossy(&bytes);
+    let raw = if offset > 0 {
+        raw.split_once('\n').map_or("", |(_, rest)| rest)
+    } else {
+        raw.as_ref()
     };
 
     let mut messages: Vec<RestoredMessage> = Vec::new();
     let mut tools: Vec<RestoredTool> = Vec::new();
+    let mut omitted_tools = 0_u64;
+    let mut history_truncated = offset > 0;
     // Open tool rows keyed by id while we walk updates.
     let mut open_tools: HashMap<String, usize> = HashMap::new();
     let mut current_role: Option<&'static str> = None;
     let mut current_text = String::new();
+    let mut current_images = Vec::new();
+    let mut current_unavailable = 0;
+    let mut images = Vec::new();
+    let mut image_bytes = 0;
     let mut current_msg_seq: i64 = 0;
     let mut total = 0usize;
     let mut next_seq: i64 = 0;
@@ -1030,11 +1094,15 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
     let flush_message = |messages: &mut Vec<RestoredMessage>,
                          role: Option<&'static str>,
                          text: &mut String,
+                         image_refs: &mut Vec<crate::media::ImageDescriptor>,
+                         unavailable: &mut usize,
                          seq: i64| {
         if let Some(prev) = role
-            && !text.is_empty()
+            && (!text.is_empty() || !image_refs.is_empty() || *unavailable > 0)
         {
             messages.push(RestoredMessage {
+                images: std::mem::take(image_refs),
+                unavailable_images: std::mem::take(unavailable),
                 role: prev.to_owned(),
                 text: std::mem::take(text),
                 seq,
@@ -1043,6 +1111,9 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
     };
 
     for line in raw.lines() {
+        if line.len() > crate::acp::MAX_LINE_BYTES {
+            continue;
+        }
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -1061,12 +1132,23 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
             .and_then(serde_json::Value::as_str);
 
         match kind {
+            Some("user_message_chunk")
+                if update
+                    .pointer("/_meta/hideFromScrollback")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true) =>
+            {
+                continue;
+            }
             Some("user_message_chunk") | Some("agent_message_chunk") => {
                 let text = update
                     .pointer("/content/text")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
-                if text.is_empty() {
+                let image_block = update.get("content").filter(|content| {
+                    content.get("type").and_then(serde_json::Value::as_str) == Some("image")
+                });
+                if text.is_empty() && image_block.is_none() {
                     continue;
                 }
                 let role = if kind == Some("user_message_chunk") {
@@ -1079,16 +1161,33 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
                         &mut messages,
                         current_role,
                         &mut current_text,
+                        &mut current_images,
+                        &mut current_unavailable,
                         current_msg_seq,
                     );
                     current_role = Some(role);
                     current_msg_seq = next_seq;
                     next_seq += 1;
                 }
+                if let Some(block) = image_block {
+                    let image = if images.len() < 32 && image_bytes < 32 * 1024 * 1024 {
+                        crate::media::PromptImage::from_acp(block).ok()
+                    } else {
+                        None
+                    };
+                    if let Some(image) = image {
+                        image_bytes += image.descriptor().byte_length;
+                        current_images.push(image.descriptor());
+                        images.push(image);
+                    } else {
+                        current_unavailable += 1;
+                    }
+                }
                 if total.saturating_add(text.len()) > MAX_REHYDRATE_CHARS {
                     let remaining = MAX_REHYDRATE_CHARS.saturating_sub(total);
                     let (clipped, _) = crate::bounds::truncate_utf8(text, remaining);
                     current_text.push_str(&clipped);
+                    history_truncated = true;
                     break;
                 }
                 total = total.saturating_add(text.len());
@@ -1096,6 +1195,7 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
             }
             Some("tool_call") => {
                 if tools.len() >= MAX_REHYDRATE_TOOLS {
+                    omitted_tools = omitted_tools.saturating_add(1);
                     continue;
                 }
                 let Some(id) = update
@@ -1110,6 +1210,8 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
                     &mut messages,
                     current_role,
                     &mut current_text,
+                    &mut current_images,
+                    &mut current_unavailable,
                     current_msg_seq,
                 );
                 current_role = None;
@@ -1192,11 +1294,31 @@ pub fn rehydrate_session_in(home: &Path, cwd: &Path, session_id: &str) -> Rehydr
         &mut messages,
         current_role,
         &mut current_text,
+        &mut current_images,
+        &mut current_unavailable,
         current_msg_seq,
     );
 
     // Unfinished tools from a torn log still show as not finished.
-    RehydratedSession { messages, tools }
+    if offset > 0 {
+        messages.insert(
+            0,
+            RestoredMessage {
+                role: "system".into(),
+                text: "Earlier history is not included in this bounded snapshot.".into(),
+                seq: -1,
+                images: vec![],
+                unavailable_images: 0,
+            },
+        );
+    }
+    RehydratedSession {
+        messages,
+        tools,
+        images,
+        omitted_tools,
+        history_truncated,
+    }
 }
 
 fn tool_kind_from_update(update: &serde_json::Value) -> String {
@@ -1290,6 +1412,49 @@ struct StoredInfo {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rehydrate_preserves_image_only_turns_hides_internal_images_and_marks_corruption() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = "/tmp/typed-image-history";
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(32, 32, image::Rgb([5, 55, 155]))
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let image = crate::media::PromptImage::normalize(&bytes.into_inner()).unwrap();
+        let block = image.acp_block();
+        let entries = [
+            serde_json::json!({"update":{"sessionUpdate":"user_message_chunk","content":block,"_meta":{"hideFromScrollback":true}}}),
+            serde_json::json!({"params":{"update":{"sessionUpdate":"user_message_chunk","content":block}}}),
+            serde_json::json!({"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Synthetic answer"}}}),
+            serde_json::json!({"update":{"sessionUpdate":"user_message_chunk","content":{"type":"image","mimeType":"image/png","data":"bad"}}}),
+        ];
+        let log = entries
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        write_session(
+            home.path(),
+            cwd,
+            "s-1",
+            "Pictures",
+            "2026-10-13T00:00:00Z",
+            &log,
+        );
+        let restored = super::rehydrate_session_in(home.path(), std::path::Path::new(cwd), "s-1");
+        assert_eq!(restored.messages.len(), 3);
+        assert_eq!(restored.images.len(), 1);
+        assert_eq!(restored.messages[0].images, vec![image.descriptor()]);
+        assert!(restored.messages[0].text.is_empty());
+        assert_eq!(restored.messages[2].unavailable_images, 1);
+        let snapshot = super::snapshot_from_rehydrate_in(home.path(), None, "s-1".into(), restored);
+        let wire = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(
+            wire["messages"][0]["images"][0]["sha256"],
+            image.descriptor().sha256
+        );
+        assert!(!wire.to_string().contains(block["data"].as_str().unwrap()));
+    }
     use super::{
         VisibilityClass, decode_cwd_dirname, encode_cwd_dirname, list_for_cwd_in,
         list_project_groups_in, rehydrate_background_tasks, rehydrate_session_in,
@@ -1805,6 +1970,66 @@ mod tests {
     }
 
     #[test]
+    fn rehydrate_hides_internal_user_echoes_without_breaking_visible_order() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let cwd = "/tmp/light-rehydrate-visible";
+        let updates = r#"
+{"params":{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"private-start"},"_meta":{"hideFromScrollback":true}}}}
+{"params":{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"run "}}}}
+{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"private-middle"},"_meta":{"hideFromScrollback":true}}}
+{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"it"},"_meta":{"hideFromScrollback":false}}}
+{"params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Working"}}}}
+{"params":{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"private-wakeup"},"_meta":{"hideFromScrollback":true}}}}
+{"params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" now"}}}}
+{"params":{"update":{"sessionUpdate":"tool_call","toolCallId":"visible-tool","title":"Read fixture"}}}
+{"params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"visible-tool","status":"completed"}}}
+{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"private-completion"},"_meta":{"hideFromScrollback":true}}}
+{"params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Done"}}}}
+{"params":{"update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Thanks"},"_meta":{"hideFromScrollback":false}}}}
+"#;
+        write_session(
+            root.path(),
+            cwd,
+            "visible",
+            "t",
+            "2026-07-01T00:00:00Z",
+            updates,
+        );
+        let restored = rehydrate_session_in(root.path(), std::path::Path::new(cwd), "visible");
+        let messages: Vec<_> = restored
+            .messages
+            .iter()
+            .map(|message| (message.role.as_str(), message.text.as_str()))
+            .collect();
+        assert_eq!(
+            messages,
+            vec![
+                ("user", "run it"),
+                ("agent", "Working now"),
+                ("agent", "Done"),
+                ("user", "Thanks"),
+            ]
+        );
+        assert_eq!(restored.tools.len(), 1);
+        assert!(restored.tools[0].finished);
+        assert!(restored.messages[0].seq < restored.messages[1].seq);
+        assert!(restored.messages[1].seq < restored.tools[0].seq);
+        assert!(restored.tools[0].seq < restored.messages[2].seq);
+        assert!(restored.messages[2].seq < restored.messages[3].seq);
+        let snapshot = super::snapshot_from_rehydrate_in(
+            root.path(),
+            Some(std::path::Path::new(cwd)),
+            "visible".into(),
+            restored,
+        );
+        assert!(
+            !serde_json::to_string(&snapshot)
+                .expect("snapshot")
+                .contains("private-")
+        );
+    }
+
+    #[test]
     fn rehydrate_restores_tool_rows_without_bodies() {
         let root = tempfile::tempdir().expect("tempdir");
         let cwd = "/tmp/light-rehydrate-tools";
@@ -1914,5 +2139,15 @@ mod tests {
             restored[0].text.contains(crate::bounds::TRUNCATION_MARKER),
             "a clipped restore must be marked"
         );
+        let session = rehydrate_session_in(root.path(), std::path::Path::new(cwd), "s-mark");
+        assert!(session.history_truncated);
+        let wire = serde_json::to_value(super::snapshot_from_rehydrate_in(
+            root.path(),
+            None,
+            "s-mark".into(),
+            session,
+        ))
+        .expect("serializes");
+        assert_eq!(wire["historyTruncated"], true);
     }
 }

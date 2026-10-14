@@ -9,6 +9,268 @@ fn bin() -> &'static str {
 }
 
 #[test]
+fn version_is_exact_and_available_without_user_configuration() {
+    for flag in ["--version", "-V"] {
+        let result = Command::new(bin()).arg(flag).env_clear().output().unwrap();
+        assert!(result.status.success());
+        assert_eq!(
+            String::from_utf8(result.stdout).unwrap(),
+            format!("spanreed {}\n", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[test]
+fn licenses_preserves_original_bytes_without_user_configuration() {
+    let result = Command::new(bin())
+        .arg("licenses")
+        .env_clear()
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    let expected = [
+        include_bytes!("../LICENSE").as_slice(),
+        b"\n\n".as_slice(),
+        include_bytes!(concat!(env!("OUT_DIR"), "/native-notices.txt")).as_slice(),
+    ]
+    .concat();
+    assert_eq!(result.stdout, expected);
+    let invalid = Command::new(bin())
+        .args(["licenses", "--unknown"])
+        .env_clear()
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(invalid.stdout.is_empty());
+    assert_eq!(invalid.stderr, b"usage: spanreed licenses\n");
+}
+
+#[test]
+fn blocked_update_refuses_before_release_lookup_or_download() {
+    for args in [
+        vec!["self-update", "--yes"],
+        vec!["self-update", "--yes", "--dry-run"],
+    ] {
+        let result = Command::new(bin())
+            .args(args)
+            .env_clear()
+            .env("SPANREED_NIX", "1")
+            .env("SPANREED_OFFLINE", "1")
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+        let error = String::from_utf8(result.stderr).unwrap();
+        assert!(error.contains("Nix-managed"));
+        assert!(!error.contains("not checking GitHub"));
+        assert!(!error.contains("downloading"));
+    }
+}
+
+#[test]
+fn remote_web_origin_preflight_preserves_state_and_service_configuration() {
+    struct Fixture(std::path::PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(std::env::temp_dir().join(format!(
+        "spanreed-origin-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    )));
+    let state = fixture.0.join("state");
+    let config = fixture.0.join("config");
+    let invoke = |args: &[&str], isolated_state: bool| {
+        let mut command = Command::new(bin());
+        command
+            .args(args)
+            .env_clear()
+            .env("HOME", &fixture.0)
+            .env("USERPROFILE", &fixture.0)
+            .env("LOCALAPPDATA", fixture.0.join("appdata"))
+            .env("XDG_CONFIG_HOME", &config)
+            .env("SPANREED_OFFLINE", "1");
+        if isolated_state {
+            command.env("FABRIALS_AGENT_STATE_DIR", &state);
+        }
+        command.output().unwrap()
+    };
+    for args in [
+        vec![
+            "remote",
+            "private-serve",
+            "https://host.example",
+            "--web-origin",
+            "https://grok.fabrials.com/",
+        ],
+        vec![
+            "remote",
+            "private-pair",
+            "https://host.example",
+            "--web-origin",
+            "https://grok.fabrials.com.evil.example",
+        ],
+        vec![
+            "remote",
+            "service",
+            "install",
+            "--private-origin",
+            "https://host.example",
+            "--web-origin",
+            "https://grok.fabrials.com:443",
+        ],
+        vec![
+            "remote",
+            "service",
+            "install",
+            "--web-origin",
+            "https://grok.fabrials.com",
+        ],
+    ] {
+        let output = invoke(&args, args.get(1) != Some(&"service"));
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            error.contains("invalid_hosted_web_origin")
+                || error.contains("web_origin_requires_private_origin"),
+            "{error}"
+        );
+        assert!(!state.exists());
+        assert!(!config.exists());
+    }
+    let output = invoke(
+        &[
+            "remote",
+            "service",
+            "print",
+            "--private-origin",
+            "https://host.example",
+            "--web-origin",
+            "https://grok.fabrials.com",
+        ],
+        false,
+    );
+    assert!(output.status.success());
+    let rendered = String::from_utf8(output.stdout).unwrap();
+    assert!(rendered.contains("--web-origin") && rendered.contains("https://grok.fabrials.com"));
+    assert!(!state.exists());
+    assert!(!config.exists());
+    for action in ["print", "install", "uninstall"] {
+        let output = invoke(&["remote", "service", action], true);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("remote_service_state_override_unsupported"));
+        assert!(error.contains("private-serve in the foreground"));
+        assert!(!state.exists());
+        assert!(!config.exists());
+        for legacy in ["GROK_BRIDGE_STATE_DIR", "GROK_LIGHT_STATE_DIR"] {
+            let output = Command::new(bin())
+                .args(["remote", "service", action])
+                .env_clear()
+                .env("HOME", &fixture.0)
+                .env("XDG_CONFIG_HOME", &config)
+                .env(legacy, &state)
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+            assert!(
+                String::from_utf8(output.stderr)
+                    .unwrap()
+                    .contains("remote_service_state_override_unsupported")
+            );
+            assert!(!state.exists());
+            assert!(!config.exists());
+        }
+    }
+    std::fs::create_dir_all(&state).unwrap();
+    let identity = state.join("direct.json");
+    let bytes = br#"{"installationId":"0123456789abcdef0123456789abcdef","endpoint":"https://host.example","webOrigin":"https://grok.fabrials.com","publicKey":"0000000000000000000000000000000000000000000000000000000000000000","privateKey":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}"#;
+    std::fs::write(&identity, bytes).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&identity, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    #[cfg(windows)]
+    fabrials_agent_host::win_acl::set_owner_only(&identity).unwrap();
+    for args in [
+        vec!["remote", "private-serve", "https://host.example"],
+        vec!["remote", "private-pair", "https://host.example"],
+        vec![
+            "remote",
+            "service",
+            "install",
+            "--private-origin",
+            "https://host.example",
+        ],
+    ] {
+        let output = invoke(&args, true);
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains(if args.get(1) == Some(&"service") {
+            "remote_service_state_override_unsupported"
+        } else {
+            "direct_origin_mismatch"
+        }));
+        assert_eq!(std::fs::read(&identity).unwrap(), bytes);
+        assert_eq!(std::fs::read_dir(&state).unwrap().count(), 1);
+        assert!(!config.exists());
+    }
+    let normal_state = fabrials_agent_host::state_dir::resolve_state_dirs_from(|name| match name {
+        "HOME" => Some(fixture.0.clone().into_os_string()),
+        "LOCALAPPDATA" => Some(fixture.0.join("appdata").into_os_string()),
+        _ => None,
+    })
+    .unwrap()
+    .state_dir;
+    std::fs::create_dir_all(&normal_state).unwrap();
+    let normal_identity = normal_state.join("direct.json");
+    std::fs::copy(&identity, &normal_identity).unwrap();
+    #[cfg(windows)]
+    fabrials_agent_host::win_acl::set_owner_only(&normal_identity).unwrap();
+    let output = invoke(
+        &[
+            "remote",
+            "service",
+            "install",
+            "--private-origin",
+            "https://host.example",
+        ],
+        false,
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("direct_origin_mismatch")
+    );
+    assert_eq!(std::fs::read(&normal_identity).unwrap(), bytes);
+    assert!(!config.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_apply_fails_before_release_lookup_or_download() {
+    for args in [
+        vec!["self-update", "--yes"],
+        vec!["self-update", "--yes", "--dry-run"],
+    ] {
+        let result = Command::new(bin()).args(args).env_clear().output().unwrap();
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+        let error = String::from_utf8(result.stderr).unwrap();
+        assert!(error.contains("Windows self-update is disabled"));
+        assert!(!error.contains("downloading"));
+    }
+}
+
+#[test]
 fn capture_runs_independently_with_local_controls_and_closed_credential_boundary() {
     use std::io::{BufRead, Read, Write};
     use std::net::{TcpListener, TcpStream};

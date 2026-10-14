@@ -9,16 +9,16 @@
 //! `light.local.v1` surface.
 
 use std::collections::HashMap;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::agent_process::{AgentProcess, scope_error};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::process::{ChildStdin, ChildStdout};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
 /// ACP wire version this host implements.
@@ -53,6 +53,11 @@ pub enum AcpError {
     /// The agent executable could not be spawned.
     #[error("failed to spawn the agent process: {0}")]
     Spawn(#[source] std::io::Error),
+    #[allow(missing_docs)]
+    #[error(
+        "shared agent failed while starting in an independent systemd user scope: {0}; a working user manager is required when the host runs as a service"
+    )]
+    SharedScope(#[source] Box<AcpError>),
     /// A pipe to the child was unavailable.
     #[error("agent stdio pipe was unavailable")]
     Pipe,
@@ -83,6 +88,9 @@ pub enum AcpError {
     /// The request exceeded its deadline.
     #[error("agent request timed out")]
     Timeout,
+    #[error("agent rejected the model id")]
+    #[allow(missing_docs)]
+    InvalidModel,
     /// A caller attempted to pass a forbidden flag.
     #[error("refused to pass a forbidden flag to the agent")]
     ForbiddenFlag,
@@ -101,13 +109,20 @@ pub const METHOD_NOT_FOUND: i64 = -32601;
 /// A missing or non-integer code becomes `0`, which matches no known code and
 /// so is never mistaken for a meaningful one.
 fn agent_error(error: &Value) -> AcpError {
+    if error.get("code").and_then(Value::as_i64) == Some(-32602)
+        && error.get("data").and_then(Value::as_str) == Some("unknown model id")
+    {
+        return AcpError::InvalidModel;
+    }
     AcpError::Agent {
         code: error.get("code").and_then(Value::as_i64).unwrap_or(0),
         message: error
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("unknown")
-            .to_owned(),
+            .chars()
+            .take(1024)
+            .collect(),
     }
 }
 
@@ -128,9 +143,20 @@ impl AcpError {
     }
 }
 
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentMode {
+    #[default]
+    Isolated,
+    Shared,
+}
+
 /// Where the agent executable lives and how it is invoked.
 #[derive(Debug, Clone)]
 pub struct AgentCommand {
+    #[allow(missing_docs)]
+    pub mode: AgentMode,
     /// Path or program name of the qualified executable.
     pub program: String,
     /// Working directory for the child.
@@ -145,9 +171,17 @@ impl AgentCommand {
     pub fn new(program: impl Into<String>) -> Self {
         Self {
             program: program.into(),
+            mode: AgentMode::Isolated,
             working_directory: None,
             env: Vec::new(),
         }
+    }
+
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn with_mode(mut self, mode: AgentMode) -> Self {
+        self.mode = mode;
+        self
     }
 
     /// Add environment variables for the spawned agent.
@@ -169,7 +203,10 @@ impl AgentCommand {
     /// Options precede the subcommand, matching `grok agent [OPTIONS] [COMMAND]`.
     #[must_use]
     pub fn argv(&self) -> Vec<&'static str> {
-        vec!["agent", "--no-leader", "stdio"]
+        match self.mode {
+            AgentMode::Isolated => vec!["agent", "--no-leader", "stdio"],
+            AgentMode::Shared => vec!["agent", "--leader", "stdio"],
+        }
     }
 }
 
@@ -191,6 +228,44 @@ pub struct InitializeResult {
 }
 
 impl InitializeResult {
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn supports_qualified_images(&self) -> bool {
+        self.supports_images()
+            || (self.meta.get("grokShell").and_then(Value::as_bool) == Some(true)
+                && matches!(
+                    self.meta.get("agentVersion").and_then(Value::as_str),
+                    Some("1.0.50" | "1.0.52")
+                ))
+    }
+
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn supports_images(&self) -> bool {
+        self.agent_capabilities
+            .pointer("/promptCapabilities/image")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn supports_audio(&self) -> bool {
+        self.agent_capabilities
+            .pointer("/promptCapabilities/audio")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn supports_embedded_context(&self) -> bool {
+        self.agent_capabilities
+            .pointer("/promptCapabilities/embeddedContext")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// Whether the agent supports loading previous sessions.
     #[must_use]
     pub fn supports_load_session(&self) -> bool {
@@ -216,6 +291,14 @@ pub const SESSION_UPDATE: &str = "session/update";
 /// Something the agent sent that the host must act on.
 #[derive(Debug)]
 pub enum AgentEvent {
+    #[allow(missing_docs)]
+    Barrier(oneshot::Sender<()>),
+    #[allow(missing_docs)]
+    InteractionRequest {
+        method: String,
+        request_id: Value,
+        params: Value,
+    },
     /// A streaming session update notification (`session/update`).
     Update(Value),
     /// An extension notification (`x.ai/*` or `_x.ai/*`).
@@ -248,12 +331,29 @@ pub enum AgentEvent {
 #[derive(Debug)]
 pub struct AgentHandle {
     stdin: Mutex<ChildStdin>,
+    events: mpsc::Sender<AgentEvent>,
+    transport_closed: watch::Sender<bool>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    echoes: Arc<Mutex<HashMap<u64, PromptEcho>>>,
     next_id: AtomicU64,
-    child: Mutex<Child>,
-    /// Windows: job object that kills the agent process tree when dropped.
-    #[cfg(windows)]
-    _job: Option<crate::win_job::KillOnDropJob>,
+    child: Mutex<AgentProcess>,
+    scoped: bool,
+}
+
+#[derive(Debug)]
+struct PromptEcho {
+    session_id: String,
+    prompt_id: Option<String>,
+    remaining: String,
+    images: Vec<[u8; 32]>,
+}
+
+fn image_echo_hash(block: &Value) -> Option<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    if block.get("type").and_then(Value::as_str) != Some("image") {
+        return None;
+    }
+    Some(Sha256::digest(block.get("data")?.as_str()?.as_bytes()).into())
 }
 
 impl AgentHandle {
@@ -273,44 +373,44 @@ impl AgentHandle {
             return Err(AcpError::ForbiddenFlag);
         }
 
-        let mut builder = Command::new(&command.program);
-        builder
-            .args(&argv)
-            .envs(command.env.iter().map(|(key, value)| (key, value)))
-            .env(CLIENT_NAME_ENV, CLIENT_IDENTIFIER)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        if let Some(directory) = &command.working_directory {
-            builder.current_dir(directory);
-        }
-        #[cfg(unix)]
-        builder.process_group(0);
-
-        let mut child = builder.spawn().map_err(AcpError::Spawn)?;
-        #[cfg(windows)]
-        let job = child
-            .id()
-            .and_then(|pid| crate::win_job::KillOnDropJob::for_pid(pid).ok());
-        let stdin = child.stdin.take().ok_or(AcpError::Pipe)?;
-        let stdout = child.stdout.take().ok_or(AcpError::Pipe)?;
+        let mut process = AgentProcess::spawn(command)?;
+        let scoped = process.scoped;
+        let stdin = process.child.stdin.take().ok_or(AcpError::Pipe)?;
+        let stdout = process.child.stdout.take().ok_or(AcpError::Pipe)?;
 
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let (events_tx, events_rx) = mpsc::channel(256);
+        let (transport_closed, closed_rx) = watch::channel(false);
+        let echoes = Arc::new(Mutex::new(HashMap::new()));
 
         let handle = Arc::new(Self {
             stdin: Mutex::new(stdin),
+            events: events_tx.clone(),
+            transport_closed,
             pending: Arc::clone(&pending),
+            echoes: Arc::clone(&echoes),
             next_id: AtomicU64::new(0),
-            child: Mutex::new(child),
-            #[cfg(windows)]
-            _job: job,
+            child: Mutex::new(process),
+            scoped,
         });
 
-        tokio::spawn(read_loop(stdout, pending, events_tx));
+        tokio::spawn(read_loop(stdout, pending, echoes, events_tx, closed_rx));
         Ok((handle, events_rx))
+    }
+
+    #[allow(missing_docs)]
+    pub async fn flush_events(&self) -> Result<(), AcpError> {
+        timeout(REQUEST_TIMEOUT, async {
+            let (ack, received) = oneshot::channel();
+            self.events
+                .send(AgentEvent::Barrier(ack))
+                .await
+                .map_err(|_| AcpError::Closed)?;
+            received.await.map_err(|_| AcpError::Closed)
+        })
+        .await
+        .map_err(|_| AcpError::Timeout)?
     }
 
     /// Send a JSON-RPC request and await its response.
@@ -319,7 +419,7 @@ impl AgentHandle {
     ///
     /// Propagates transport, timeout, and agent errors.
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, AcpError> {
-        self.request_with_timeout(method, params, REQUEST_TIMEOUT)
+        self.request_with_timeout(method, params, Some(REQUEST_TIMEOUT))
             .await
     }
 
@@ -327,11 +427,45 @@ impl AgentHandle {
         &self,
         method: &str,
         params: Value,
-        deadline: Duration,
+        deadline: Option<Duration>,
+    ) -> Result<Value, AcpError> {
+        self.request_with_timeout_started(method, params, deadline, None)
+            .await
+    }
+
+    async fn request_with_timeout_started(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: Option<Duration>,
+        started: Option<oneshot::Sender<()>>,
     ) -> Result<Value, AcpError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
+        if method == "session/prompt" {
+            if let (Some(session), Some(text)) = (
+                params.get("sessionId").and_then(Value::as_str),
+                params.pointer("/prompt/0/text").and_then(Value::as_str),
+            ) {
+                self.echoes.lock().await.insert(
+                    id,
+                    PromptEcho {
+                        session_id: session.into(),
+                        prompt_id: params
+                            .pointer("/_meta/promptId")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        remaining: text.into(),
+                        images: params
+                            .get("prompt")
+                            .and_then(Value::as_array)
+                            .map(|blocks| blocks.iter().filter_map(image_echo_hash).collect())
+                            .unwrap_or_default(),
+                    },
+                );
+            }
+        }
 
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -341,10 +475,19 @@ impl AgentHandle {
         });
         if let Err(error) = self.write_line(&payload).await {
             self.pending.lock().await.remove(&id);
+            self.echoes.lock().await.remove(&id);
             return Err(error);
         }
+        if let Some(started) = started {
+            let _ = started.send(());
+        }
 
-        let message = match timeout(deadline, rx).await {
+        let response = match deadline {
+            Some(deadline) => timeout(deadline, rx).await,
+            None => Ok(rx.await),
+        };
+        self.echoes.lock().await.remove(&id);
+        let message = match response {
             Ok(Ok(message)) => message,
             Ok(Err(_)) => {
                 self.pending.lock().await.remove(&id);
@@ -382,6 +525,16 @@ impl AgentHandle {
         self.write_line(&payload).await
     }
 
+    #[allow(missing_docs)]
+    pub async fn answer_interaction(
+        &self,
+        request_id: &Value,
+        result: Value,
+    ) -> Result<(), AcpError> {
+        self.write_line(&serde_json::json!({"jsonrpc":"2.0", "id":request_id, "result":result}))
+            .await
+    }
+
     /// Perform the ACP `initialize` handshake.
     ///
     /// # Errors
@@ -391,11 +544,15 @@ impl AgentHandle {
         let params = serde_json::json!({
             "protocolVersion": ACP_PROTOCOL_VERSION,
             "clientCapabilities": {
-                "fs": { "readTextFile": false, "writeTextFile": false }
+                "fs": { "readTextFile": false, "writeTextFile": false },
+                "_meta": { "x.ai/userMessageEcho": true }
             },
             "_meta": { "clientIdentifier": CLIENT_IDENTIFIER }
         });
-        let result = self.request("initialize", params).await?;
+        let result = self
+            .request("initialize", params)
+            .await
+            .map_err(|error| scope_error(self.scoped, error))?;
         serde_json::from_value(result).map_err(|_| AcpError::Malformed)
     }
 
@@ -412,6 +569,7 @@ impl AgentHandle {
         let params = serde_json::json!({
             "cwd": cwd.to_string_lossy(),
             "mcpServers": [],
+            "_meta": { "clientUserMessageEcho": true },
         });
         let result = self.request("session/new", params).await?;
         let session_id = result
@@ -441,6 +599,7 @@ impl AgentHandle {
             "sessionId": session_id,
             "cwd": cwd.to_string_lossy(),
             "mcpServers": [],
+            "_meta": { "clientUserMessageEcho": true },
         });
         self.request("session/load", params).await
     }
@@ -468,11 +627,73 @@ impl AgentHandle {
     ///
     /// Propagates transport, timeout, and agent errors.
     pub async fn prompt(&self, session_id: &str, text: &str) -> Result<Value, AcpError> {
+        self.prompt_with_images(session_id, text, &[]).await
+    }
+
+    #[allow(missing_docs)]
+    pub async fn prompt_with_images(
+        &self,
+        session_id: &str,
+        text: &str,
+        images: &[crate::media::PromptImage],
+    ) -> Result<Value, AcpError> {
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random)
+            .map_err(|error| AcpError::Transport(std::io::Error::other(error)))?;
+        random[6] = (random[6] & 0x0f) | 0x40;
+        random[8] = (random[8] & 0x3f) | 0x80;
+        let hex: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let prompt_id = format!(
+            "{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
+        );
+        self.prompt_target(session_id, &prompt_id, text, images)
+            .await
+    }
+
+    #[allow(missing_docs)]
+    pub async fn prompt_target(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        text: &str,
+        images: &[crate::media::PromptImage],
+    ) -> Result<Value, AcpError> {
+        self.prompt_target_with_started(session_id, prompt_id, text, images, None)
+            .await
+    }
+
+    #[allow(missing_docs)]
+    pub async fn prompt_target_with_started(
+        &self,
+        session_id: &str,
+        prompt_id: &str,
+        text: &str,
+        images: &[crate::media::PromptImage],
+        started: Option<oneshot::Sender<()>>,
+    ) -> Result<Value, AcpError> {
+        if prompt_id.is_empty()
+            || prompt_id.len() > 128
+            || !prompt_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(AcpError::Malformed);
+        }
+        crate::media::validate_prompt_images(images).map_err(|_| AcpError::OversizedMessage)?;
+        let mut content = vec![serde_json::json!({"type": "text", "text": text})];
+        content.extend(images.iter().map(crate::media::PromptImage::acp_block));
         let params = serde_json::json!({
             "sessionId": session_id,
-            "prompt": [{ "type": "text", "text": text }],
+            "prompt": content,
+            "_meta": { "promptId": prompt_id },
         });
-        self.request("session/prompt", params).await
+        self.request_with_timeout_started("session/prompt", params, None, started)
+            .await
     }
 
     /// Switch model (and optional reasoning effort) via ACP `session/set_model`.
@@ -496,6 +717,40 @@ impl AgentHandle {
         self.request("session/set_model", params).await
     }
 
+    #[allow(missing_docs)]
+    pub async fn set_reasoning_effort(
+        &self,
+        session_id: &str,
+        effort: &str,
+    ) -> Result<Value, AcpError> {
+        self.request(
+            "session/set_config_option",
+            serde_json::json!({
+                "sessionId": session_id,
+                "configId": "reasoning_effort",
+                "value": effort,
+            }),
+        )
+        .await
+    }
+
+    #[allow(missing_docs)]
+    pub async fn set_model_config(
+        &self,
+        session_id: &str,
+        model_id: &str,
+    ) -> Result<Value, AcpError> {
+        self.request(
+            "session/set_config_option",
+            serde_json::json!({
+                "sessionId": session_id,
+                "configId": "model",
+                "value": model_id,
+            }),
+        )
+        .await
+    }
+
     /// Ask the agent to cancel the in-flight turn.
     ///
     /// # Errors
@@ -510,15 +765,41 @@ impl AgentHandle {
         self.write_line(&payload).await
     }
 
+    #[allow(missing_docs)]
+    pub async fn cancel_target(&self, session_id: &str, prompt_id: &str) -> Result<(), AcpError> {
+        if prompt_id.is_empty()
+            || prompt_id.len() > 128
+            || !prompt_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(AcpError::Malformed);
+        }
+        self.write_line(&serde_json::json!({
+            "jsonrpc": "2.0", "method": "session/cancel",
+            "params": {"sessionId": session_id, "_meta": {"promptId": prompt_id, "rewindIfNoOutput": true, "cancelTrigger": "dashboard_stop", "cancelSubagents": false}}
+        })).await
+    }
+
     async fn write_line(&self, payload: &Value) -> Result<(), AcpError> {
         let mut line = serde_json::to_string(payload).map_err(|_| AcpError::Malformed)?;
         line.push('\n');
         let mut stdin = self.stdin.lock().await;
-        stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(AcpError::Transport)?;
-        stdin.flush().await.map_err(AcpError::Transport)
+        if *self.transport_closed.borrow() {
+            return Err(AcpError::Closed);
+        }
+        let result = async {
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.flush().await
+        }
+        .await;
+        if let Err(error) = result {
+            self.transport_closed.send_replace(true);
+            drop(stdin);
+            let _ = self.shutdown().await;
+            return Err(AcpError::Transport(error));
+        }
+        Ok(())
     }
 
     /// Terminate the agent and reap it.
@@ -527,10 +808,8 @@ impl AgentHandle {
     ///
     /// Returns [`AcpError::Transport`] when the child cannot be signalled.
     pub async fn shutdown(&self) -> Result<(), AcpError> {
-        let mut child = self.child.lock().await;
-        child.start_kill().map_err(AcpError::Transport)?;
-        let _ = child.wait().await;
-        Ok(())
+        self.transport_closed.send_replace(true);
+        self.child.lock().await.shutdown().await
     }
 }
 
@@ -538,13 +817,21 @@ impl AgentHandle {
 async fn read_loop(
     stdout: ChildStdout,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    echoes: Arc<Mutex<HashMap<u64, PromptEcho>>>,
     events: mpsc::Sender<AgentEvent>,
+    mut transport_closed: watch::Receiver<bool>,
 ) {
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
+    let mut running_prompts = HashMap::<String, String>::new();
     loop {
         line.clear();
-        match reader.read_line(&mut line).await {
+        let read = tokio::select! {
+            biased;
+            _ = transport_closed.wait_for(|closed| *closed) => break,
+            read = reader.read_line(&mut line) => read,
+        };
+        match read {
             Ok(0) | Err(_) => break,
             Ok(read) if read > MAX_LINE_BYTES => break,
             Ok(_) => {}
@@ -569,12 +856,99 @@ async fn read_loop(
         }
 
         let method = message.get("method").and_then(Value::as_str).unwrap_or("");
-        let event = if method == REQUEST_PERMISSION {
+        let (method, params) =
+            crate::interactions::normalize(method, message.get("params").unwrap_or(&Value::Null));
+        if method == "x.ai/queue/changed"
+            && let Some(session_id) = params.get("sessionId").and_then(Value::as_str)
+        {
+            if let Some(prompt_id) = params.get("runningPromptId").and_then(Value::as_str) {
+                if session_id.len() <= 512
+                    && prompt_id.len() <= 512
+                    && (running_prompts.contains_key(session_id) || running_prompts.len() < 256)
+                {
+                    running_prompts.insert(session_id.into(), prompt_id.into());
+                }
+            } else {
+                running_prompts.remove(session_id);
+            }
+        }
+        if method == SESSION_UPDATE
+            && params
+                .pointer("/update/sessionUpdate")
+                .and_then(Value::as_str)
+                == Some("user_message_chunk")
+        {
+            if params
+                .pointer("/update/_meta/hideFromScrollback")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                continue;
+            }
+            if params.pointer("/_meta/isReplay").and_then(Value::as_bool) != Some(true)
+                && let (Some(session_id), Some(hash)) = (
+                    params.get("sessionId").and_then(Value::as_str),
+                    params.pointer("/update/content").and_then(image_echo_hash),
+                )
+            {
+                let mut echoes = echoes.lock().await;
+                let prompt_id = params
+                    .pointer("/_meta/promptId")
+                    .and_then(Value::as_str)
+                    .or_else(|| running_prompts.get(session_id).map(String::as_str));
+                if let Some(echo) = echoes.values_mut().find(|echo| {
+                    echo.session_id == session_id
+                        && prompt_id.is_none_or(|id| echo.prompt_id.as_deref() == Some(id))
+                        && echo.images.contains(&hash)
+                }) {
+                    let index = echo
+                        .images
+                        .iter()
+                        .position(|candidate| candidate == &hash)
+                        .expect("matched image");
+                    echo.images.remove(index);
+                    continue;
+                }
+            }
+            if params.pointer("/_meta/isReplay").and_then(Value::as_bool) != Some(true)
+                && let (Some(session_id), Some(text)) = (
+                    params.get("sessionId").and_then(Value::as_str),
+                    params
+                        .pointer("/update/content/text")
+                        .and_then(Value::as_str),
+                )
+            {
+                let mut echoes = echoes.lock().await;
+                let prompt_id = params.pointer("/_meta/promptId").and_then(Value::as_str);
+                if let Some(echo) = echoes.values_mut().find(|echo| {
+                    echo.session_id == session_id
+                        && !text.is_empty()
+                        && echo.remaining.starts_with(text)
+                        && prompt_id
+                            .or_else(|| running_prompts.get(session_id).map(String::as_str))
+                            .is_none_or(|id| echo.prompt_id.as_deref() == Some(id))
+                }) {
+                    echo.remaining.drain(..text.len());
+                    continue;
+                }
+            }
+        }
+        let event = if matches!(
+            method,
+            "x.ai/ask_user_question" | "x.ai/exit_plan_mode" | "x.ai/mcp/elicit"
+        ) && message.get("id").is_some()
+        {
+            Some(AgentEvent::InteractionRequest {
+                method: method.into(),
+                request_id: message["id"].clone(),
+                params: params.clone(),
+            })
+        } else if method == REQUEST_PERMISSION {
             message
                 .get("id")
                 .map(|request_id| AgentEvent::PermissionRequest {
                     request_id: request_id.clone(),
-                    params: message.get("params").cloned().unwrap_or(Value::Null),
+                    params: params.clone(),
                 })
         } else if method == SESSION_UPDATE {
             Some(AgentEvent::Update(
@@ -585,7 +959,7 @@ async fn read_loop(
             // runtime surfaces (tasks, workflows, …) do not fork the reader.
             Some(AgentEvent::ExtNotification {
                 method: method.to_owned(),
-                params: message.get("params").cloned().unwrap_or(Value::Null),
+                params: params.clone(),
             })
         } else {
             None
@@ -618,19 +992,17 @@ fn is_ext_notification_method(method: &str) -> bool {
 /// A supervised agent child speaking ACP over stdio.
 #[derive(Debug)]
 pub struct AgentSession {
-    child: Child,
+    child: AgentProcess,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
-    /// Windows: job object that kills the agent process tree when dropped.
-    #[cfg(windows)]
-    _job: Option<crate::win_job::KillOnDropJob>,
+    scoped: bool,
 }
 
 impl AgentSession {
     /// Spawn the agent and take ownership of its pipes.
     ///
-    /// The child runs in its own process group on Unix so the whole tree can be
+    /// The child runs in its own process group on Unix so that group can be
     /// terminated, and is killed when this value is dropped.
     ///
     /// # Errors
@@ -643,35 +1015,16 @@ impl AgentSession {
             return Err(AcpError::ForbiddenFlag);
         }
 
-        let mut builder = Command::new(&command.program);
-        builder
-            .args(&argv)
-            .envs(command.env.iter().map(|(key, value)| (key, value)))
-            .env(CLIENT_NAME_ENV, CLIENT_IDENTIFIER)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        if let Some(directory) = &command.working_directory {
-            builder.current_dir(directory);
-        }
-        #[cfg(unix)]
-        builder.process_group(0);
-
-        let mut child = builder.spawn().map_err(AcpError::Spawn)?;
-        #[cfg(windows)]
-        let job = child
-            .id()
-            .and_then(|pid| crate::win_job::KillOnDropJob::for_pid(pid).ok());
-        let stdin = child.stdin.take().ok_or(AcpError::Pipe)?;
-        let stdout = child.stdout.take().ok_or(AcpError::Pipe)?;
+        let mut child = AgentProcess::spawn(command)?;
+        let scoped = child.scoped;
+        let stdin = child.child.stdin.take().ok_or(AcpError::Pipe)?;
+        let stdout = child.child.stdout.take().ok_or(AcpError::Pipe)?;
         Ok(Self {
             child,
             stdin,
             stdout: BufReader::new(stdout),
             next_id: 0,
-            #[cfg(windows)]
-            _job: job,
+            scoped,
         })
     }
 
@@ -688,7 +1041,10 @@ impl AgentSession {
             },
             "_meta": { "clientIdentifier": CLIENT_IDENTIFIER }
         });
-        let result = self.request("initialize", params).await?;
+        let result = self
+            .request("initialize", params)
+            .await
+            .map_err(|error| scope_error(self.scoped, error))?;
         serde_json::from_value(result).map_err(|_| AcpError::Malformed)
     }
 
@@ -772,17 +1128,55 @@ impl AgentSession {
     /// Returns [`AcpError::Transport`] when the child cannot be signalled.
     pub async fn shutdown(mut self) -> Result<(), AcpError> {
         drop(self.stdin);
-        self.child.start_kill().map_err(AcpError::Transport)?;
-        let _ = self.child.wait().await;
-        Ok(())
+        self.child.shutdown().await
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn image_compatibility_override_is_limited_to_qualified_grok_versions() {
+        for version in ["1.0.50", "1.0.52"] {
+            let initialized: super::InitializeResult = serde_json::from_value(serde_json::json!({"protocolVersion":1,"agentCapabilities":{"promptCapabilities":{"image":false}},"_meta":{"grokShell":true,"agentVersion":version}})).unwrap();
+            assert!(!initialized.supports_images());
+            assert!(initialized.supports_qualified_images());
+            assert!(!initialized.supports_audio());
+        }
+        for metadata in [
+            serde_json::json!({"grokShell":true,"agentVersion":"1.0.51"}),
+            serde_json::json!({"grokShell":true,"agentVersion":"1.0.53"}),
+            serde_json::json!({"agentVersion":"1.0.52"}),
+            serde_json::json!({"grokShell":true,"agentVersion":"1.0.52-patched"}),
+        ] {
+            let initialized: super::InitializeResult = serde_json::from_value(
+                serde_json::json!({"protocolVersion":1,"agentCapabilities":{},"_meta":metadata}),
+            )
+            .unwrap();
+            assert!(!initialized.supports_qualified_images());
+        }
+    }
     use super::{
         AgentCommand, CLIENT_IDENTIFIER, CLIENT_NAME_ENV, FORBIDDEN_FLAGS, MAX_LINE_BYTES,
     };
+
+    #[test]
+    fn prompt_capabilities_require_explicit_upstream_booleans() {
+        for capabilities in [
+            serde_json::Value::Null,
+            serde_json::json!({}),
+            serde_json::json!({"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}}),
+            serde_json::json!({"promptCapabilities":{"image":"true","audio":1,"embeddedContext":{}}}),
+        ] {
+            let initialized: super::InitializeResult = serde_json::from_value(serde_json::json!({"protocolVersion":1,"agentCapabilities":capabilities,"_meta":{"promptCapabilities":{"image":true,"audio":true,"embeddedContext":true}}})).unwrap();
+            assert!(!initialized.supports_images());
+            assert!(!initialized.supports_audio());
+            assert!(!initialized.supports_embedded_context());
+        }
+        let initialized: super::InitializeResult = serde_json::from_value(serde_json::json!({"protocolVersion":1,"agentCapabilities":{"promptCapabilities":{"image":true,"audio":true,"embeddedContext":true}},"_meta":{"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false}}})).unwrap();
+        assert!(initialized.supports_images());
+        assert!(initialized.supports_audio());
+        assert!(initialized.supports_embedded_context());
+    }
 
     #[test]
     fn production_argv_is_exact_and_ordered() {

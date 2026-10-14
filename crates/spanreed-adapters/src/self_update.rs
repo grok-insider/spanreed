@@ -8,8 +8,8 @@
 //! Never applies an update without an explicit CLI invocation (or tray menu
 //! action that runs this command). `SPANREED_OFFLINE=1` refuses network calls.
 
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -17,6 +17,11 @@ use sha2::{Digest, Sha256};
 use crate::creds;
 use crate::http;
 use crate::setup;
+
+mod durable;
+mod install;
+#[cfg(windows)]
+mod windows;
 
 pub const DEFAULT_REPO: &str = crate::product::GITHUB_REPO;
 
@@ -54,6 +59,9 @@ fn exe_is_under_nix_store(exe: Option<&Path>) -> bool {
 /// Linux tray builds must not apply GH musl assets (those binaries have no tray).
 /// Nix-managed installs are immutable.
 pub fn can_apply_self_update() -> bool {
+    if platform_apply_blocked_reason(cfg!(windows)).is_some() {
+        return false;
+    }
     if install_is_nix_managed() {
         return false;
     }
@@ -76,7 +84,13 @@ pub fn apply_blocked_reason() -> Option<&'static str> {
             "Linux tray builds cannot self-replace with musl GH assets (those have no tray)",
         );
     }
-    None
+    platform_apply_blocked_reason(cfg!(windows))
+}
+
+fn platform_apply_blocked_reason(windows: bool) -> Option<&'static str> {
+    windows.then_some(
+        "Windows self-update is disabled until candidate processes are assigned to a Job before execution and executable ACLs strictly exclude other writers; version checks remain available. No update has been downloaded or applied",
+    )
 }
 
 /// Triple used in GitHub Release asset names (matches install scripts).
@@ -103,37 +117,54 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
 }
 
 fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
-    let s = s.trim().trim_start_matches('v');
-    let mut parts = s.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next()?.parse().ok()?;
-    Some((major, minor, patch))
+    let mut parts = s.strip_prefix('v').unwrap_or(s).split('.');
+    let number = |value: &str| {
+        if value.is_empty()
+            || !value.bytes().all(|byte| byte.is_ascii_digit())
+            || (value.len() > 1 && value.starts_with('0'))
+        {
+            None
+        } else {
+            value.parse().ok()
+        }
+    };
+    let major = number(parts.next()?)?;
+    let minor = number(parts.next()?)?;
+    let patch = number(parts.next()?)?;
+    parts.next().is_none().then_some((major, minor, patch))
 }
 
 /// Parse GitHub Releases API JSON into tag + version (no network).
 pub fn parse_latest_tag(body: &str) -> Result<(String, String), String> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| format!("invalid releases JSON: {e}"))?;
+    if ["draft", "prerelease"]
+        .iter()
+        .any(|field| v.get(field).and_then(serde_json::Value::as_bool) != Some(false))
+    {
+        return Err("release must explicitly be published and stable".into());
+    }
     let tag = v
         .get("tag_name")
         .and_then(|t| t.as_str())
         .ok_or_else(|| "releases JSON missing tag_name".to_string())?
         .to_string();
-    let version = tag.trim_start_matches('v').to_string();
-    if parse_semver(&version).is_none() {
+    if parse_semver(&tag).is_none() {
         return Err(format!("unparseable release version in tag: {tag}"));
     }
+    let version = tag.strip_prefix('v').unwrap_or(&tag).to_string();
     Ok((tag, version))
 }
 
 /// Parse a `.sha256` sidecar file (`hash  filename` or `hash`).
 pub fn parse_sha256_file(text: &str) -> Result<String, String> {
-    let line = text
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let line = lines
+        .next()
         .ok_or_else(|| "empty sha256 file".to_string())?;
+    if lines.next().is_some() || line.split_whitespace().count() > 2 {
+        return Err("sha256 sidecar must contain exactly one entry".into());
+    }
     let hash = line
         .split_whitespace()
         .next()
@@ -141,6 +172,15 @@ pub fn parse_sha256_file(text: &str) -> Result<String, String> {
         .to_ascii_lowercase();
     if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("invalid sha256 hash: {hash}"));
+    }
+    Ok(hash)
+}
+
+fn parse_asset_sha256(text: &str, asset_name: &str) -> Result<String, String> {
+    let hash = parse_sha256_file(text)?;
+    let fields: Vec<_> = text.split_whitespace().collect();
+    if fields.len() != 2 || fields[1] != asset_name {
+        return Err("sha256 sidecar does not identify the selected release asset".into());
     }
     Ok(hash)
 }
@@ -195,12 +235,20 @@ pub fn apply_update(r: &CheckResult, dry_run: bool) -> Result<String, String> {
     if let Some(why) = apply_blocked_reason() {
         return Err(why.into());
     }
+    let _host_guard = if dry_run {
+        None
+    } else {
+        let directory = fabrials_agent_host::state_dir::resolve_state_dirs()
+            .map_err(|error| format!("cannot locate agent host state: {error}"))?
+            .state_dir;
+        Some(install::claim_host(&directory)?)
+    };
 
     eprintln!("downloading {} …", r.asset_name);
     let archive = download_bytes(&r.asset_url)?;
     let sha_text = download_bytes(&r.sha_url)
         .and_then(|b| String::from_utf8(b).map_err(|e| format!("sha256 file not utf-8: {e}")))?;
-    let expected = parse_sha256_file(&sha_text)?;
+    let expected = parse_asset_sha256(&sha_text, &r.asset_name)?;
     let actual = sha256_hex(&archive);
     if actual != expected {
         return Err(format!(
@@ -214,6 +262,7 @@ pub fn apply_update(r: &CheckResult, dry_run: bool) -> Result<String, String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
+    let candidate = install::Candidate::prepare(&dest, &bin_bytes, &r.latest)?;
 
     if dry_run {
         return Ok(format!(
@@ -224,21 +273,18 @@ pub fn apply_update(r: &CheckResult, dry_run: bool) -> Result<String, String> {
         ));
     }
 
-    stop_capture_processes();
-    replace_binary(&dest, &bin_bytes)?;
-
-    // Best-effort restart capture if it was part of normal setup.
-    let ensure_msg = match setup::service_ensure(false) {
-        Ok(m) => format!("; capture: {m}"),
-        Err(e) => format!("; capture ensure: {e} (run: spanreed capture ensure)"),
-    };
-
+    candidate.install(&r.latest)?;
+    #[cfg(windows)]
+    return Ok(format!(
+        "update {} prepared; the verified helper completes after this process exits. Run self-update --status to check completion or --recover if interrupted. Restart running Spanreed processes after completion",
+        r.latest
+    ));
+    #[cfg(not(windows))]
     Ok(format!(
-        "installed {} → {} ({}){}",
+        "installed {} → {} ({}); previous executable retained for self-update --rollback. Restart running Spanreed processes when idle",
         r.latest,
         dest.display(),
-        r.tag,
-        ensure_msg
+        r.tag
     ))
 }
 
@@ -291,69 +337,31 @@ fn extract_tar_gz_binary(archive: &[u8]) -> Result<Vec<u8>, String> {
     Err("tar.gz archive has no spanreed binary".into())
 }
 
-fn replace_binary(dest: &Path, bytes: &[u8]) -> Result<(), String> {
-    let tmp = dest.with_extension("new");
-    {
-        let mut f = File::create(&tmp).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-        f.write_all(bytes)
-            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = f
-                .metadata()
-                .map_err(|e| format!("metadata: {e}"))?
-                .permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&tmp, perms).map_err(|e| format!("chmod: {e}"))?;
-        }
+pub fn recover_update(rollback: bool) -> Result<String, String> {
+    if install_is_nix_managed() {
+        return Err(
+            "this installation is Nix-managed; use its profile generations for recovery".into(),
+        );
     }
-
-    #[cfg(windows)]
-    {
-        let old = dest.with_extension("exe.old");
-        let _ = fs::remove_file(&old);
-        if dest.exists() {
-            fs::rename(dest, &old).map_err(|e| {
-                format!(
-                    "could not move old binary aside (is it running?): {}: {e}",
-                    dest.display()
-                )
-            })?;
-        }
-        fs::rename(&tmp, dest).map_err(|e| format!("install new binary: {e}"))?;
-        let _ = fs::remove_file(&old);
-    }
-
-    #[cfg(not(windows))]
-    {
-        // Atomic replace on the same filesystem.
-        fs::rename(&tmp, dest).map_err(|e| format!("install new binary: {e}"))?;
-    }
-
-    Ok(())
+    let directory = fabrials_agent_host::state_dir::resolve_state_dirs()
+        .map_err(|error| error.to_string())?
+        .state_dir;
+    let _host = install::claim_host(&directory)?;
+    durable::recover(&setup::install_bin_path(), rollback)
 }
 
-/// Stop capture workers so the install path can be replaced on Windows.
-fn stop_capture_processes() {
+pub fn update_status() -> Result<String, String> {
+    durable::status(&install_path())
+}
+
+pub fn finish_update() -> Result<String, String> {
     #[cfg(windows)]
     {
-        let script = r#"
-Get-CimInstance Win32_Process -Filter "Name='spanreed.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -match 'capture' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Milliseconds 400
-"#;
-        let _ = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
-            .output();
+        durable::finish()
     }
     #[cfg(not(windows))]
     {
-        // Best-effort: pkill patterns; ignore errors.
-        let _ = std::process::Command::new("pkill")
-            .args(["-f", "spanreed capture"])
-            .output();
+        Err("update helpers are only used on Windows".into())
     }
 }
 
@@ -400,6 +408,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn windows_update_gate_is_closed_without_disabling_version_checks() {
+        let why = platform_apply_blocked_reason(true).unwrap();
+        assert!(why.contains("before execution"));
+        assert!(why.contains("ACLs"));
+        assert!(why.contains("version checks remain available"));
+        assert!(platform_apply_blocked_reason(false).is_none());
+        if cfg!(windows) {
+            assert!(!can_apply_self_update());
+            assert!(apply_blocked_reason().is_some());
+        }
+        assert!(
+            check_from_release_json(
+                r#"{"draft":false,"prerelease":false,"tag_name":"v9.9.9"}"#,
+                "0.1.0",
+                "x86_64-pc-windows-msvc",
+                "grok-insider/spanreed",
+            )
+            .unwrap()
+            .newer
+        );
+    }
+
+    #[test]
     fn semver_newer() {
         assert!(is_newer("0.0.1", "0.0.2"));
         assert!(is_newer("0.0.2", "0.1.0"));
@@ -410,10 +441,66 @@ mod tests {
 
     #[test]
     fn parse_tag() {
-        let body = r#"{"tag_name":"v0.0.2","name":"v0.0.2"}"#;
+        let body = r#"{"draft":false,"prerelease":false,"tag_name":"v0.0.2","name":"v0.0.2"}"#;
         let (tag, ver) = parse_latest_tag(body).unwrap();
         assert_eq!(tag, "v0.0.2");
         assert_eq!(ver, "0.0.2");
+    }
+
+    #[test]
+    fn only_canonical_stable_release_versions_are_accepted() {
+        for tag in [
+            "v1.2.3.4",
+            "vv1.2.3",
+            "1.2.3-rc.1",
+            "1.2.3+build",
+            "01.2.3",
+            "1.02.3",
+            "1.2.03",
+            " 1.2.3",
+            "1.2.3 ",
+            "1.+2.3",
+            "1.2",
+            "18446744073709551616.2.3",
+        ] {
+            assert!(parse_semver(tag).is_none(), "{tag}");
+            let body =
+                serde_json::json!({"draft":false,"prerelease":false,"tag_name":tag}).to_string();
+            assert!(parse_latest_tag(&body).is_err(), "{tag}");
+        }
+        for flags in [
+            serde_json::json!({}),
+            serde_json::json!({"draft":true,"prerelease":false}),
+            serde_json::json!({"draft":false,"prerelease":true}),
+            serde_json::json!({"draft":"false","prerelease":false}),
+        ] {
+            let mut body = flags;
+            body["tag_name"] = serde_json::json!("v1.2.3");
+            assert!(parse_latest_tag(&body.to_string()).is_err());
+        }
+        assert_eq!(parse_semver("v1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_semver("0.0.0"), Some((0, 0, 0)));
+    }
+
+    #[test]
+    fn sidecar_must_name_the_single_selected_asset() {
+        let hash = "a".repeat(64);
+        let expected = "spanreed-1.2.3-x86_64-unknown-linux-musl.tar.gz";
+        assert_eq!(
+            parse_asset_sha256(&format!("{hash}  {expected}\n"), expected).unwrap(),
+            hash
+        );
+        for content in [
+            hash.clone(),
+            format!("{hash} different.tar.gz\n"),
+            format!("{hash} {expected}\n{hash} other.tar.gz\n"),
+            format!("{hash} {expected} extra\n"),
+            format!("{hash} ../{expected}\n"),
+            format!("{hash} *{expected}\n"),
+        ] {
+            assert!(parse_asset_sha256(&content, expected).is_err());
+        }
+        assert!(parse_sha256_file(&format!("{hash}\n{hash}\n")).is_err());
     }
 
     #[test]
@@ -455,7 +542,7 @@ mod tests {
 
     #[test]
     fn check_from_fixture_detects_newer() {
-        let body = r#"{"tag_name":"v0.0.9","name":"v0.0.9"}"#;
+        let body = r#"{"draft":false,"prerelease":false,"tag_name":"v0.0.9","name":"v0.0.9"}"#;
         let r = check_from_release_json(
             body,
             "0.0.2",
@@ -472,7 +559,7 @@ mod tests {
 
     #[test]
     fn check_from_fixture_up_to_date() {
-        let body = r#"{"tag_name":"v0.0.2"}"#;
+        let body = r#"{"draft":false,"prerelease":false,"tag_name":"v0.0.2"}"#;
         let r = check_from_release_json(
             body,
             "0.0.2",

@@ -17,6 +17,10 @@ struct Pending {
 
 pub use spanreed_app::app::fabrials::FabrialsIdentity;
 pub use spanreed_app::app::fabrials::LinkView;
+pub fn remote_access_token() -> Result<String, String> {
+    share_session::ensure_access("https://fabrials.com/api/spanreed")
+}
+
 fn linked_view() -> Result<LinkView, String> {
     let base = crate::share_state::api_base();
     let token = share_session::ensure_access(&base)?;

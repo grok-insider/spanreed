@@ -1,0 +1,2 @@
+[env]
+FABRIALS_AGENT_HOST_WEB_DIST = { value = "assets/remote-web", relative = true }

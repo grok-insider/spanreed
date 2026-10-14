@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "platform": "Linux station, native filesystem/executable checks",
+  "observedFailure": {
+    "ciHead": "34e0af02c63de20a927f9cb8f331823895922824",
+    "jobId": 115603658965,
+    "test": "self_update::install::tests::real_candidate_version_is_checked_before_replacement_and_after_install",
+    "error": "start candidate version check: Text file busy (os error 26)",
+    "traceOfOriginalWriterUnavailable": true
+  },
+  "mechanismReproduced": {
+    "fileDescriptorCloseOnExecVerified": true,
+    "forkedChildRetainsWritableDescriptorAfterParentClosesIt": true,
+    "directExecReturnsEtxtbsy": true,
+    "retrySucceedsAfterChildReleasesDescriptor": true,
+    "releaseDelayMilliseconds": 75,
+    "childUsesOnlyCloseReadExitSystemCalls": true
+  },
+  "behavior": {
+    "retryOnly": "Linux ETXTBSY from spawn, before any candidate process starts",
+    "retryDelayAtMostMilliseconds": 10,
+    "deadline": "One absolute deadline covers spawn retries, process exit and output collection",
+    "writerClosedExplicitlyBeforeDirectorySync": true,
+    "otherSpawnErrorsPreserved": true,
+    "persistentWriterFailsWithinTimeout": true,
+    "versionMismatchRequiresSpecificError": true
+  },
+  "checks": {
+    "selfUpdateTests": {
+      "passed": 34,
+      "failed": 0,
+      "ignored": 0,
+      "filteredOut": 272
+    },
+    "clippyAllAdapterTargetsDenyWarningsExitCode": 0
+  },
+  "sourceSha256": "a77322df8b644a1f4979ffb5d1af5659c8da3ef16163f9816f4306605970a8ee",
+  "evidence": {
+    "/tmp/grok-linux-ci-34e0af0.log": "ed0606508f412a376ca1a2f2589365eaad374a2499b655a85e481e40415f4601",
+    "/tmp/remote-updater-etxtbsy-tests.log": "67b808332338e639fd039d2993ba457ea99f20ebc4c43d831f18266c44eb6389",
+    "/tmp/remote-updater-etxtbsy-clippy.log": "e18ab482f346ad98cd9a357bcf8c45ce3a3ae59445cb899afad4bca41ca26add"
+  },
+  "limitations": [
+    "The original CI process descriptor table was not captured; fork inheritance is a deterministic reproduction of the same kernel error, not proof of the exact original writer.",
+    "The Linux retry does not change Windows or macOS executable-busy policy."
+  ]
+}

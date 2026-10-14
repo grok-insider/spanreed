@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "scope": "station-linux-qa-profile-activation",
+  "startedAt": "2026-10-14T01:07:29.103336+00:00",
+  "finishedAt": "2026-10-14T01:07:29.665674+00:00",
+  "result": "passed",
+  "candidate": {
+    "spanreedCommit": "7e2a7816c73d7e58b64852509b47ede75527859a",
+    "portableCommit": "00393e13e45b7dfbbfcc9844b46d758f2a582486",
+    "fabrialsLibsCommit": "648741029f5daceeaeb61395f00f529213011926",
+    "target": "x86_64-unknown-linux-gnu",
+    "profile": "release",
+    "binarySha256": "90d3f5078a3f392220f59d80d09ae96ad3f8bf4b33b28ab6f5f3d1ccbf4c6bf3",
+    "correspondingSourceArchiveSha256": "377d1352f3a6366472216216755b35fc8fc7cde89e3dd8fde4a6655588ef0197",
+    "bundleSha256": "059457ec8c2a6d35a390c92ac1496bb531d43df23737175cc3d94490c749b138",
+    "exactOriginalLicenseBytes": true
+  },
+  "prerequisites": {
+    "stagedArtifactVerified": true,
+    "nixPackageVerified": true,
+    "isolatedLifecyclePassed": true,
+    "serviceUnitAndLauncherDifferOnlyByPackage": true
+  },
+  "activation": {
+    "qaProfileUpdated": true,
+    "ownedQaUnitSymlinksUpdated": 2,
+    "serviceEnabled": true,
+    "serviceActive": true,
+    "serviceRestartsAtPostcheck": 0,
+    "killMode": "control-group",
+    "fullNixosOrHomeManagerActivation": false,
+    "canonicalRemoteServiceInactive": true,
+    "ordinaryServiceAndCliUnchanged": true,
+    "qaAliasUnchanged": true
+  },
+  "preservation": {
+    "persistentIdentityFilesCompared": 5,
+    "persistentIdentityFilesByteIdentical": true,
+    "sharedLeaderProcessIdentityStartTimeAndCgroupUnchanged": true,
+    "terminalProcessIdentityStartTimeAndCgroupUnchanged": true,
+    "hostStoppedDuringBackup": true,
+    "privateBackupMode": "0700",
+    "backedUpRegularFiles": 11,
+    "sqliteFilesPresent": 0,
+    "stateRestoredFromBackup": false,
+    "previousPackageRetainedForRecovery": true
+  },
+  "network": {
+    "loopbackHealthHttpStatus": 200,
+    "tailscaleTrustedHttpsHealthHttpStatus": 200,
+    "loopbackListenersOnly": true,
+    "tailscaleServeConfigurationUnchanged": true,
+    "healthProtocolVersion": 2,
+    "healthProtocolVersionIsLegacyBridgeNotRemoteWire": true
+  },
+  "doctor": {
+    "grok-program": "passed",
+    "grok-home": "passed",
+    "state-directory": "passed",
+    "host-identity": "passed",
+    "private-origin": "passed",
+    "leader-socket": "unverified",
+    "terminal-continuity": "unverified",
+    "service-environment": "unverified",
+    "browser-route": "unverified",
+    "host-control": "passed"
+  },
+  "inferencePerformed": false,
+  "browserOrMobileActions": false,
+  "limitations": [
+    "Browser reconnect and revocation",
+    "Terminal conversation continuation",
+    "Android/S24",
+    "Public release and self-update",
+    "Windows and macOS",
+    "Read-only doctor leaves service environment and leader socket liveness unverified; process preservation is not conversation continuity."
+  ]
+}

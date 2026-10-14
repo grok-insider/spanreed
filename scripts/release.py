@@ -4,6 +4,7 @@
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,9 @@ import tomllib
 REPO = "grok-insider/spanreed"
 PREFIXES = ("release-plz-v", "release-plz-manual-v")
 CHECK_WORKFLOWS = ("ci.yml", "nix.yml", "desktop.yml")
+SOURCE_SPEC = importlib.util.spec_from_file_location("source_bundle", Path(__file__).with_name("source-bundle.py"))
+source_bundle = importlib.util.module_from_spec(SOURCE_SPEC)
+SOURCE_SPEC.loader.exec_module(source_bundle)
 
 
 def run(*args):
@@ -53,21 +57,27 @@ def binary_assets(version):
     version_tuple(version)
     return [f"spanreed-{version}-x86_64-unknown-linux-musl.tar.gz",
             f"spanreed-{version}-x86_64-pc-windows-msvc.zip",
-            f"spanreed-{version}-aarch64-apple-darwin.tar.gz",
-            f"spanreed-{version}-x86_64-apple-darwin.tar.gz",
-            f"spanreed-{version}-universal-apple-darwin.tar.gz",
             f"Spanreed_{version}_amd64.deb", f"Spanreed_{version}_x64-setup.exe"]
 
 
+def source_asset(version):
+    version_tuple(version)
+    return f"spanreed-{version}-source.tar.gz"
+
+
+def primary_assets(version):
+    return binary_assets(version) + [source_asset(version)]
+
+
 def expected_assets(version):
-    names = binary_assets(version)
+    names = primary_assets(version)
     return names + [name + ".sha256" for name in names]
 
 
 # Workspace packages released with the CLI version, and those the desktop
 # host locks (it depends on spanreed-app and spanreed-adapters, which depend
 # on spanreed-domain).
-LOCAL_PACKAGES = ("spanreed", "spanreed-domain", "spanreed-app", "spanreed-adapters", "spanreed-tray")
+LOCAL_PACKAGES = ("spanreed", "spanreed-domain", "spanreed-app", "spanreed-adapters", "spanreed-tray", "spanreed-remote")
 DESKTOP_PACKAGES = ("spanreed-domain", "spanreed-app", "spanreed-adapters", "spanreed-desktop")
 
 
@@ -122,7 +132,10 @@ def release_notes(version):
         raise ValueError("Release changelog section missing or empty")
     return match[1].strip() + "\n\nWindows artifacts are unsigned. macOS/ARM distribution is deferred.\n\n" + \
         "Install instructions: https://fabrials.com/install/spanreed.sh (Linux x86_64) and " + \
-        "https://fabrials.com/install/spanreed.ps1 (Windows x64).\n"
+        "https://fabrials.com/install/spanreed.ps1 (Windows x64).\n\n" + \
+        f"Corresponding source: https://github.com/{REPO}/releases/download/v{version}/{source_asset(version)} " + \
+        "(includes the Portable PWA, vendored libraries, licenses and build instructions).\n" + \
+        "CLI archives include exact native third-party notices and original registry sources; spanreed licenses retains the notices after installation and self-update.\n"
 
 
 def validate_pr(number, sha, release_only=False, wait_for_head=False):
@@ -141,6 +154,7 @@ def validate_pr(number, sha, release_only=False, wait_for_head=False):
     if release_only or base == "master":
         if base != "master" or not head.startswith(PREFIXES):
             raise ValueError("Only release branches may target master")
+        check_stable_origin(git("show", f"{sha}:assets/remote-web/index.html"))
     elif base != "dev" or not head.startswith(("sync-master-", "release-plz-")):
         raise ValueError("Unexpected dispatched integration PR")
     return pr
@@ -157,11 +171,23 @@ def dispatch(number, sha):
     print(f"Dispatched {len(workflows)} workflows for PR #{number} at {sha}")
 
 
+def check_stable_origin(index):
+    origins = re.findall(r'<meta name="grok-app-origin" content="([^"]+)">', index)
+    if origins != ["https://desktop.grok.me"]:
+        raise ValueError("Stable release requires an embedded PWA built for https://desktop.grok.me; rebuild and commit the production bundle before preparing a release")
+
+
+def verify_stable_source(path, version, sha):
+    _, entries = source_bundle.verify(path, version, sha, include_files=True)
+    check_stable_origin(entries["spanreed/assets/remote-web/index.html"][0].decode())
+
+
 def validate_source(sha):
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("release_sha must be a full commit SHA")
     if git("rev-parse", "HEAD") != sha:
         raise ValueError("Checkout differs from requested release SHA")
+    check_stable_origin(git("show", f"{sha}:assets/remote-web/index.html"))
     git("merge-base", "--is-ancestor", sha, "origin/master")
     prs = api(f"commits/{sha}/pulls")
     if not any(p.get("merged_at") and p.get("merge_commit_sha") == sha
@@ -183,7 +209,7 @@ def verify_assets(root, version, sha):
             raise ValueError(f"Expected exactly one regular artifact: {name}")
         files[name] = matches[0]
     manifests = list(root.rglob("release-provenance.json"))
-    if len(manifests) != len(binary_assets(version)):
+    if len(manifests) != len(primary_assets(version)):
         raise ValueError("Expected provenance for every builder")
     claimed = []
     for path in manifests:
@@ -198,6 +224,7 @@ def verify_assets(root, version, sha):
             expected = files[name + ".sha256"].read_text().split()
             if expected != [hashlib.sha256(path.read_bytes()).hexdigest(), name]:
                 raise ValueError(f"Checksum mismatch: {name}")
+    verify_stable_source(files[source_asset(version)], version, sha)
     return files
 
 
@@ -223,10 +250,11 @@ def published_complete(sha, version):
     with tempfile.TemporaryDirectory() as directory:
         run("gh", "release", "download", "v" + version, "--repo", REPO, "--dir", directory)
         root = Path(directory)
-        for name in binary_assets(version):
+        for name in primary_assets(version):
             digest = hashlib.sha256((root / name).read_bytes()).hexdigest()
             if (root / (name + ".sha256")).read_text().split() != [digest, name]:
                 raise ValueError("Published release checksum mismatch")
+        verify_stable_source(root / source_asset(version), version, sha)
     return True
 
 
@@ -241,10 +269,13 @@ def publish(sha, run_id):
     if not current:
         jobs = api(f"actions/runs/{int(run_id)}/jobs?per_page=100")["jobs"]
         builders = [j for j in jobs if j["name"].startswith(
-            ("cli / cli (", "cli / macos-universal", "desktop / desktop ("))]
+            ("cli / cli (", "desktop / desktop ("))]
         if len(builders) != len(binary_assets(version)) \
                 or any(j["conclusion"] != "success" for j in builders):
             raise ValueError("Recovery requires every builder job to succeed")
+        sources = [j for j in jobs if j["name"] == "source"]
+        if len(sources) != 1 or sources[0]["conclusion"] != "success":
+            raise ValueError("Recovery requires the corresponding-source job to succeed")
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         run("gh", "run", "download", str(run_id), "--repo", REPO, "--pattern", "spanreed-release-*", "--dir", str(root))
@@ -303,6 +334,7 @@ def prepare(bump, force, dry_run):
     version = next_version(base, bump)
     git("fetch", "origin", "dev", "master", "--tags")
     git("checkout", "-B", "prepare-release", "origin/dev")
+    check_stable_origin(git("show", "HEAD:assets/remote-web/index.html"))
     if subprocess.run(["git", "merge-base", "--is-ancestor", latest["tag_name"], "HEAD"]).returncode:
         raise ValueError("dev lacks the latest release; merge the master-to-dev synchronization PR first")
     if package_version() != base:

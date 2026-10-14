@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "recordedAt": "2026-10-13T12:07:48.035529+00:00",
+  "scope": "Explicit hosted qualification origin and immutable per-installation binding",
+  "status": "local-validation-passed-live-socket-checks-blocked",
+  "productionDefault": "https://desktop.grok.me",
+  "qualificationOrigin": "https://grok.fabrials.com",
+  "testEnvironment": {
+    "libs": "remote-libs worktree",
+    "native": "/tmp/fabrials-remote-integration temporary integration mirror with the candidate libs",
+    "consumerVendorSynced": false,
+    "consumerLockfileQualified": false
+  },
+  "checks": [
+    {
+      "command": "cargo test -p fabrials-agent-host origin::tests --locked --offline --lib",
+      "passed": 24,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p fabrials-remote-host direct::tests --locked --offline --lib",
+      "passed": 4,
+      "failed": 2,
+      "failureCause": "Both live Noise/WebSocket tests fail when binding listeners: OS EPERM / Operation not permitted under the restricted sandbox. No alternative execution route was attempted.",
+      "blockedTests": [
+        "direct_noise_pairs_commands_and_revokes_without_cloud",
+        "qualification_origin_pairs_without_accepting_other_hosted_origins"
+      ]
+    },
+    {
+      "command": "cargo clippy -p fabrials-agent-host -p fabrials-remote-host --all-targets --locked --offline -- -D warnings",
+      "exitCode": 0
+    },
+    {
+      "command": "cargo test -p spanreed-remote services::tests --lib --locked --offline",
+      "passed": 6,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p spanreed-remote tests::private_cli_origin_is_explicit_and_closed --lib --locked --offline",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p spanreed --test cli remote_web_origin_preflight_preserves_state_and_service_configuration --locked --offline",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo clippy -p spanreed-remote -p spanreed --all-targets --locked --offline -- -D warnings",
+      "exitCode": 0
+    },
+    {
+      "command": "cargo fmt --all --check (temporary integration mirror)",
+      "exitCode": 0
+    }
+  ],
+  "covered": [
+    "Production origin remains default and default allowlist remains production-only",
+    "Explicit selector accepts exactly the production and qualification HTTPS origins",
+    "webOrigin is persisted and checked before host start, nonce issuance or service writes",
+    "Legacy identity without webOrigin remains canonical without rewriting its identity",
+    "Cross-origin reconfiguration and corrupted stored origin are refused",
+    "Service commands preserve explicit web origin on Linux, macOS and Windows renderers",
+    "Service print/install/uninstall refuse primary and both legacy state-directory overrides before writes or service manager execution",
+    "CLI test confirms invalid origins create no state or service configuration, existing identity remains byte-identical, and a normal-state service install refuses origin mismatch"
+  ],
+  "review": {
+    "reviewer": "direct_pwa_implementation",
+    "readOnly": true,
+    "findings": [],
+    "scope": "Origin selector, allowlist, durable state, legacy compatibility, fragment pairing URL and service guard; no runtime sockets"
+  },
+  "notQualified": [
+    "Live host, Noise or browser flow using grok.fabrials.com in the current restricted sandbox",
+    "The updated 18-check lifecycle harness for either web origin",
+    "An embedded qualification PWA matching these native sources; asset refresh was not executed",
+    "Native Windows/macOS service execution or actual service-manager installation",
+    "Publications, managed-origin migration, deployed TLS/DNS or production traffic"
+  ],
+  "libsSourceSha256": {
+    "crates/fabrials-agent-host/src/origin.rs": "0aab6df222be70ca9089121afda8cf781a55d24bcaf7a73ffc19cd7532142a47",
+    "crates/fabrials-remote-host/src/direct.rs": "bd0619942fe9f99370f70e758fe2acb5db3b325de61e8703c8e14e75da4d3bc8"
+  },
+  "spanreedSourceSha256": {
+    "crates/spanreed-remote/src/lib.rs": "1bace71fbc0e2070191d2cedbbe786bb12057f77bdcf6d66d21e192532703cd7",
+    "crates/spanreed-remote/src/services.rs": "6c95deffc46ad9c3556006b6160d94b971c0c1759411dae4f430a58b03b357fd",
+    "crates/spanreed-remote/src/doctor.rs": "a9b2b7e33e0817c1eec03bd1e8e954d2a4e1145702bfd9d424c5b5a15f887a09",
+    "tests/cli.rs": "24b84012eee092258cb249dd38ad330304daaef546ba24fd411391f3eaf39d5e",
+    "scripts/qualify-direct-lifecycle.py": "1818e0db4bf7ff9503b96e9232e27f700a7bfad77fb2a78fe142c8ea78578e51"
+  },
+  "logSha256": {
+    "direct-trial-libs-origin.log": "c02ddded6a2b72ee374d418ed177640ff5dbd81370977318325c049793b19f1e",
+    "direct-trial-libs-direct.log": "4403fa8872f8b9bb5ee4f82a1f2af23d0dc5147c39614b33c9fc9c83399abb72",
+    "direct-trial-libs-clippy.log": "f047defc3dfe4f284735b90484b1bc898281d79bd2b70116882c44c0547d782c",
+    "direct-trial-native-services.log": "85d9190e950eac1f19ff5b722f5c627c9bee22b1b7f3880a20df9dac00490c0a",
+    "direct-trial-native-private.log": "9224738c06d04e5a85e27fa7ba6e9ba6a3b15ebaabb7ba26f408253954cf7e68",
+    "direct-trial-native-cli.log": "81d32343b07b93bb989bc5a26839450bd0ca4d774a86a83529ffcd674feeb565",
+    "direct-trial-native-clippy.log": "874c35056ebc048fc1618393cf31f813ba1609af47c453981b7eb44b0125d277",
+    "direct-trial-native-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "indexInventory": "remote-libs/docs/staged-index-inventory-2026-10-13.json",
+  "preservedPriorEvidence": "Earlier direct-lifecycle and direct-update receipts describe their earlier binary/artifact hashes; they were not rewritten as evidence for this follow-up."
+}

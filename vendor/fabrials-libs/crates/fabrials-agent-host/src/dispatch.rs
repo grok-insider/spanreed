@@ -24,6 +24,9 @@ use crate::session_catalog::{self, SessionSummary};
 /// Why a command could not be carried out.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DispatchError {
+    #[allow(missing_docs)]
+    #[error("request refused: {0}")]
+    Refused(&'static str),
     /// The addressed workspace is not enrolled.
     #[error("workspace is not enrolled")]
     UnknownWorkspace,
@@ -91,6 +94,7 @@ impl DispatchError {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Refused(code) => code,
             Self::UnknownWorkspace => "unknown_workspace",
             Self::NoSession => "no_session",
             Self::SessionAlreadyActive => "session_already_active",
@@ -205,6 +209,52 @@ pub struct ProjectProjection {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "outcome", rename_all = "camelCase")]
 pub enum DispatchOutcome {
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SessionModels {
+        session_id: String,
+        #[serde(flatten)]
+        state: crate::models::SessionModelState,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    RemoteCapabilities {
+        #[allow(missing_docs)]
+        content_protocol_version: u32,
+        #[allow(missing_docs)]
+        multi_writer: bool,
+        #[allow(missing_docs)]
+        multi_writer_protocol_version: u32,
+        #[allow(missing_docs)]
+        targeted_cancel_supported: bool,
+        projects: bool,
+        control_transfer: bool,
+        device_panel: bool,
+        upstream_prompt: Option<crate::remote_management::PromptCapabilities>,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    RemoteProjects {
+        parent_id: Option<String>,
+        entries: Vec<crate::remote_projects::RemoteDirectory>,
+        next_cursor: Option<String>,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    BrowserDevices {
+        devices: Vec<crate::remote_connections::BrowserDevice>,
+        control_transfer_requests: Vec<crate::remote_connections::ControlTransferRequest>,
+    },
+    #[allow(missing_docs)]
+    ControlTransferRequested {
+        request: crate::remote_connections::ControlTransferRequest,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ControlTransferCancelled { request_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ControlTransferApproved { request_id: String },
     /// A read-only projection was produced.
     #[serde(rename_all = "camelCase")]
     Projection {
@@ -267,6 +317,8 @@ pub enum DispatchOutcome {
     /// The enrolled workspaces, with their current availability.
     #[serde(rename_all = "camelCase")]
     Workspaces {
+        #[allow(missing_docs)]
+        observation_epoch: u64,
         /// Enrolled workspaces. Never carries a filesystem path.
         workspaces: Vec<WorkspaceProjection>,
         /// Folders that already have Grok sessions (session store), plus
@@ -415,6 +467,9 @@ pub struct LiveSession {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueuedPrompt {
+    #[allow(missing_docs)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::media::PromptImage>,
     /// Identifier the browser uses to take it back out.
     pub entry_id: String,
     /// The text as the user wrote it.
@@ -447,6 +502,18 @@ pub struct Workspace {
 /// Everything dispatch needs that is not the journal.
 #[derive(Debug, Default)]
 pub struct SessionState {
+    #[allow(missing_docs)]
+    pub media: crate::media::ImageTransfers,
+    #[allow(missing_docs)]
+    pub transcript_media: crate::media::TranscriptMedia,
+    #[allow(missing_docs)]
+    pub local_turns: std::collections::HashSet<String>,
+    #[allow(missing_docs)]
+    pub pending_interactions: HashMap<String, crate::interactions::PendingInteraction>,
+    #[allow(missing_docs)]
+    pub permission_tools: HashMap<String, String>,
+    #[allow(missing_docs)]
+    pub permission_details: HashMap<String, (Option<String>, Option<String>)>,
     /// Enrolled workspaces, keyed by opaque id.
     pub workspaces: HashMap<String, Workspace>,
     /// Live agent sessions, keyed by agent session id (light ADR 0011).
@@ -606,10 +673,14 @@ impl SessionState {
     ///
     /// Returns [`DispatchError::UnknownSession`] when the id is not open.
     pub fn close_session(&mut self, session_id: &str) -> Result<(), DispatchError> {
+        self.transcript_media.forget_session(session_id);
         if self.sessions.remove(session_id).is_none() {
             return Err(DispatchError::UnknownSession);
         }
         self.reviews.remove(session_id);
+        self.local_turns.remove(session_id);
+        self.pending_interactions
+            .retain(|_, pending| pending.session_id != session_id);
         self.pending_permissions
             .retain(|_, pending| pending.session_id != session_id);
         Ok(())
@@ -713,6 +784,33 @@ impl SessionState {
     /// Returns [`DispatchError::UnknownSession`] when the id is not open, and
     /// [`DispatchError::QueueFull`] once the bound is reached.
     pub fn queue_prompt(&mut self, session_id: &str, text: &str) -> Result<String, DispatchError> {
+        self.queue_prompt_with_images(session_id, text, &[])
+    }
+
+    #[allow(missing_docs)]
+    pub fn queue_prompt_with_images(
+        &mut self,
+        session_id: &str,
+        text: &str,
+        images: &[crate::media::PromptImage],
+    ) -> Result<String, DispatchError> {
+        crate::media::validate_prompt_images(images).map_err(|_| DispatchError::Unsupported)?;
+        let queued_bytes: usize = self
+            .sessions
+            .values()
+            .flat_map(|live| &live.queued)
+            .flat_map(|entry| &entry.images)
+            .map(|image| image.descriptor().byte_length)
+            .sum();
+        if queued_bytes
+            + images
+                .iter()
+                .map(|image| image.descriptor().byte_length)
+                .sum::<usize>()
+            > 100 * 1024 * 1024
+        {
+            return Err(DispatchError::QueueFull);
+        }
         let next = self.next_queue_entry.saturating_add(1);
         let session = self
             .sessions
@@ -723,6 +821,7 @@ impl SessionState {
         }
         let entry_id = format!("q-{next}");
         session.queued.push(QueuedPrompt {
+            images: images.to_vec(),
             entry_id: entry_id.clone(),
             text: text.to_owned(),
         });
@@ -900,6 +999,14 @@ async fn run(
     agent: Option<&Arc<AgentHandle>>,
 ) -> Result<DispatchOutcome, DispatchError> {
     match &envelope.operation {
+        Operation::GetSessionExecution { .. }
+        | Operation::GetSessionModels { .. }
+        | Operation::SetSessionConfiguration { .. }
+        | Operation::SetQueuePaused { .. }
+        | Operation::ClearQueuedPrompts { .. }
+        | Operation::CancelSessionTurn { .. }
+        | Operation::ReviewUncertainTurn { .. }
+        | Operation::InterruptAndEnqueue { .. } => Err(DispatchError::Unsupported),
         // The browser's first call, and the one it repeats to refresh: both
         // answer with the enrolment set and whether a session is open.
         Operation::Bootstrap | Operation::ListWorkspaces => Ok(project_state(journal, state)),
@@ -1118,9 +1225,24 @@ async fn run(
             dry_run,
         } => diagnose_or_repair(session_id, *dry_run, state, agent).await,
 
-        Operation::AcknowledgeEvents { .. } | Operation::RevokeBrowserPairing { .. } => {
-            Ok(DispatchOutcome::Acknowledged)
-        }
+        Operation::GetRemoteCapabilities
+        | Operation::ReadImageChunk { .. }
+        | Operation::PromptContent { .. }
+        | Operation::StartImageUpload { .. }
+        | Operation::AppendImageUpload { .. }
+        | Operation::FinishImageUpload { .. }
+        | Operation::DiscardImage { .. }
+        | Operation::ListRemoteProjects { .. }
+        | Operation::EnrollRemoteProject { .. }
+        | Operation::ListBrowserDevices
+        | Operation::RequestControlTransfer
+        | Operation::CancelControlTransfer { .. }
+        | Operation::ApproveControlTransfer { .. }
+        | Operation::GetCommandStatus { .. }
+        | Operation::AnswerInteraction { .. } => Err(DispatchError::Unsupported),
+        Operation::AcknowledgeEvents { .. }
+        | Operation::RevokeBrowserPairing { .. }
+        | Operation::ForgetBrowserPairing => Ok(DispatchOutcome::Acknowledged),
     }
 }
 
@@ -1213,6 +1335,7 @@ const fn addressed_session_of(operation: &Operation) -> Option<&String> {
 /// until they say they have seen it.
 fn project_state(journal: &Journal, state: &SessionState) -> DispatchOutcome {
     DispatchOutcome::Workspaces {
+        observation_epoch: journal.observation_epoch(),
         workspaces: state.project_workspaces(),
         projects: state.project_projects(),
         open_sessions: state.project_sessions(),

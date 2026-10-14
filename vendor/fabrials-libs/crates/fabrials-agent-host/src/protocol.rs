@@ -11,6 +11,10 @@ use crate::review::ChangeMode;
 
 /// Wire version of this protocol.
 pub const PROTOCOL_VERSION: u32 = 2;
+#[allow(missing_docs)]
+pub const CONTENT_PROTOCOL_VERSION: u32 = 3;
+#[allow(missing_docs)]
+pub const MULTI_WRITER_PROTOCOL_VERSION: u32 = 4;
 
 /// WebSocket subprotocol carrying the same version.
 pub const WS_SUBPROTOCOL: &str = "light.local.v1";
@@ -48,6 +52,132 @@ pub enum ProtocolError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Operation {
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    GetSessionExecution { session_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    GetSessionModels { session_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SetSessionConfiguration {
+        session_id: String,
+        expected_config_revision: u64,
+        #[serde(default)]
+        model_id: Option<String>,
+        #[serde(default)]
+        reasoning_effort: Option<String>,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SetQueuePaused {
+        session_id: String,
+        paused: bool,
+        expected_queue_revision: u64,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ClearQueuedPrompts {
+        session_id: String,
+        expected_queue_revision: u64,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    CancelSessionTurn {
+        session_id: String,
+        expected_turn_id: String,
+        queue_disposition: QueueDisposition,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ReviewUncertainTurn {
+        session_id: String,
+        expected_turn_id: String,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    InterruptAndEnqueue {
+        session_id: String,
+        expected_turn_id: String,
+        expected_queue_revision: u64,
+        text: String,
+        #[serde(default)]
+        image_ids: Vec<String>,
+    },
+
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ReadImageChunk {
+        session_id: String,
+        sha256: String,
+        offset: usize,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    StartImageUpload {
+        session_id: String,
+        byte_length: usize,
+        sha256: String,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    AppendImageUpload {
+        session_id: String,
+        upload_id: String,
+        offset: usize,
+        data: String,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    FinishImageUpload {
+        session_id: String,
+        upload_id: String,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    DiscardImage { image_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    PromptContent {
+        session_id: String,
+        text: String,
+        image_ids: Vec<String>,
+        #[serde(default)]
+        send_now: bool,
+    },
+    #[allow(missing_docs)]
+    GetRemoteCapabilities,
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ListRemoteProjects {
+        #[serde(default)]
+        directory_id: Option<String>,
+        #[serde(default)]
+        cursor: Option<String>,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    EnrollRemoteProject { directory_id: String },
+    #[allow(missing_docs)]
+    ListBrowserDevices,
+    #[allow(missing_docs)]
+    RequestControlTransfer,
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    CancelControlTransfer { request_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ApproveControlTransfer { request_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    AnswerInteraction {
+        session_id: String,
+        request_id: String,
+        answer: serde_json::Value,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    GetCommandStatus { idempotency_key: String },
     /// Single call returning host status, capabilities, workspaces, and lease.
     Bootstrap,
     /// Host, CLI, auth, and protocol state.
@@ -237,12 +367,22 @@ pub enum Operation {
         /// When true, report only; when false, apply after journaled intent.
         dry_run: bool,
     },
+    #[allow(missing_docs)]
+    ForgetBrowserPairing,
     /// Revoke one browser pairing, or all of them.
     #[serde(rename_all = "camelCase")]
     RevokeBrowserPairing {
         /// Session to revoke. `None` revokes every pairing.
         session_id: Option<String>,
     },
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QueueDisposition {
+    Pause,
+    Continue,
 }
 
 impl Operation {
@@ -254,7 +394,19 @@ impl Operation {
     pub const fn has_side_effect(&self) -> bool {
         matches!(
             self,
-            Self::Prompt { .. }
+            Self::SetSessionConfiguration { .. }
+                | Self::SetQueuePaused { .. }
+                | Self::ClearQueuedPrompts { .. }
+                | Self::CancelSessionTurn { .. }
+                | Self::ReviewUncertainTurn { .. }
+                | Self::InterruptAndEnqueue { .. }
+                | Self::EnrollRemoteProject { .. }
+                | Self::RequestControlTransfer
+                | Self::CancelControlTransfer { .. }
+                | Self::ApproveControlTransfer { .. }
+                | Self::AnswerInteraction { .. }
+                | Self::Prompt { .. }
+                | Self::PromptContent { .. }
                 | Self::SendNow { .. }
                 | Self::SetSessionModel { .. }
                 | Self::DecidePermission { .. }
@@ -273,7 +425,21 @@ impl Operation {
     pub const fn requires_control(&self) -> bool {
         matches!(
             self,
-            Self::Prompt { .. }
+            Self::SetSessionConfiguration { .. }
+                | Self::SetQueuePaused { .. }
+                | Self::ClearQueuedPrompts { .. }
+                | Self::CancelSessionTurn { .. }
+                | Self::ReviewUncertainTurn { .. }
+                | Self::InterruptAndEnqueue { .. }
+                | Self::EnrollRemoteProject { .. }
+                | Self::ApproveControlTransfer { .. }
+                | Self::AnswerInteraction { .. }
+                | Self::Prompt { .. }
+                | Self::PromptContent { .. }
+                | Self::StartImageUpload { .. }
+                | Self::AppendImageUpload { .. }
+                | Self::FinishImageUpload { .. }
+                | Self::DiscardImage { .. }
                 | Self::SendNow { .. }
                 | Self::RemoveQueued { .. }
                 | Self::DecidePermission { .. }
@@ -285,6 +451,7 @@ impl Operation {
                 | Self::OpenWorkspacePicker
                 | Self::OpenProject { .. }
                 | Self::SetSessionModel { .. }
+                | Self::AcknowledgeEvents { .. }
                 | Self::AcknowledgeInterrupted { .. }
                 | Self::RevokeBrowserPairing { .. }
                 | Self::DiagnoseSession { .. }
@@ -296,6 +463,29 @@ impl Operation {
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::GetSessionExecution { .. } => "GetSessionExecution",
+            Self::GetSessionModels { .. } => "GetSessionModels",
+            Self::SetSessionConfiguration { .. } => "SetSessionConfiguration",
+            Self::SetQueuePaused { .. } => "SetQueuePaused",
+            Self::ClearQueuedPrompts { .. } => "ClearQueuedPrompts",
+            Self::CancelSessionTurn { .. } => "CancelSessionTurn",
+            Self::ReviewUncertainTurn { .. } => "ReviewUncertainTurn",
+            Self::InterruptAndEnqueue { .. } => "InterruptAndEnqueue",
+            Self::ReadImageChunk { .. } => "ReadImageChunk",
+            Self::StartImageUpload { .. } => "StartImageUpload",
+            Self::AppendImageUpload { .. } => "AppendImageUpload",
+            Self::FinishImageUpload { .. } => "FinishImageUpload",
+            Self::DiscardImage { .. } => "DiscardImage",
+            Self::PromptContent { .. } => "PromptContent",
+            Self::GetRemoteCapabilities => "GetRemoteCapabilities",
+            Self::ListRemoteProjects { .. } => "ListRemoteProjects",
+            Self::EnrollRemoteProject { .. } => "EnrollRemoteProject",
+            Self::ListBrowserDevices => "ListBrowserDevices",
+            Self::RequestControlTransfer => "RequestControlTransfer",
+            Self::CancelControlTransfer { .. } => "CancelControlTransfer",
+            Self::ApproveControlTransfer { .. } => "ApproveControlTransfer",
+            Self::AnswerInteraction { .. } => "AnswerInteraction",
+            Self::GetCommandStatus { .. } => "GetCommandStatus",
             Self::Bootstrap => "Bootstrap",
             Self::GetHostStatus => "GetHostStatus",
             Self::ListWorkspaces => "ListWorkspaces",
@@ -322,6 +512,7 @@ impl Operation {
             Self::DiagnoseSession { .. } => "DiagnoseSession",
             Self::RepairSession { .. } => "RepairSession",
             Self::RevokeBrowserPairing { .. } => "RevokeBrowserPairing",
+            Self::ForgetBrowserPairing => "ForgetBrowserPairing",
         }
     }
 }
@@ -331,7 +522,30 @@ impl Operation {
 /// Used to turn a name read back from disk into the same `'static` string the
 /// running host uses, so a stored record cannot introduce an operation this
 /// build does not have.
-pub const OPERATION_NAMES: [&str; 26] = [
+pub const OPERATION_NAMES: [&str; 50] = [
+    "GetSessionExecution",
+    "GetSessionModels",
+    "SetSessionConfiguration",
+    "SetQueuePaused",
+    "ClearQueuedPrompts",
+    "CancelSessionTurn",
+    "ReviewUncertainTurn",
+    "InterruptAndEnqueue",
+    "ReadImageChunk",
+    "StartImageUpload",
+    "AppendImageUpload",
+    "FinishImageUpload",
+    "DiscardImage",
+    "PromptContent",
+    "GetRemoteCapabilities",
+    "ListRemoteProjects",
+    "EnrollRemoteProject",
+    "ListBrowserDevices",
+    "RequestControlTransfer",
+    "CancelControlTransfer",
+    "ApproveControlTransfer",
+    "AnswerInteraction",
+    "GetCommandStatus",
     "Bootstrap",
     "GetHostStatus",
     "ListWorkspaces",
@@ -358,6 +572,7 @@ pub const OPERATION_NAMES: [&str; 26] = [
     "DiagnoseSession",
     "RepairSession",
     "RevokeBrowserPairing",
+    "ForgetBrowserPairing",
 ];
 
 /// Resolve a persisted operation name to the canonical `'static` one.
@@ -406,23 +621,161 @@ impl CommandEnvelope {
     ///
     /// Returns the first [`ProtocolError`] encountered.
     pub fn validate(&self) -> Result<(), ProtocolError> {
-        if self.protocol_version != PROTOCOL_VERSION {
+        if self.protocol_version != PROTOCOL_VERSION
+            && self.protocol_version != CONTENT_PROTOCOL_VERSION
+            && self.protocol_version != MULTI_WRITER_PROTOCOL_VERSION
+        {
             return Err(ProtocolError::UnsupportedVersion);
         }
         check_id(&self.request_id, "requestId")?;
         if let Some(key) = &self.idempotency_key {
             check_id(key, "idempotencyKey")?;
         }
-        if self.operation.has_side_effect() && self.idempotency_key.is_none() {
+        if (self.operation.has_side_effect()
+            || self.protocol_version == MULTI_WRITER_PROTOCOL_VERSION
+                && matches!(self.operation, Operation::RemoveQueued { .. }))
+            && self.idempotency_key.is_none()
+        {
             return Err(ProtocolError::MissingIdempotencyKey);
         }
-        if self.operation.requires_control() && self.controller_epoch.is_none() {
+        if self.protocol_version != MULTI_WRITER_PROTOCOL_VERSION
+            && self.operation.requires_control()
+            && self.controller_epoch.is_none()
+        {
             return Err(ProtocolError::MissingControllerEpoch);
         }
         if self.deadline_ms.is_some_and(|ms| ms > MAX_DEADLINE_MS) {
             return Err(ProtocolError::DeadlineTooLarge);
         }
         match &self.operation {
+            Operation::GetSessionExecution { session_id }
+            | Operation::GetSessionModels { session_id }
+            | Operation::SetSessionConfiguration { session_id, .. }
+            | Operation::SetQueuePaused { session_id, .. }
+            | Operation::ClearQueuedPrompts { session_id, .. }
+            | Operation::CancelSessionTurn { session_id, .. }
+            | Operation::ReviewUncertainTurn { session_id, .. }
+            | Operation::InterruptAndEnqueue { session_id, .. } => {
+                if self.protocol_version != MULTI_WRITER_PROTOCOL_VERSION {
+                    return Err(ProtocolError::UnsupportedVersion);
+                }
+                check_id(session_id, "sessionId")?;
+                match &self.operation {
+                    Operation::CancelSessionTurn {
+                        expected_turn_id, ..
+                    }
+                    | Operation::ReviewUncertainTurn {
+                        expected_turn_id, ..
+                    }
+                    | Operation::InterruptAndEnqueue {
+                        expected_turn_id, ..
+                    } => check_id(expected_turn_id, "expectedTurnId")?,
+                    _ => {}
+                }
+            }
+
+            Operation::ReadImageChunk {
+                session_id, sha256, ..
+            } => {
+                self.require_content_version()?;
+                check_id(session_id, "sessionId")?;
+                if sha256.len() != 64
+                    || !sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                {
+                    return Err(ProtocolError::FieldTooLong { field: "sha256" });
+                }
+            }
+            Operation::StartImageUpload {
+                session_id,
+                byte_length,
+                sha256,
+            } => {
+                self.require_content_version()?;
+                check_id(session_id, "sessionId")?;
+                if *byte_length == 0
+                    || *byte_length > crate::media::MAX_ORIGINAL_BYTES
+                    || sha256.len() != 64
+                    || !sha256
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                {
+                    return Err(ProtocolError::FieldTooLong { field: "image" });
+                }
+            }
+            Operation::AppendImageUpload {
+                session_id,
+                upload_id,
+                data,
+                ..
+            } => {
+                self.require_content_version()?;
+                check_id(session_id, "sessionId")?;
+                check_id(upload_id, "uploadId")?;
+                if data.len() > crate::media::CHUNK_BYTES.div_ceil(3) * 4 {
+                    return Err(ProtocolError::FieldTooLong { field: "data" });
+                }
+            }
+            Operation::FinishImageUpload {
+                session_id,
+                upload_id,
+            } => {
+                self.require_content_version()?;
+                check_id(session_id, "sessionId")?;
+                check_id(upload_id, "uploadId")?;
+            }
+            Operation::DiscardImage { image_id } => {
+                self.require_content_version()?;
+                check_id(image_id, "imageId")?;
+            }
+            Operation::PromptContent {
+                session_id,
+                image_ids,
+                text,
+                ..
+            } => {
+                self.require_content_version()?;
+                check_id(session_id, "sessionId")?;
+                if image_ids.is_empty()
+                    || image_ids.len() > crate::media::MAX_IMAGES
+                    || text.trim_start().starts_with('!')
+                {
+                    return Err(ProtocolError::FieldTooLong { field: "content" });
+                }
+                for id in image_ids {
+                    check_id(id, "imageId")?;
+                }
+            }
+            Operation::ListRemoteProjects {
+                directory_id,
+                cursor,
+            } => {
+                if let Some(id) = directory_id {
+                    check_id(id, "directoryId")?;
+                }
+                if let Some(id) = cursor {
+                    check_id(id, "cursor")?;
+                }
+            }
+            Operation::EnrollRemoteProject { directory_id } => {
+                check_id(directory_id, "directoryId")?
+            }
+            Operation::CancelControlTransfer { request_id }
+            | Operation::ApproveControlTransfer { request_id } => {
+                check_id(request_id, "requestId")?
+            }
+            Operation::AnswerInteraction {
+                session_id,
+                request_id,
+                ..
+            } => {
+                check_id(session_id, "sessionId")?;
+                check_id(request_id, "requestId")?;
+            }
+            Operation::GetCommandStatus { idempotency_key } => {
+                check_id(idempotency_key, "idempotencyKey")?
+            }
             Operation::OpenProject { project_id } => {
                 check_id(project_id, "projectId")?;
             }
@@ -502,6 +855,16 @@ impl CommandEnvelope {
         }
         Ok(())
     }
+
+    fn require_content_version(&self) -> Result<(), ProtocolError> {
+        if self.protocol_version == CONTENT_PROTOCOL_VERSION
+            || self.protocol_version == MULTI_WRITER_PROTOCOL_VERSION
+        {
+            Ok(())
+        } else {
+            Err(ProtocolError::UnsupportedVersion)
+        }
+    }
 }
 
 fn check_id(value: &str, field: &'static str) -> Result<(), ProtocolError> {
@@ -521,11 +884,63 @@ fn check_id(value: &str, field: &'static str) -> Result<(), ProtocolError> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Event {
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SessionModelsChanged { session_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    SessionExecutionChanged { session_id: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    MessageImage {
+        session_id: String,
+        role: String,
+        image_id: String,
+        phase: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        image: Option<crate::media::ImageDescriptor>,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    ImageRejected { session_id: String },
+    #[allow(missing_docs)]
+    RemoteDevicesChanged,
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    UserMessageDelta { session_id: String, text: String },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    InteractionRequest {
+        session_id: String,
+        request_id: String,
+        interaction_kind: String,
+        details: serde_json::Value,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    InteractionResolved {
+        session_id: String,
+        request_id: String,
+    },
+    #[allow(missing_docs)]
+    ReplayReset,
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    CommandCompleted {
+        idempotency_key: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// Host, CLI, auth, or protocol state changed.
     #[serde(rename_all = "camelCase")]
     HostStatus {
         /// Coarse host state, safe to render.
         state: String,
+        #[allow(missing_docs)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        controller_token: Option<String>,
     },
     /// Full session state, used when a cursor cannot be replayed or after load.
     #[serde(rename_all = "camelCase")]
@@ -550,6 +965,17 @@ pub enum Event {
         /// Background bash/monitor tasks for this session (CLI Tasks pane).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         background_tasks: Vec<SnapshotBackgroundTask>,
+        /// Earlier transcript messages left out because the host keeps a
+        /// bounded window. Zero when no earlier message was dropped.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        omitted_messages: u64,
+        /// Tool rows left out by the same bounds.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        omitted_tools: u64,
+        /// Some history text was cut or not loaded, so the transcript is
+        /// incomplete even when no whole message count is known.
+        #[serde(default, skip_serializing_if = "is_false")]
+        history_truncated: bool,
     },
     /// A background task started, progressed, or finished.
     #[serde(rename_all = "camelCase")]
@@ -666,10 +1092,16 @@ pub enum Event {
     /// arrived with no question above it.
     #[serde(rename_all = "camelCase")]
     PromptSent {
+        #[allow(missing_docs)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<crate::media::ImageDescriptor>,
         /// Conversation it was sent to.
         session_id: String,
         /// The message, as the user wrote it.
         text: String,
+        #[allow(missing_docs)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// The queued prompts of one conversation changed.
     ///
@@ -704,6 +1136,12 @@ pub enum Event {
         request_id: String,
         /// Only the option identifiers Light is allowed to render.
         options: Vec<String>,
+        #[allow(missing_docs)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[allow(missing_docs)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
     },
     /// A turn was interrupted and left a review record.
     #[serde(rename_all = "camelCase")]
@@ -725,6 +1163,12 @@ pub enum Event {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotMessage {
+    #[allow(missing_docs)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::media::ImageDescriptor>,
+    #[allow(missing_docs)]
+    #[serde(default)]
+    pub unavailable_images: usize,
     /// `user` or `agent`.
     pub role: String,
     /// Message body. Never a path or secret by construction of the catalog.
@@ -940,6 +1384,9 @@ pub struct CommandProjection {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventEnvelope {
+    #[allow(missing_docs)]
+    #[serde(default)]
+    pub observation_epoch: u64,
     /// Wire version.
     pub protocol_version: u32,
     /// Monotonic sequence within a connection lineage.
@@ -949,6 +1396,16 @@ pub struct EventEnvelope {
     pub session_revision: Option<u64>,
     /// The event body.
     pub event: Event,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[cfg(test)]
@@ -1002,7 +1459,7 @@ mod tests {
     #[test]
     fn wrong_version_is_rejected() {
         let mut env = envelope(Operation::Bootstrap);
-        env.protocol_version = PROTOCOL_VERSION + 1;
+        env.protocol_version = super::MULTI_WRITER_PROTOCOL_VERSION + 1;
         assert_eq!(env.validate(), Err(ProtocolError::UnsupportedVersion));
     }
 
@@ -1028,10 +1485,12 @@ mod tests {
     }
 
     #[test]
-    fn acknowledge_events_is_neither_mutating_nor_side_effecting() {
-        let env = envelope(Operation::AcknowledgeEvents {
+    fn acknowledge_events_requires_control_without_an_effect_key() {
+        let mut env = envelope(Operation::AcknowledgeEvents {
             through_sequence: 42,
         });
+        assert_eq!(env.validate(), Err(ProtocolError::MissingControllerEpoch));
+        env.controller_epoch = Some(1);
         assert!(env.validate().is_ok());
     }
 
@@ -1194,10 +1653,13 @@ mod tests {
     #[test]
     fn event_envelope_round_trips() {
         let env = EventEnvelope {
+            observation_epoch: 3,
             protocol_version: PROTOCOL_VERSION,
             event_sequence: 9,
             session_revision: Some(2),
             event: Event::PermissionRequest {
+                title: None,
+                description: None,
                 session_id: "s-1".into(),
                 request_id: "perm-1".into(),
                 options: vec!["allow-once".into(), "reject-once".into()],

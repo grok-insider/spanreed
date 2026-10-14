@@ -29,6 +29,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           version = (lib.importTOML ./desktop/src-tauri/Cargo.toml).package.version;
+          notices = import ./nix/notices.nix { inherit pkgs; manifest = "desktop/src-tauri/Cargo.toml"; lockfile = ./desktop/src-tauri/Cargo.lock; };
           # Keep source builds independent from local node_modules, target and dist.
           source = lib.cleanSourceWith {
             src = ./.;
@@ -61,6 +62,7 @@
           };
         in pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed-desktop";
+          FABRIALS_AGENT_HOST_WEB_DIST = "${./assets/remote-web}";
           inherit version;
           src = source;
           cargoRoot = "desktop/src-tauri";
@@ -70,6 +72,7 @@
           nativeBuildInputs = [ pkgs.bun pkgs.nodejs pkgs.pkg-config pkgs.wrapGAppsHook3 pkgs.makeWrapper ];
           buildInputs = [ pkgs.gtk3 pkgs.webkitgtk_4_1 pkgs.libayatana-appindicator pkgs.openssl pkgs.librsvg pkgs.glib-networking ];
           preBuild = ''
+            ${pkgs.python3}/bin/python3 scripts/remote-assets.py check
             cp -R ${nodeModules} desktop/node_modules
             chmod -R u+w desktop/node_modules
             # Local UI packages must not come from the fixed-output dependency cache.
@@ -79,8 +82,21 @@
             ln -s ../../vendor/fabrials-ai-ui-0.8.2 desktop/node_modules/@fabrials/ai-ui
             patchShebangs desktop/node_modules
             (cd desktop && bun run build)
+            export SPANREED_NOTICE_INPUTS=${notices.inputIndex}
+            ${pkgs.python3}/bin/python3 scripts/native-notices.py generate \
+              --manifest ${notices.manifest} --package spanreed-desktop \
+              --target ${notices.target} --features tauri/custom-protocol \
+              --crate-archives ${notices.archiveIndex} --rust-source-archive ${notices.rustSource} \
+              --output "$TMPDIR/spanreed-desktop-notices"
+            export SPANREED_NATIVE_NOTICES="$TMPDIR/spanreed-desktop-notices/THIRD-PARTY-NOTICES.txt"
+            export SPANREED_NATIVE_NOTICES_REQUIRED=1
           '';
           postInstall = ''
+            mkdir -p "$out/share/spanreed-desktop/licenses"
+            cp -R "$TMPDIR/spanreed-desktop-notices/." "$out/share/spanreed-desktop/licenses/"
+            cp LICENSE "$out/share/spanreed-desktop/licenses/LICENSE"
+            cp desktop/dist/FRONTEND-NOTICES.txt "$out/share/spanreed-desktop/licenses/"
+            cp desktop/dist/frontend-notices.json "$out/share/spanreed-desktop/licenses/"
             install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/com.fabrials.spanreed.png"
             install -Dm644 desktop/src-tauri/icons/128x128.png "$out/share/icons/hicolor/128x128/apps/spanreed-desktop.png"
             mkdir -p "$out/share/applications"
@@ -121,6 +137,7 @@
         { system, tray ? false }:
         let
           pkgs = import nixpkgs { inherit system; };
+          notices = import ./nix/notices.nix { inherit pkgs; manifest = "Cargo.toml"; lockfile = ./Cargo.lock; };
 
           # `secret-tool` (libsecret) is the only optional runtime dep: it is
           # used solely as a fallback when a provider stores its token in the
@@ -145,6 +162,23 @@
         in
         pkgs.rustPlatform.buildRustPackage {
           pname = "spanreed";
+          FABRIALS_AGENT_HOST_WEB_DIST = "${./assets/remote-web}";
+          preBuild = ''
+            ${pkgs.python3}/bin/python3 scripts/remote-assets.py check
+            export SPANREED_NOTICE_INPUTS=${notices.inputIndex}
+            ${pkgs.python3}/bin/python3 scripts/native-notices.py generate \
+              --manifest ${notices.manifest} --target ${notices.target} \
+              ${lib.optionalString tray "--features tray"} \
+              --crate-archives ${notices.archiveIndex} --rust-source-archive ${notices.rustSource} \
+              --output "$TMPDIR/spanreed-native-notices"
+            export SPANREED_NATIVE_NOTICES="$TMPDIR/spanreed-native-notices/THIRD-PARTY-NOTICES.txt"
+            export SPANREED_NATIVE_NOTICES_REQUIRED=1
+          '';
+          postInstall = ''
+            mkdir -p "$out/share/spanreed/licenses"
+            cp -R "$TMPDIR/spanreed-native-notices/." "$out/share/spanreed/licenses/"
+            cp LICENSE "$out/share/spanreed/licenses/LICENSE"
+          '';
           # Single source of truth: Cargo.toml (release-plz bumps it).
           version = (lib.importTOML ./Cargo.toml).package.version;
           src = ./.;
@@ -202,6 +236,18 @@
         default = packageFor { inherit system; };
         spanreed = default;
         spanreed-desktop = desktopFor system;
+        spanreed-remote-relay = let pkgs = import nixpkgs { inherit system; }; in pkgs.rustPlatform.buildRustPackage {
+          pname = "spanreed-remote-relay";
+          version = (lib.importTOML ./crates/spanreed-remote-relay/Cargo.toml).package.version;
+          src = ./crates/spanreed-remote-relay;
+          cargoLock.lockFile = ./crates/spanreed-remote-relay/Cargo.lock;
+          meta = {
+            description = "Opaque ciphertext relay for Spanreed Remote";
+            mainProgram = "spanreed-remote-relay";
+            license = lib.licenses.agpl3Plus;
+            platforms = systems;
+          };
+        };
       });
 
       overlays.default = final: prev: {
@@ -280,6 +326,21 @@
                 type = lib.types.int;
                 default = 300;
                 description = "Refresh interval in seconds for the serve daemon (min 30).";
+              };
+            };
+
+            remote = {
+              enable = lib.mkEnableOption "Spanreed Remote user service";
+              privateOrigin = lib.mkOption {
+                type = lib.types.nullOr (lib.types.strMatching "https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+ts\\.net");
+                default = null;
+                example = "https://station.example-tailnet.ts.net";
+                description = "Exact private Tailscale HTTPS origin, or null for the managed relay. Configure Tailscale Serve separately.";
+              };
+              agentProgram = lib.mkOption {
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = "Absolute Grok executable path; null uses the user service PATH.";
               };
             };
 
@@ -369,6 +430,23 @@
               Install.WantedBy = [ "default.target" ];
             };
 
+            systemd.user.services.spanreed-remote = lib.mkIf cfg.remote.enable {
+              Unit = {
+                Description = "Spanreed Grok Remote";
+                After = [ "network-online.target" ];
+                Wants = [ "network-online.target" ];
+              };
+              Service = {
+                ExecStart = "${cfg.package}/bin/spanreed remote " + (if cfg.remote.privateOrigin == null then "serve" else "private-serve ${cfg.remote.privateOrigin}");
+                Restart = "on-failure";
+                RestartSec = 5;
+                TimeoutStopSec = 15;
+                UMask = "0077";
+                Environment = lib.optionals (cfg.remote.agentProgram != null) [ "FABRIALS_AGENT_PROGRAM=${cfg.remote.agentProgram}" ];
+              };
+              Install.WantedBy = [ "default.target" ];
+            };
+
             systemd.user.services.spanreed-capture = lib.mkIf cfg.capture.enable {
               Unit = {
                 Description = "spanreed Grok/xAI usage capture proxy";
@@ -431,6 +509,7 @@
       checks = forAllSystems (system: {
         default = self.packages.${system}.default;
         desktop = self.packages.${system}.spanreed-desktop;
+        remote-relay = self.packages.${system}.spanreed-remote-relay;
       });
 
       devShells = forAllSystems (system:

@@ -60,7 +60,13 @@ esac
 
 # Release assets are static musl on Linux (cargo-zigbuild).
 case "$os" in
-  linux) target="${arch}-unknown-linux-musl" ;;
+  linux)
+    if [ "$arch" != "x86_64" ] && [ -z "$FROM_PATH" ]; then
+      echo "unsupported platform: $os/$arch (no published release asset)" >&2
+      exit 1
+    fi
+    target="${arch}-unknown-linux-musl"
+    ;;
   darwin) target="${arch}-apple-darwin" ;;
   *)
     echo "unsupported OS: $os" >&2
@@ -71,6 +77,25 @@ esac
 install_dir="${HOME}/.local/bin"
 mkdir -p "$install_dir"
 dest="${install_dir}/spanreed"
+tmp=""
+staged=""
+trap '[ -z "$staged" ] || rm -f "$staged"; [ -z "$tmp" ] || rm -rf "$tmp"' EXIT
+
+install_binary() {
+  if [ -L "$dest" ] || { [ -e "$dest" ] && [ ! -f "$dest" ]; }; then
+    echo "install destination must be a regular file or absent: $dest" >&2
+    exit 1
+  fi
+  staged=$(mktemp "${install_dir}/.spanreed-install.XXXXXX")
+  cp "$1" "$staged"
+  chmod 755 "$staged"
+  if [ -L "$dest" ] || { [ -e "$dest" ] && [ ! -f "$dest" ]; }; then
+    echo "install destination must be a regular file or absent: $dest" >&2
+    exit 1
+  fi
+  mv -f "$staged" "$dest"
+  staged=""
+}
 
 http_get() {
   # $1 url  $2 outfile (optional: stdout)
@@ -96,10 +121,18 @@ resolve_tag() {
   fi
   # Asset names include the semver: spanreed-0.0.1-<target>.tar.gz
   api="https://api.github.com/repos/${REPO}/releases/latest"
-  tag=$(http_get "$api" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-  if [ -z "$tag" ]; then
-    echo "could not resolve latest release tag for ${REPO}" >&2
-    exit 1
+  json=$(http_get "$api") || {
+    echo "could not resolve latest stable release for ${REPO}" >&2
+    return 1
+  }
+  if printf '%s' "$json" | grep -Eq '"(draft|prerelease)"[[:space:]]*:[[:space:]]*true'; then
+    echo "latest release is not a published stable release" >&2
+    return 1
+  fi
+  tag=$(printf '%s' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+  if ! printf '%s\n' "$tag" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+    echo "latest release did not provide a stable version tag" >&2
+    return 1
   fi
   echo "$tag"
 }
@@ -109,8 +142,7 @@ if [ -n "$FROM_PATH" ]; then
     echo "binary not found: $FROM_PATH" >&2
     exit 1
   fi
-  cp "$FROM_PATH" "$dest"
-  chmod 755 "$dest"
+  install_binary "$FROM_PATH"
   echo "Installed $dest from $FROM_PATH"
 else
   tag=$(resolve_tag)
@@ -119,18 +151,36 @@ else
   asset="spanreed-${version}-${target}.tar.gz"
   url="${base}/${asset}"
   tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
   echo "Downloading $url"
   http_get "$url" "$tmp/$asset"
-  tar -xzf "$tmp/$asset" -C "$tmp"
-  bin=$(find "$tmp" -type f -name spanreed | head -n1)
-  if [ -z "$bin" ]; then
-    echo "archive did not contain spanreed" >&2
+  http_get "$url.sha256" "$tmp/$asset.sha256"
+  expected=$(awk -v name="$asset" 'NR == 1 && NF == 2 && $2 == name {hash = $1} END {if (NR == 1 && length(hash) == 64 && hash !~ /[^0-9a-fA-F]/) print tolower(hash)}' "$tmp/$asset.sha256")
+  if [ -z "$expected" ]; then
+    echo "checksum file does not describe $asset" >&2
     exit 1
   fi
-  cp "$bin" "$dest"
-  chmod 755 "$dest"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$tmp/$asset" | awk '{print $1}')
+  else
+    actual=$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')
+  fi
+  if [ "$actual" != "$expected" ]; then
+    echo "checksum mismatch for $asset" >&2
+    exit 1
+  fi
+  tar -xzf "$tmp/$asset" -C "$tmp" spanreed
+  bin="$tmp/spanreed"
+  if [ ! -f "$bin" ] || [ -L "$bin" ]; then
+    echo "archive did not contain a regular spanreed binary" >&2
+    exit 1
+  fi
+  install_binary "$bin"
   echo "Installed $dest (release ${tag})"
+fi
+
+if [ -n "$tmp" ]; then
+  rm -rf "$tmp"
+  tmp=""
 fi
 
 # shellcheck disable=SC2086

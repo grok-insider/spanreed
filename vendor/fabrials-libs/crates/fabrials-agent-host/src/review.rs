@@ -216,6 +216,9 @@ pub struct SessionInspectorProjection {
     /// Human-readable model label, when reported.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_display_name: Option<String>,
+    #[allow(missing_docs)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     /// Completed turn count.
     pub turns: u64,
     /// Current zero-based turn index.
@@ -248,6 +251,7 @@ pub struct SessionReviewState {
     agent_name: Option<String>,
     model: Option<String>,
     model_display_name: Option<String>,
+    reasoning_effort: Option<String>,
     models: BTreeMap<String, ModelMetadata>,
     completed_turns: u64,
     turn_usage_captured: bool,
@@ -341,9 +345,6 @@ impl SessionReviewState {
             let Some(id) = bounded_optional(Some(id), 128) else {
                 continue;
             };
-            if !crate::models::is_grok_model_id(&id) {
-                continue;
-            }
             self.models.insert(
                 id,
                 ModelMetadata {
@@ -365,17 +366,30 @@ impl SessionReviewState {
         if let Some(model) = model {
             self.set_model(model);
         }
+        self.capture_reasoning_effort(value);
+    }
+
+    fn capture_reasoning_effort(&mut self, value: &Value) {
+        self.reasoning_effort = value
+            .get("configOptions")
+            .and_then(Value::as_array)
+            .and_then(|options| {
+                options.iter().find(|option| {
+                    option.get("id").and_then(Value::as_str) == Some("reasoning_effort")
+                })
+            })
+            .and_then(|option| confirmed_effort(option.get("currentValue")));
     }
 
     /// Apply the model selected by a standard ACP update or host operation.
     pub fn set_model(&mut self, model: &str) {
-        if !crate::models::is_grok_model_id(model) {
-            return;
-        }
         let Some(model) = bounded_optional(Some(model), 128) else {
             return;
         };
         let metadata = self.models.get(&model).cloned().unwrap_or_default();
+        if self.model.as_deref() != Some(&model) {
+            self.reasoning_effort = None;
+        }
         self.model = Some(model);
         self.model_display_name = metadata.display_name;
         self.agent_name = metadata.agent_name;
@@ -422,6 +436,17 @@ impl SessionReviewState {
                 return CaptureResult::default();
             };
             self.set_model(model);
+            if self.model.as_deref() == Some(model) {
+                self.reasoning_effort =
+                    confirmed_effort(params.pointer("/update/reasoning_effort"));
+            }
+            return CaptureResult {
+                usage_updated: true,
+                ..CaptureResult::default()
+            };
+        }
+        if kind == "config_option_update" {
+            self.capture_reasoning_effort(&params["update"]);
             return CaptureResult {
                 usage_updated: true,
                 ..CaptureResult::default()
@@ -708,6 +733,7 @@ pub async fn inspect_session(
         agent_name: local.agent_name.clone(),
         model: local.model.clone(),
         model_display_name: local.model_display_name.clone(),
+        reasoning_effort: local.reasoning_effort.clone(),
         turns: local.completed_turns,
         turn_index: local.completed_turns.saturating_sub(1),
         context,
@@ -1418,6 +1444,19 @@ fn bounded_optional(value: Option<&str>, max: usize) -> Option<String> {
     Some(crate::bounds::truncate_utf8(value, max).0)
 }
 
+fn confirmed_effort(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+        .map(str::to_owned)
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct UsageWire {
@@ -1547,6 +1586,77 @@ mod tests {
         let usage = state.usage.expect("usage");
         assert_eq!(usage.total_tokens, 120);
         assert_eq!(usage.cost_usd, Some(0.01));
+    }
+
+    #[tokio::test]
+    async fn inspector_exposes_only_effort_reported_by_acp_and_tracks_live_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = SessionReviewState::default();
+        state.capture_open_result(&json!({
+            "models": {"currentModelId":"grok-4.6-build"},
+            "configOptions": [{"id":"reasoning_effort", "type":"select", "currentValue":"high"}]
+        }));
+        let inspector = super::inspect_session("session", root.path(), &state).await;
+        assert_eq!(inspector.model.as_deref(), Some("grok-4.6-build"));
+        assert_eq!(inspector.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(
+            serde_json::to_value(inspector).unwrap()["reasoningEffort"],
+            "high"
+        );
+        let changed = state.capture_update(root.path(), &json!({"update": {
+            "sessionUpdate":"model_changed", "model_id":"grok-4.6-build", "reasoning_effort":"low"
+        }}));
+        assert!(changed.usage_updated);
+        assert_eq!(state.reasoning_effort.as_deref(), Some("low"));
+        let changed = state.capture_update(root.path(), &json!({"update": {
+            "sessionUpdate":"config_option_update", "configOptions":[{"id":"reasoning_effort", "currentValue":"xhigh"}]
+        }}));
+        assert!(changed.usage_updated);
+        assert_eq!(state.reasoning_effort.as_deref(), Some("xhigh"));
+        state.capture_update(
+            root.path(),
+            &json!({"update": {
+                "sessionUpdate":"model_changed", "model_id":"grok-4.7-build"
+            }}),
+        );
+        let inspector = super::inspect_session("session", root.path(), &state).await;
+        assert_eq!(inspector.model.as_deref(), Some("grok-4.7-build"));
+        assert!(inspector.reasoning_effort.is_none());
+        assert!(
+            serde_json::to_value(inspector)
+                .unwrap()
+                .get("reasoningEffort")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn effort_never_comes_from_catalog_defaults_modes_or_malformed_values() {
+        for options in [
+            json!([]),
+            json!([{"id":"reasoning_effort", "options":[{"value":"high", "default":true}]}]),
+            json!([{"id":"mode", "currentValue":"high"}]),
+            json!([{"id":"reasoning_effort", "currentValue":null}]),
+            json!([{"id":"reasoning_effort", "currentValue":true}]),
+            json!([{"id":"reasoning_effort", "currentValue":""}]),
+            json!([{"id":"reasoning_effort", "currentValue":" high "}]),
+            json!([{"id":"reasoning_effort", "currentValue":"x".repeat(65)}]),
+        ] {
+            let mut state = SessionReviewState::default();
+            state.capture_open_result(
+                &json!({"configOptions": [{"id":"reasoning_effort", "currentValue":"low"}]}),
+            );
+            assert!(state.reasoning_effort.is_some());
+            state.capture_open_result(&json!({"configOptions":options}));
+            assert!(state.reasoning_effort.is_none());
+        }
+        let mut state = SessionReviewState::default();
+        state.capture_open_result(&json!({
+            "models":{"currentModelId":"grok-4.6-build"},
+            "configOptions":[{"id":"reasoning_effort", "currentValue":"high"}]
+        }));
+        state.set_model("grok-4.7-build");
+        assert!(state.reasoning_effort.is_none());
     }
 
     #[test]

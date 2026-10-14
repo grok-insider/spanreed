@@ -49,9 +49,11 @@ jobs:
         with:
           extra_nix_config: |
             accept-flake-config = true
+      - run: python scripts/remote-assets.py check
       - run: nix flake show --all-systems
-      - run: nix build .#default .#spanreed-desktop --no-link --print-build-logs
+      - run: nix build .#default .#spanreed-desktop .#spanreed-remote-relay --no-link --print-build-logs
       - run: nix run . -- --help
+      - run: nix run . -- remote doctor
       - name: Push to cache.fabrials.com
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.pr_number == '')
         env:
@@ -60,5 +62,5 @@ jobs:
           if [ -z "$ATTIC_TOKEN" ]; then echo "::warning::ATTIC_TOKEN not set; skipping push"; exit 0; fi
           nix profile install --inputs-from . nixpkgs#attic-client
           attic login fabrials https://push.cache.fabrials.com "$ATTIC_TOKEN"
-          mapfile -t paths < <(nix build .#default .#spanreed-desktop --no-link --print-out-paths)
+          mapfile -t paths < <(nix build .#default .#spanreed-desktop .#spanreed-remote-relay --no-link --print-out-paths)
           attic push fabrials "${paths[@]}"

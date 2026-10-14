@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-10-14T00:02:08.130573+00:00",
+  "baseCommit": "6ae91bdca8fa9fcdae6971618363cb976d410087",
+  "sourceFiles": {
+    "crates/fabrials-agent-host/src/agent_process.rs": "6ec624e92b94a6fca7aece96415debe25dd0f3da4bacc0c9db9539c670c22426",
+    "crates/fabrials-agent-host/src/acp.rs": "126c655e13faf2b7266e32a0cc93aeafebb149f1ddd2fd92825c7227e19b373c",
+    "crates/fabrials-agent-host/src/lib.rs": "b952d700e9a8b07bbfbf0ae2f40f72de8fc65428a4f3eecc4f18549c63517450",
+    "crates/fabrials-agent-host/examples/fake_agent.rs": "e59b7dd2d8423b4205ce57406308f3ad6452c64487450c9350e2d0266b8bd0ba",
+    "crates/fabrials-agent-host/tests/process_lifetime.rs": "ddca319659935b4fbff0bf51792765cc02d766be54a542c2cce54046ab77c7a0",
+    "crates/fabrials-agent-host/tests/windows_process_lifetime.rs": "7811541f4b3bd6942ab7724d11a0e803d5bb859cc573a22a7e340c4b574d89f2",
+    "crates/fabrials-agent-host/tests/fixtures/lifetime_agent.py": "d25ec82398484041c0484efbfab021ebee1187efcdb3cdd667d27f7bde7ccfdb",
+    "docs/remote.md": "25c7be96974f9775e0be2409e4adb9938ebf08e96c48c141cc071d5479be63cf"
+  },
+  "tests": {
+    "hostSuitePassed": 538,
+    "hostSuiteIgnored": 2,
+    "clippy": "all-targets -D warnings passed",
+    "linuxLifecycleFinalPassed": 4,
+    "systemServiceWithoutManagerCases": 2,
+    "mutationsCaught": 3,
+    "windowsRetainedHandle": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "mutationCaught": true,
+      "nativeToolchain": "Rust 1.95.0 x86_64-pc-windows-msvc, MSVC 14.44.35207",
+      "administratorRoleActive": false,
+      "allTargetsClippyPassed": true
+    }
+  },
+  "evidence": {
+    "/tmp/remote-acp-host-suite.log": "95e1d563d3057bcb8266ee811c2ca7c8277e7b74d57027864f1a9c42a5423293",
+    "/tmp/remote-acp-lifetime-clippy-final.log": "d8d76f015a975a027b7e928a3a514f17c34d511a9d82feef721c9d6ff0338e26",
+    "/tmp/remote-acp-lifetime-final.log": "e318466228f2dc3ecb17c326c9e44d6a86364e980fac2ab10418e7f48f76d04c",
+    "/tmp/remote-acp-lifetime-mutations.json": "a3bcdda129afdd172dbb429e2188177a30e67a71bcb740e246bf0a85137a091a",
+    "/tmp/remote-acp-lifetime-system-service.json": "748a8304b1d74151021b8ed55ca8f43acc811ff4b8adb442956aff0f48dd65d9",
+    "/tmp/remote-windows-retained-arc-receipt.json": "3d90cb40f222667e38c3cf5bbfcf2c72f5328dd87f4b8dcfe4f8b94856259f47",
+    "/tmp/remote-windows-security-20261014-8368_gnj/lifetime-evidence/lifetime-evidence.zip": "bdcced0b47a3704c2adbf38361eb18c4c8513eccf90806c4478f1b64e154c8c4"
+  },
+  "syntheticUnitsRemaining": "",
+  "realLeaderTouched": false,
+  "notes": [
+    "Synthetic service-child helper counts as one of four explicit lifecycle entries; it returns without doing work when not invoked inside fixture service.",
+    "Unix termination guarantees inherited process group, not deliberately detached descendants.",
+    "Systemd isolation required only for Shared Linux under systemd service cgroups.",
+    "Native Windows retained-handle test and its single-change mutation passed qualification; final source rebuilt after detecting stale Cargo executable from restored archive timestamps. This does not qualify the complete Windows remote release."
+  ],
+  "commit": "2f5eba7f96a0ef4afc218bb9939d51631a7efa93",
+  "signature": "G",
+  "pushedRef": "origin/feat/grok-remote"
+}

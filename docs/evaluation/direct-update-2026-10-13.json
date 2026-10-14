@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "recordedAt": "2026-10-13T05:45:40.963295+00:00",
+  "scope": "isolated-linux-self-update-failure-recovery",
+  "passed": true,
+  "checks": [
+    {
+      "command": "cargo test -p spanreed-adapters self_update --locked",
+      "passed": 23,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p spanreed --test cli version_is_exact_and_available_without_user_configuration --locked",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo test -p spanreed --test cli blocked_update_refuses_before_release_lookup_or_download --locked",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "cargo clippy -p spanreed-adapters -p spanreed --all-targets --locked -- -D warnings",
+      "exitCode": 0
+    }
+  ],
+  "covered": [
+    "Published stable release metadata only; exact canonical three-part version",
+    "Single checksum sidecar entry naming selected archive",
+    "Active host lock causes refusal without interruption; updater lock blocks concurrent host startup",
+    "Private exclusive staging, data and directory flushes, pre-install executable version check",
+    "Real synthetic executable version check at installed path",
+    "Previous executable restored after rename or installed healthcheck failure",
+    "Original retained with explicit recovery path if rollback itself fails",
+    "Failed first installation removes rejected executable",
+    "Symlink and shared-write refusal; destination rechecked after staging",
+    "Hung executable and descendant-held stdout terminate within bounded deadlines",
+    "Windows apply gate closed before lookup/download; check-only preserved"
+  ],
+  "windowsApplyEnabled": false,
+  "windowsGateReasons": [
+    "Process must be assigned to kill-on-close Job before execution",
+    "Executable-specific ACL validation must reject other writers and verify owner"
+  ],
+  "notQualified": [
+    "Windows-only CLI gate integration test is compiled/executed only on Windows; Linux verified the shared gate ordering with SPANREED_NIX=1",
+    "Native Windows execution and installer lifecycle",
+    "macOS runtime",
+    "Release archive download against GitHub",
+    "Downgrade after successful installed-version check",
+    "OS crash or power loss; no durable recovery journal",
+    "Production release from clean committed sources; Portable and Noise identities are explicitly dirty",
+    "Embedded-shell UI in this final native binary; final CLI lifecycle passed, and PWA browser qualification is recorded separately"
+  ],
+  "sourceSha256": {
+    "crates/spanreed-adapters/src/self_update.rs": "9f977c5648a89ea9fce0c847fc8e8b738670e551b76e5f0a6e6ea67c7684774f",
+    "crates/spanreed-adapters/src/self_update/install.rs": "165037b8594d57694cc681b8d125f2882614000036d014221cc666f8769477c7",
+    "src/cli/mod.rs": "4b6e56929b70ba4b59927fe3d6b1e3fcf5bdb0f3ea4bcaf5a5385f9133c401a8",
+    "src/cli/help.rs": "22b0e7d00066f73e66d99c68f785e05182cdc0df24f436524fd62a6bca630113",
+    "src/cli/self_update.rs": "28c5075b58c1f1ec7706019738cef5ade22938dc551cb1a3c4e6829246346576",
+    "tests/cli.rs": "5c6ae2613a247963a328f4627e7028c6ad4792ccdaa457afbae0b6439d07a320"
+  },
+  "finalIntegration": {
+    "binarySha256": "7c20050a49afaa3b89f72125ad1366108356d927612d35224daeeaac2a18ab09",
+    "embeddedManifestSha256": "44ed9586bf07d9625867c4d6adac152a3db8f0dfe17d73ad57d5902d1c520335",
+    "embeddedBundleSha256": "160ace1c350c5642cde1d1f2dd5f575a45f6ee4c3edf3007f7162f521263a3f6",
+    "embeddedFiles": 47,
+    "sourceInputsUncommitted": {
+      "noise": true,
+      "portable": true
+    },
+    "integrationLockfileSha256": "1b678f32fbb4f513b6207ab2ac4e886817bde4659dc622056d1ca51f83ff63ce",
+    "consumerCheckoutLockfileSha256": "30ee2dc124aef79846079509ddbedb9eab657cd91f3a430112f2205ef0736455",
+    "integrationLockfileDiffersFromCheckout": true,
+    "lockfileResolution": "The isolated consumer mirror uses canonical uncommitted libraries in its temporary vendor copy. Its lockfile was resolved for those library dependencies; the consumer checkout lockfile and real vendor were not changed. Existing registry package versions were retained except rand 0.8.7 to 0.8.8; dependency edges and new entries reflect the new library features. A full generate-lockfile resolution was discarded before building. Initial --locked rejection and offline metadata fetch failure were preparation failures; subsequent locked build, tests and clippy succeeded.",
+    "lifecycleReceipt": "direct-lifecycle-2026-10-13.json",
+    "lifecycleReceiptSha256": "0ce885d407d571ceeb3e54a2ff1cfe8a191f294088aaf1403165577798fc68b5",
+    "lifecycleChecks": 16,
+    "lifecycleOwnedChildStopped": true,
+    "lifecycleTemporaryStateRemoved": true
+  },
+  "verificationLogSha256": {
+    "direct-final-assets-build.log": "82ea3c0460b8a50cf56b306f1fc0e744951e074be46d8b129426930ce412ff3e",
+    "direct-final-native-build.log": "5db1b3f71d6438cc2070837c6edac7c4e1cb07533635e6b623ff012df758f11d",
+    "direct-final-update-unit.log": "75244685756cf846313fc325440b8737516211e3cd4d4e4e776269fea42db2ac",
+    "direct-final-update-cli-version.log": "f54ed96597cdd9c4510e6487dbff83131871d9240398d77a5e69a2edbae2a48d",
+    "direct-final-update-cli-gate.log": "e1d4be72ed399241e38ae47b54f3bebf0bceaedc07a30f304f8a6b55a94d6768",
+    "direct-final-update-clippy.log": "cb4cf82202ea3fc6c615bdbd824576aa5f0af57c41840d020b86d81c6d07f43c"
+  }
+}

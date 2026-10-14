@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "verifiedAt": "2026-10-13T05:28:21.272870+00:00",
+  "scope": "local synthetic installer archive and release-resolution checks; read-only PowerShell review",
+  "sha256": {
+    "remote-spanreed/scripts/install.sh": "e6c823b230d59becac3b5eabb04e438e99c04633a7618099537f976491ab36b0",
+    "remote-spanreed/scripts/install.ps1": "db50f712724826d536909ffb761396f708b977b630e9ca729934befc117a5168",
+    "remote-portable/site/install.sh": "5633b9fe97636f99dd04816ea3a60699cd7b9575498d0845d0f78956599ae25b",
+    "remote-portable/site/install.ps1": "a38032514ee18f040ce78d664b05ec75b316bc5dbc8b792143a238a2f05e813b",
+    "remote-web/public/install/spanreed.sh": "e6c823b230d59becac3b5eabb04e438e99c04633a7618099537f976491ab36b0",
+    "remote-web/public/install/spanreed.ps1": "db50f712724826d536909ffb761396f708b977b630e9ca729934befc117a5168",
+    "remote-spanreed/scripts/tests/test_installer.py": "2285cfc53b348435774f36a92f31b114d3d06876c73b9c4b247461150803ba8a",
+    "remote-portable/scripts/install-resolve.test.sh": "e2edb88dfd91f85f4927ce921f7cb9eecf8c3e6ef8c37a82b6cf9ed53eb82931"
+  },
+  "results": {
+    "canonicalLinuxTests": {
+      "passed": 14,
+      "failed": 0,
+      "log": "/tmp/spanreed-installer-final.log"
+    },
+    "portableOfflineSuite": {
+      "exitCode": 0,
+      "installerExecutions": 19,
+      "log": "/tmp/portable-installer-final.log"
+    },
+    "shellSyntax": {
+      "exitCode": 0,
+      "files": [
+        "remote-spanreed/scripts/install.sh",
+        "remote-portable/site/install.sh",
+        "remote-portable/scripts/install-resolve.test.sh",
+        "remote-web/public/install/spanreed.sh"
+      ]
+    },
+    "canonicalWebCopiesIdentical": true,
+    "mutationChecks": [
+      {
+        "mutation": "draft_prerelease_check_removed",
+        "caught": true,
+        "test": "test_latest_requires_a_published_stable_tag"
+      },
+      {
+        "mutation": "leading_zero_versions_accepted",
+        "caught": true,
+        "test": "test_latest_requires_a_published_stable_tag"
+      },
+      {
+        "mutation": "directory_guards_removed",
+        "caught": true,
+        "test": "test_directory_destination_is_unchanged"
+      },
+      {
+        "mutation": "staged_destination_recheck_removed",
+        "caught": true,
+        "test": "test_destination_is_rechecked_after_staging"
+      },
+      {
+        "mutation": "partial_copy_writes_installed_binary",
+        "caught": true,
+        "test": "test_partial_copy_failure_preserves_existing_binary"
+      }
+    ]
+  },
+  "checks": [
+    "Both executable shell suites run in bubblewrap with network disabled and synthetic writable profiles; the remaining host filesystem is read-only",
+    "Valid SHA256 installs the synthetic binary; canonical bootstrap invokes its setup after verification",
+    "Missing, incorrect, ambiguous or wrong-filename checksums preserve the previous binary and do not run setup in canonical tests",
+    "Canonical checksummed symlink archive payload is refused",
+    "Latest resolution refuses unavailable API, draft, prerelease, malformed version, uppercase V and leading-zero version components without falling back",
+    "Official Linux aarch64 download is refused before lookup because no matching release asset is published; --from-path still installs a supplied local ARM binary",
+    "Unix file destinations reject directories and symlinks; Portable checks its legacy alias before replacing the main binary",
+    "Canonical destination is rechecked after staging; an injected directory substitution preserves contents and removes staging",
+    "Both shell installers preserve the previous binary and clean staging after injected partial-copy disk-full failure",
+    "Portable output explains direct private-serve, Tailscale Serve and private-pair at desktop.grok.me",
+    "PowerShell review: exact root spanreed.exe selection, regular-file/reparse checks, exclusive staging, digest comparison and File.Replace/File.Move; not executed",
+    "Web canonical bootstrap copies are byte-identical to Spanreed sources"
+  ],
+  "notQualified": [
+    "PowerShell execution, ACLs, antivirus/file-lock behavior, Windows replacement and backup cleanup",
+    "Real GitHub release archive install and code-signing behavior",
+    "Installed service update and rollback",
+    "Physical macOS; Darwin uname cases are synthetic Linux shell executions",
+    "Actual Tailscale setup and mobile pairing from the printed instructions",
+    "Crash/power-loss recovery and simultaneous installers"
+  ],
+  "noDailyInstallChanged": true
+}

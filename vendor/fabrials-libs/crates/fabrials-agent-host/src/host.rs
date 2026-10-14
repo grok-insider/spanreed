@@ -52,6 +52,10 @@ impl Default for HostIdentity {
 /// Everything [`serve`] needs.
 #[derive(Debug, Clone)]
 pub struct HostConfig {
+    #[allow(missing_docs)]
+    pub private_origin: Option<String>,
+    #[allow(missing_docs)]
+    pub agent_mode: crate::acp::AgentMode,
     /// Owner-only state directory (identity, journal, enrolments, lock,
     /// control channel).
     pub state_dir: PathBuf,
@@ -81,6 +85,8 @@ impl HostConfig {
     pub fn new(state_dir: impl Into<PathBuf>, identity: HostIdentity) -> Self {
         Self {
             state_dir: state_dir.into(),
+            agent_mode: crate::acp::AgentMode::Isolated,
+            private_origin: None,
             legacy_state_dir: None,
             agent_program: DEFAULT_AGENT_PROGRAM.to_owned(),
             agent_env: Vec::new(),
@@ -98,6 +104,9 @@ impl HostConfig {
 /// Errors that stop the host from starting or serving.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[allow(missing_docs)]
+    #[error(transparent)]
+    Origin(#[from] crate::origin::OriginError),
     /// The state directory is unusable, or another host holds it.
     #[error(transparent)]
     Instance(#[from] InstanceError),
@@ -196,6 +205,10 @@ impl RunningHost {
 ///
 /// See [`Error`]. A busy port is [`Error::Bind`] and never rotates identity.
 pub async fn start(config: HostConfig) -> Result<RunningHost, Error> {
+    control::preflight(&config.state_dir)?;
+    if let Some(origin) = &config.private_origin {
+        crate::origin::validate_private_origin(origin)?;
+    }
     let lock = InstanceLock::acquire(&config.state_dir)?;
     let directory = lock.directory().to_path_buf();
     let migration = match &config.legacy_state_dir {
@@ -213,8 +226,10 @@ pub async fn start(config: HostConfig) -> Result<RunningHost, Error> {
     let picker = config.picker.unwrap_or_else(platform_picker);
     let state = Arc::new(
         HostState::new(origin)
+            .with_agent_mode(config.agent_mode)
             .with_identity(config.identity)
             .with_allowed_origins(config.allowed_origins)
+            .with_private_origin(config.private_origin)?
             .with_agent_program(config.agent_program.clone())
             .with_persistence(directory.clone(), picker)?,
     );
@@ -224,7 +239,9 @@ pub async fn start(config: HostConfig) -> Result<RunningHost, Error> {
     let control_listener = control::bind(&directory)?;
     tokio::spawn(control::serve(control_listener, Arc::clone(&state)));
 
-    let command = AgentCommand::new(config.agent_program).with_env(config.agent_env);
+    let command = AgentCommand::new(config.agent_program)
+        .with_mode(config.agent_mode)
+        .with_env(config.agent_env);
     let supervisor = state.supervise_agent(command, config.relaunch);
     let server = tokio::spawn(server::serve(listeners, Arc::clone(&state)));
 

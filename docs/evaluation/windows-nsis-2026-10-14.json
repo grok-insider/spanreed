@@ -1,0 +1,202 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-10-14T02:24:18.624074+00:00",
+  "sourceCommit": "9eaabe27b684ef468bd67a809a0cafd92bc7da5a",
+  "workflowRun": 38498417239,
+  "windowsJob": 115639381058,
+  "version": "0.7.1",
+  "installerSha256": "bf0fe59703dd96e2865d2b1c03dc950738c252fa748dcbddc6f0bbec05e973dc",
+  "installerBytes": 72958250,
+  "extractedBinarySha256": "2dc006ebbe89a79834411043c7c3599550f0320e87a2977242b461a6af1c9f6b",
+  "provenanceSha256": "647dc5d0c8d328b37f04fa16a986e69d333998c3279713f1b39c0177726705e1",
+  "originalNativeNoticesSha256": "474911919325f66c2638fef47bc1aaea8c61c8d5ea5f50ea7d07325c58c64a0d",
+  "exactOriginalNoticesEmbedded": true,
+  "exactApplicationLicenseEmbedded": true,
+  "stableBaselineVersion": "0.7.0",
+  "stableBaselineInstallerSha256": "27c1d500625b4ecb13b37b5bd472c0eb21cc9a6a8639161687d7fa9de2061617",
+  "runtimeInstallerQualified": true,
+  "limits": [
+    "Silent per-user NSIS lifecycle only; full service-definition equality across the cleanup reboot was not established",
+    "Unsigned review artifact, not a stable release",
+    "No claim of coverage for later Portable layout changes"
+  ],
+  "lifecycleResult": "passed",
+  "lifecycleChecks": 25,
+  "installedFileCount": 420,
+  "cleanupResult": "resources_removed_with_service_comparison_limitation",
+  "lifecycleReportSha256": "62548a3e0dcb483153cded78d4456d412574d13583b3a3917242f11f9b6ac4a4",
+  "qualificationScope": "Historical unsigned Windows NSIS review artifact only; does not qualify R3 or a stable release",
+  "platform": "Windows 11 x86_64 QA VM",
+  "administratorRoleActive": false,
+  "startedAt": "2026-10-14T02:42:25.1962993Z",
+  "finishedAt": "2026-10-14T02:42:36.1941987Z",
+  "checks": [
+    {
+      "name": "runs_as_expected_temporary_account",
+      "passed": true
+    },
+    {
+      "name": "not_administrator",
+      "passed": true
+    },
+    {
+      "name": "profile_is_temporary",
+      "passed": true
+    },
+    {
+      "name": "initial_installation_absent",
+      "passed": true
+    },
+    {
+      "name": "initial_registration_absent",
+      "passed": true
+    },
+    {
+      "name": "published_stable_hash",
+      "passed": true
+    },
+    {
+      "name": "candidate_installer_hash",
+      "passed": true
+    },
+    {
+      "name": "install_published_0_7_0",
+      "exitCode": 0
+    },
+    {
+      "name": "old_binary_installed",
+      "passed": true
+    },
+    {
+      "name": "old_version_registered",
+      "passed": true
+    },
+    {
+      "name": "upgrade_to_candidate_0_7_1",
+      "exitCode": 0
+    },
+    {
+      "name": "candidate_binary_matches_extracted_artifact",
+      "passed": true
+    },
+    {
+      "name": "upgrade_replaced_old_binary",
+      "passed": true
+    },
+    {
+      "name": "candidate_version_registered",
+      "passed": true
+    },
+    {
+      "name": "upgrade_preserved_user_state",
+      "passed": true
+    },
+    {
+      "name": "repair_same_candidate",
+      "exitCode": 0
+    },
+    {
+      "name": "repair_kept_candidate_bytes",
+      "passed": true
+    },
+    {
+      "name": "repair_preserved_user_state",
+      "passed": true
+    },
+    {
+      "name": "repair_single_registration",
+      "passed": true
+    },
+    {
+      "name": "uninstaller_present",
+      "passed": true
+    },
+    {
+      "name": "uninstall_candidate",
+      "exitCode": 0
+    },
+    {
+      "name": "installation_directory_removed",
+      "passed": true
+    },
+    {
+      "name": "binary_removed",
+      "passed": true
+    },
+    {
+      "name": "registration_removed",
+      "passed": true
+    },
+    {
+      "name": "uninstall_preserved_user_state",
+      "passed": true
+    }
+  ],
+  "installedFilesInventorySha256": "bfa993ba04ebab30db9baf8dba1ad86e033aa9e4da4261ed45ddb83abc2a2250",
+  "scriptHashes": {
+    "run-nsis.ps1": "1026e3c00a3f1e479ebf6a43bd7100e28476349fcb53b867f7a93e656eacdd38",
+    "qualify-nsis.ps1": "f02bcb8d6e46acc8e3ae5060f62c59c4234ab05384d8046ab2cec55c67e3f7f6",
+    "account-rights.ps1": "0af1f21accb5c612277a47e2388ab4a3139ced37d24b8f5e213b108fadd5d5a1"
+  },
+  "cleanup": {
+    "schema": 1,
+    "checkedAt": "2026-10-14T03:02:00.2137384Z",
+    "cleanRebootUsed": true,
+    "forceRebootUsed": false,
+    "temporaryAccountRemoved": true,
+    "temporaryTaskRemoved": true,
+    "temporaryProfileRemoved": true,
+    "temporaryProfileDirectoryRemoved": true,
+    "temporaryHiveRemoved": true,
+    "temporaryClassesHiveRemoved": true,
+    "temporaryBatchLogonRightRemoved": true,
+    "friendFilesPreserved": true,
+    "friendFileCount": 351,
+    "friendRegistrationPreserved": true,
+    "machineRegistrationPreserved": true,
+    "defenderServicesPreserved": true,
+    "defender": [
+      {
+        "Name": "WdNisSvc",
+        "Status": 4,
+        "StartType": 3
+      },
+      {
+        "Name": "WinDefend",
+        "Status": 4,
+        "StartType": 2
+      }
+    ],
+    "allServiceDefinitionsEqual": false,
+    "serviceComparisonLimitation": "Full service fingerprint differs after clean reboot; old service inventory was not retained, so equality of all service definitions is not established.",
+    "cleanupScriptSha256": "c2d37456350d5bf280b84ba45aa16a74246c2e332ec9b6a91f6856931404c779",
+    "result": "resources_removed_with_service_comparison_limitation",
+    "originalGuardExitCode": 1,
+    "originalGuardReportSha256": "8ba96c347eeec2749b1454728b78115fa9b73a0a10ef0c201870511863558a2e",
+    "baselineComparison": {
+      "before": {
+        "friendFiles": "bd964d57a3c38f71063a4be91437a5cf344fc5eeefeefb17ad8bdec9477f3209",
+        "friendFileCount": 351,
+        "friendRegistration": "d2cb31c6a42ee4dd45a639e33bef73d81570509cdf3fd76b267fbad13e6d79e7",
+        "machineRegistration": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "services": "5f2fc8b00fb3254eddd6ac0c481d2ac93182a91cc67a14324454164cfc9d5d65"
+      },
+      "after": {
+        "friendFiles": "bd964d57a3c38f71063a4be91437a5cf344fc5eeefeefb17ad8bdec9477f3209",
+        "friendFileCount": 351,
+        "friendRegistration": "d2cb31c6a42ee4dd45a639e33bef73d81570509cdf3fd76b267fbad13e6d79e7",
+        "machineRegistration": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "services": "1326f5df82dcbe0b0ecd82bcc46e740b9bd7bdae4ca88184f1663dcbd20e8c7c"
+      }
+    }
+  },
+  "notQualified": [
+    "Interactive installer UI, UAC and SmartScreen",
+    "First graphical application start",
+    "Machine-wide MSI installation",
+    "CLI self-update replacement and rollback",
+    "Active application upgrade",
+    "Power loss and physical Windows hardware"
+  ],
+  "cleanupReportSha256": "9c2bd8fba68d0b2b088402cc701c8568f0ca12e09cc16dc33c596a502b4667b3"
+}

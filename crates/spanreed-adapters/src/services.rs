@@ -602,6 +602,15 @@ impl ports::SelfUpdater for Updates {
     fn apply_blocked_reason(&self) -> Option<&'static str> {
         crate::self_update::apply_blocked_reason()
     }
+    fn recover_update(&self, rollback: bool) -> Result<String, String> {
+        crate::self_update::recover_update(rollback)
+    }
+    fn update_status(&self) -> Result<String, String> {
+        crate::self_update::update_status()
+    }
+    fn finish_update(&self) -> Result<String, String> {
+        crate::self_update::finish_update()
+    }
     fn offline(&self) -> bool {
         crate::product::env_offline()
     }

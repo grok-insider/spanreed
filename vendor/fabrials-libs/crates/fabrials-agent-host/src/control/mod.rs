@@ -31,6 +31,16 @@ pub use unix::{ControlListener, bind, serve};
 #[cfg(windows)]
 pub use windows::{ControlListener, bind, serve};
 
+#[allow(missing_docs)]
+pub fn preflight(directory: &Path) -> Result<(), ControlError> {
+    #[cfg(unix)]
+    std::os::unix::net::SocketAddr::from_pathname(directory.join(CONTROL_SOCKET_NAME))
+        .map_err(ControlError::Io)?;
+    #[cfg(not(unix))]
+    let _ = directory;
+    Ok(())
+}
+
 /// Marker / socket file name inside the owner-only state directory (Unix).
 ///
 /// On Windows the control endpoint is a named pipe; this name is still used for
@@ -64,6 +74,19 @@ pub enum ControlError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "camelCase")]
 pub enum ControlRequest {
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    AuthorizeRemoteRoot { path: PathBuf },
+    #[allow(missing_docs)]
+    ListRemoteRoots,
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    RevokeRemoteRoot { root_id: String },
+    #[allow(missing_docs)]
+    ListPairings,
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    RevokePairing { session_id: String },
     /// Mint a single-use pairing nonce and return the URL to open.
     MintNonce,
     /// Report host status without changing anything.
@@ -76,6 +99,15 @@ pub enum ControlRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum ControlResponse {
+    #[allow(missing_docs)]
+    RemoteRoots {
+        roots: Vec<crate::remote_projects::RemoteRoot>,
+    },
+    #[allow(missing_docs)]
+    #[serde(rename_all = "camelCase")]
+    Pairings { session_ids: Vec<String> },
+    #[allow(missing_docs)]
+    Revoked,
     /// A fresh pairing nonce and the URL that carries it in its fragment.
     #[serde(rename_all = "camelCase")]
     Paired {
@@ -181,6 +213,67 @@ where
 pub(crate) async fn execute(request: ControlRequest, state: &Arc<HostState>) -> ControlResponse {
     let now = now_ms();
     match request {
+        ControlRequest::ListRemoteRoots => ControlResponse::RemoteRoots {
+            roots: state.remote_projects.lock().await.roots(),
+        },
+        ControlRequest::AuthorizeRemoteRoot { path } => {
+            let Some(directory) = state.state_directory.as_deref() else {
+                return ControlResponse::Error {
+                    code: "remote_roots_unusable".into(),
+                };
+            };
+            match state
+                .remote_projects
+                .lock()
+                .await
+                .authorize(directory, &path)
+            {
+                Ok(roots) => ControlResponse::RemoteRoots { roots },
+                Err(error) => ControlResponse::Error { code: error.into() },
+            }
+        }
+        ControlRequest::RevokeRemoteRoot { root_id } => {
+            let Some(directory) = state.state_directory.as_deref() else {
+                return ControlResponse::Error {
+                    code: "remote_roots_unusable".into(),
+                };
+            };
+            match state
+                .remote_projects
+                .lock()
+                .await
+                .revoke(directory, &root_id)
+            {
+                Ok(roots) => ControlResponse::RemoteRoots { roots },
+                Err(error) => ControlResponse::Error { code: error.into() },
+            }
+        }
+        ControlRequest::ListPairings => ControlResponse::Pairings {
+            session_ids: state.pairing.lock().await.session_ids(now),
+        },
+        ControlRequest::RevokePairing { session_id } => {
+            let mut broker = state.pairing.lock().await;
+            broker.revoke(&session_id);
+            if broker.persist().is_err() {
+                return ControlResponse::Error {
+                    code: "revocation_not_durable".into(),
+                };
+            }
+            drop(broker);
+            state
+                .remote_connections
+                .lock()
+                .await
+                .revoke(Some(&session_id));
+            state.event_notify.notify_waiters();
+            let mut lease = state.lease.lock().await;
+            if lease.holder_session() == Some(&session_id) {
+                lease.clear();
+            }
+            drop(lease);
+            state.notify_remote_devices().await;
+            ControlResponse::Revoked
+        }
         ControlRequest::MintNonce => {
             let mut broker = state.pairing.lock().await;
             match broker.mint_nonce(now) {
@@ -430,5 +523,20 @@ mod tests {
             response.is_ok(),
             "a crashed host must not block the next one"
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod preflight_tests {
+    #[tokio::test]
+    async fn overlong_socket_paths_fail_before_creating_state() {
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path().join("x".repeat(110));
+        let config = crate::HostConfig::new(&directory, crate::HostIdentity::new("test", "1"));
+        assert!(matches!(
+            crate::start(config).await,
+            Err(crate::host::Error::Control(_))
+        ));
+        assert!(!directory.exists());
     }
 }

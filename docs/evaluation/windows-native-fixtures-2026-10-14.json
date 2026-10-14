@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "platform": "Windows 11 virtual machine, MSVC",
+  "sourceBase": "9eaabe27b684ef468bd67a809a0cafd92bc7da5a",
+  "localRelayPatchCommit": "d4277fa4fd2ab888468cf13476c05773963d5f0d",
+  "sourceDescription": "Committed 9eaabe2 archive plus local_relay.rs exactly as committed in d4277fa; all other source files unchanged.",
+  "sourceLibsCommit": "9d78bcfc5a0d60f4518d78e48ecbe834e4b91877",
+  "checks": [
+    {
+      "name": "local-relay",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0,
+      "administratorRoleActive": false,
+      "exitCode": 0,
+      "executableSha256": "2f9265fd6e30b5670eb4ef5f4d0bda93601349ef2df3b40b1d57d40c29c79d94",
+      "fixtureSha256": "458affca67276225f0661532ddd442b423acca0143fa4dfb99ab61e40db91191",
+      "sourceArchiveSha256": "a68c2c4591537e91b6eb16a6ba2d1cd6995bbecdf310670e966bb3d294b86300",
+      "cleanup": {
+        "taskResult": 0,
+        "testProcessesRemaining": 0,
+        "taskRemaining": 0
+      }
+    },
+    {
+      "name": "acp-job-lifetime",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "administratorRoleActive": false,
+      "exitCode": 0,
+      "executableSha256": "05ad36c8728558417a1fa3dbef96fe189961ac6bd77259dc0a349b50fc714da0",
+      "fixtureSha256": "7811541f4b3bd6942ab7724d11a0e803d5bb859cc573a22a7e340c4b574d89f2",
+      "sourceArchiveSha256": "a68c2c4591537e91b6eb16a6ba2d1cd6995bbecdf310670e966bb3d294b86300",
+      "cleanup": {
+        "taskRemoved": true,
+        "testProcesses": 0,
+        "taskResult": "0"
+      }
+    }
+  ],
+  "localRelayProductionCodeUnchanged": true,
+  "localRelayProductionPrefixSha256": "4eed2fcbcf05fb7c5d1ee330e69920b22bb5e26cb6341f2fa0294c4991c9a731",
+  "limitations": [
+    "Focused native fixtures, not full Windows CI",
+    "No installation, desktop UI or physical Windows qualification",
+    "No release authorization or Windows updater gate change"
+  ]
+}

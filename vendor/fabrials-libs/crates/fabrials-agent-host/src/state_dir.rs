@@ -246,7 +246,7 @@ mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
 
-    use super::{LEGACY_STATE_DIR_COMPONENT, StateDirError, resolve_state_dirs_from};
+    use super::{StateDirError, resolve_state_dirs_from};
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
         let map: HashMap<String, OsString> = pairs
@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(dirs.state_dir, PathBuf::from("/xdg/spanreed/agent"));
         assert_eq!(
             dirs.legacy_state_dir,
-            Some(PathBuf::from("/xdg").join(LEGACY_STATE_DIR_COMPONENT))
+            Some(PathBuf::from("/xdg").join(super::LEGACY_STATE_DIR_COMPONENT))
         );
 
         let dirs = resolve_state_dirs_from(env(&[("XDG_STATE_HOME", "rel"), ("HOME", "/home/u")]))

@@ -50,6 +50,18 @@ pub struct HopRecord {
     /// Wall time of the hop (WebSocket session or HTTP round-trip). Never audio length.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Milliseconds from the start of the hop (same origin as `duration_ms`) to the first
+    /// byte of the upstream response body the relay read. A lower bound on the upstream's
+    /// first byte: the first read can already hold bytes that arrived with the headers.
+    /// None where no body is piped (WebSocket tunnel, rejections, send errors).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_byte_ms: Option<u64>,
+    /// Milliseconds from the start of the hop (same origin as `duration_ms`) to the first
+    /// streamed event that carries content: text, reasoning or tool-call argument deltas.
+    /// Spans retries, so it is the latency the client saw. Reasoning an upstream hides is
+    /// not content. None unless the upstream streamed events the relay could read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u64>,
     /// HTTP status or 101 after a WebSocket upgrade. None on legacy rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<u16>,
@@ -100,6 +112,25 @@ impl HopRecord {
     pub fn is_failed(&self) -> bool {
         self.status.is_some_and(|s| s >= 400)
     }
+
+    /// Enforce `first_byte_ms <= ttft_ms <= duration_ms` by dropping the values that break
+    /// it. A timing that cannot be ordered is not trusted, and dropping is safe because
+    /// every consumer reads `None` as "not measured".
+    pub fn normalize_timings(&mut self) {
+        if let Some(duration) = self.duration_ms {
+            if self.first_byte_ms.is_some_and(|ms| ms > duration) {
+                self.first_byte_ms = None;
+            }
+            if self.ttft_ms.is_some_and(|ms| ms > duration) {
+                self.ttft_ms = None;
+            }
+        }
+        if let (Some(first_byte), Some(ttft)) = (self.first_byte_ms, self.ttft_ms) {
+            if first_byte > ttft {
+                self.ttft_ms = None;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -147,5 +178,72 @@ mod tests {
             ..HopRecord::default()
         }
         .is_failed());
+    }
+
+    fn timed(first_byte: Option<u64>, ttft: Option<u64>, duration: Option<u64>) -> HopRecord {
+        HopRecord {
+            first_byte_ms: first_byte,
+            ttft_ms: ttft,
+            duration_ms: duration,
+            ..HopRecord::default()
+        }
+    }
+
+    #[test]
+    fn normalize_keeps_ordered_timings() {
+        let mut r = timed(Some(80), Some(900), Some(1_500));
+        r.normalize_timings();
+        assert_eq!(r, timed(Some(80), Some(900), Some(1_500)));
+        // Equal values are ordered: the first read can hold the first content.
+        let mut same = timed(Some(700), Some(700), Some(700));
+        same.normalize_timings();
+        assert_eq!(same, timed(Some(700), Some(700), Some(700)));
+    }
+
+    #[test]
+    fn normalize_drops_timings_past_the_duration() {
+        let mut r = timed(Some(2_000), Some(3_000), Some(1_500));
+        r.normalize_timings();
+        assert_eq!(r, timed(None, None, Some(1_500)));
+        let mut only_ttft = timed(Some(80), Some(1_501), Some(1_500));
+        only_ttft.normalize_timings();
+        assert_eq!(only_ttft, timed(Some(80), None, Some(1_500)));
+    }
+
+    #[test]
+    fn normalize_drops_ttft_that_precedes_the_first_byte() {
+        let mut r = timed(Some(900), Some(100), Some(1_500));
+        r.normalize_timings();
+        assert_eq!(r, timed(Some(900), None, Some(1_500)));
+    }
+
+    #[test]
+    fn normalize_without_a_duration_only_orders_the_pair() {
+        let mut r = timed(Some(80), Some(900), None);
+        r.normalize_timings();
+        assert_eq!(r, timed(Some(80), Some(900), None));
+        let mut inverted = timed(Some(900), Some(80), None);
+        inverted.normalize_timings();
+        assert_eq!(inverted, timed(Some(900), None, None));
+    }
+
+    #[test]
+    fn timings_are_absent_from_old_json_and_from_new_json_when_unset() {
+        let old = r#"{"ts_ms":1,"duration_ms":40}"#;
+        let parsed: HopRecord = serde_json::from_str(old).unwrap();
+        assert_eq!(parsed.first_byte_ms, None);
+        assert_eq!(parsed.ttft_ms, None);
+        let out = serde_json::to_string(&parsed).unwrap();
+        assert!(!out.contains("first_byte_ms"), "{out}");
+        assert!(!out.contains("ttft_ms"), "{out}");
+    }
+
+    #[test]
+    fn timings_round_trip_through_json() {
+        let record = timed(Some(80), Some(900), Some(1_500));
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.contains(r#""first_byte_ms":80"#), "{json}");
+        assert!(json.contains(r#""ttft_ms":900"#), "{json}");
+        assert_eq!(serde_json::from_str::<HopRecord>(&json).unwrap(), record);
     }
 }

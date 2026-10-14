@@ -1,0 +1,178 @@
+{
+  "schema": 1,
+  "vm": "win11-qa (qemu:///system)",
+  "platform": "Windows 11 build 26200",
+  "files": {
+    "scripts/run-windows-tests.ps1": "f0b27896368adc7bd50431c0479ebe3193c3ab2b34f8c0b34effa2247b746c11",
+    "scripts/windows-test-process.cs": "c67442300bd7d2deadccdd29958eb698304f989d940cb91b76c0cf8e201d18e3"
+  },
+  "normalProbe": {
+    "exitCode": 0,
+    "evidence": "spanreed-limited-evidence-effefe56ca344cf7b80a0a0ed4aec62a",
+    "administratorRoleActive": false,
+    "createdOwnerMatchesToken": true,
+    "sourceReadOnly": true,
+    "parentEnvironmentExcluded": true,
+    "descendantTerminated": true,
+    "accountRemoved": true,
+    "privateRootRemoved": true,
+    "cleanupErrors": []
+  },
+  "timeoutProbe": {
+    "timeoutSeconds": 2,
+    "exitCode": 1,
+    "expectedFailure": "Windows tests exceeded their process lifetime limit",
+    "evidence": "spanreed-limited-evidence-fc09c1f4e6c6435a96205acf014a7193",
+    "administratorRoleActive": false,
+    "createdOwnerMatchesToken": true,
+    "sourceReadOnly": true,
+    "parentEnvironmentExcluded": true,
+    "descendantTerminated": true,
+    "accountRemoved": true,
+    "privateRootRemoved": true,
+    "cleanupErrors": []
+  },
+  "temporaryScheduledTaskRemoved": true,
+  "remainingSpanqaAccounts": 0,
+  "workflowActionlintExitCode": 0,
+  "localEvidenceDirectory": "/tmp/remote-windows-security-20261014-8368_gnj/ci-wrapper-evidence",
+  "evidenceArchiveSha256": "82799ffd1f187801433af4b155cdd206c72d2fb3b02f84deeb8b3c12fe38a6d6",
+  "completeCargoSuitesRunThroughWrapper": false,
+  "windowsReleaseQualified": false,
+  "remainingSpanqaProfiles": 0,
+  "cargoMetadataProbe": {
+    "evidence": "spanreed-limited-evidence-f6efd991225c4a1388e9046ef6803165",
+    "command": "cargo metadata --locked --offline --no-deps --format-version 1",
+    "toolchain": "Cargo 1.95.0 x86_64-pc-windows-msvc",
+    "exitCode": 0,
+    "nativeWorkingDirectoryMatchesSource": true,
+    "sourceReadOnly": true,
+    "administratorRoleActive": false,
+    "compilationPerformed": false,
+    "cleanupErrors": []
+  },
+  "workingDirectoryMutation": {
+    "evidence": "spanreed-limited-evidence-1881d3bd1d8b40589ac2759abbfe8dbd",
+    "change": "Remove both ProcessStartInfo.WorkingDirectory assignments",
+    "cargoExitCode": 101,
+    "wrapperExitCode": 1,
+    "expectedFailure": "could not find Cargo.toml",
+    "cleanupErrors": []
+  },
+  "firstHostedCiRun": {
+    "outcome": "failed",
+    "cause": "Native ProcessStartInfo did not inherit PowerShell Set-Location",
+    "fixedBy": "Explicit WorkingDirectory plus real Cargo metadata regression probe",
+    "headCommit": "748d426",
+    "checkoutCommit": "9be5ff95e9c91136b85bfd3de96542bf6e0f15f4",
+    "jobId": 115597417543
+  },
+  "evidenceArchiveFile": "cargo-cwd-final-evidence.zip",
+  "cargoNativeProbe": {
+    "evidence": "spanreed-limited-evidence-513f40702f194616bc68f9b4e8d325f8",
+    "commands": [
+      "cargo metadata --locked --offline --no-deps --format-version 1",
+      "cargo run --locked --offline --quiet"
+    ],
+    "toolchain": "Cargo 1.95.0 x86_64-pc-windows-msvc",
+    "compiler": "MSVC 14.44.35207 Hostx64/x64, discovered using vswhere and VsDevCmd",
+    "exitCode": 0,
+    "compilationPerformed": true,
+    "nativeExecutableExecuted": true,
+    "nativeWorkingDirectoryMatchesSource": true,
+    "sourceReadOnly": true,
+    "administratorRoleActive": false,
+    "parentEnvironmentExcluded": true,
+    "accountRemoved": true,
+    "privateRootRemoved": true,
+    "cleanupErrors": []
+  },
+  "secondHostedCiRun": {
+    "headCommit": "49506b6",
+    "outcome": "failed",
+    "cause": "Native compiler setup was absent from the new account; PATH resolved Git link.exe",
+    "fixedBy": "Explicit MSVC compiler environment and absolute Cargo target linker; compiled native probe"
+  },
+  "nativeEvidenceArchiveFile": "cargo-msvc-evidence.zip",
+  "nativeEvidenceArchiveSha256": "5a10beb091a7d957a165a53d95664609a4649268906ebd3c95a5141f91ff758d",
+  "cleanupRetry": {
+    "limitMilliseconds": 10000,
+    "reason": "Windows WebCache temporarily retained V01.log after profile removal during first compiled probe",
+    "firstCompiledProbeExitCode": 1,
+    "firstCompiledProbeRustChecksExitCodes": [
+      0,
+      0
+    ],
+    "previousRootRemoved": true,
+    "finalProbeExitCode": 0
+  },
+  "hostedDesktopSuite": {
+    "headCommit": "34e0af02c63de20a927f9cb8f331823895922824",
+    "checkoutCommit": "a731d410499b0b326da1e724145e0131872e7e2a",
+    "jobId": 115603658047,
+    "cargoCommandsPassed": 2,
+    "credentialRoundtripPassed": 1,
+    "credentialRoundtripIgnored": 0,
+    "administratorRoleActive": false,
+    "parentEnvironmentExcluded": true,
+    "laterJobFailure": "Cargo metadata UTF-8 decoded as Windows cp1252 in native-notices.py; fixed separately"
+  },
+  "hostedCrossSuite": {
+    "headCommit": "34e0af02c63de20a927f9cb8f331823895922824",
+    "jobId": 115603659195,
+    "checkAllTargetsExitCode": 0,
+    "testAllExitCode": 101,
+    "failingCrate": "fabrials-agent-host --lib",
+    "exactTestFailureUnavailable": "Earlier stdout was hidden behind more than 100 stderr lines in the concatenated printed tail; PR artifacts were not uploaded."
+  },
+  "separatedDiagnostics": {
+    "evidence": "spanreed-limited-evidence-6cc9f93ea22f495fad83672d46fd02bf",
+    "fixture": "Native program writes stdout diagnostic, 150 stderr lines, exits 17",
+    "nativeExitCode": 17,
+    "wrapperExitCode": 1,
+    "stdoutMarkerRemainsPrinted": true,
+    "retainedStderrLines": 150,
+    "cleanupErrors": []
+  },
+  "latestNativeProbe": {
+    "evidence": "spanreed-limited-evidence-619a4b85837a44a4b64b90a7e3aeb6dc",
+    "exitCode": 0,
+    "metadataAndCompiledExecutablePassed": true,
+    "resolvedExecutablesReportedWithoutEnvironmentDump": true,
+    "cleanupErrors": []
+  },
+  "diagnosticEvidenceArchiveSha256": "149f3715e405c90404068203cb1e6f2be391ec895ae97c85f59a71b00f4b087d",
+  "diagnosticEvidenceDirectory": "/tmp/remote-windows-security-20261014-8368_gnj/diagnostic-evidence",
+  "fullHostLibraryVmDiagnostic": {
+    "sourceCommit": "2f5eba7f96a0ef4afc218bb9939d51631a7efa93",
+    "sourceArchiveSha256": "119559c8193d7780ab07bcc2ece91577325921374916dfa70a1a5195ea5562c0",
+    "passed": 442,
+    "failed": 2,
+    "ignored": "Explicit foreign-owned directory fixture test",
+    "failure": "Two POSIX shell tests cannot launch sh; this VM has no Git/POSIX shell installation",
+    "administratorRoleActive": false,
+    "provesOriginalHostedFailure": false
+  },
+  "fullHostLibraryVmWithGit": {
+    "sourceCommit": "2f5eba7f96a0ef4afc218bb9939d51631a7efa93",
+    "testExecutableSha256": "65684a417948e9d52086cc6ab70173bd3960288819a3efe54daa3944a9298556",
+    "passed": 444,
+    "failed": 0,
+    "ignored": 1,
+    "ignoredReason": "Explicit foreign-owned directory fixture test; separately qualified",
+    "elapsedSeconds": 3.03,
+    "administratorRoleActive": false,
+    "portableGitVersion": "2.55.0.windows.5",
+    "portableGitArchiveSha256": "5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290",
+    "portableGitSource": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/PortableGit-2.55.0.5-64-bit.7z.exe",
+    "systemGitInstalled": false,
+    "systemPathModified": false,
+    "pathScope": "Test process only: PortableGit/bin and PortableGit/usr/bin",
+    "gitBinAloneRunsShAndCat": true,
+    "gitCmdAloneExposesSh": false,
+    "temporaryScheduledTaskRemoved": true,
+    "evidenceArchiveSha256": "93242dc58e7fe92a4bcf25588f391929bf95d48925626c08e25536ad5c96a1d1",
+    "evidenceArchiveFile": "host-lib-git-evidence.zip",
+    "provesOriginalHostedFailure": false
+  }
+}

@@ -40,6 +40,7 @@
 //! the grok-desktop-portable repository, which owns the SPA and the contract.
 
 pub mod acp;
+mod agent_process;
 pub mod assets;
 pub mod bash;
 pub mod bounds;
@@ -48,28 +49,50 @@ pub mod cli_matrix;
 pub mod context;
 pub mod control;
 pub mod dispatch;
+mod event_snapshot;
+mod execution;
 pub mod host;
 pub mod instance;
 pub mod integrations;
+#[allow(missing_docs)]
+pub mod interactions;
 pub mod journal;
 pub mod lease;
+mod live_media;
+#[allow(missing_docs)]
+pub mod media;
+mod media_commands;
 pub mod models;
+mod multiwriter;
 pub mod origin;
 pub mod pairing;
 pub mod permission;
 pub mod picker;
 pub mod projection;
 pub mod protocol;
+#[allow(missing_docs)]
+pub mod receipts;
+#[allow(missing_docs)]
+pub mod remote;
+#[allow(missing_docs)]
+pub mod remote_connections;
+#[allow(missing_docs)]
+pub mod remote_management;
+#[allow(missing_docs)]
+pub mod remote_projects;
 pub mod repair;
 pub mod review;
 pub mod server;
 pub mod session_catalog;
+mod session_models;
 pub mod session_runtime;
 pub mod state;
 pub mod state_dir;
 pub mod tools;
 #[cfg(windows)]
 pub mod win_acl;
+#[cfg(windows)]
+mod win_fs;
 #[cfg(windows)]
 pub mod win_job;
 pub mod workspace;
@@ -95,3 +118,5 @@ pub fn now_ms() -> u64 {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
 }
+
+mod notification_activity;

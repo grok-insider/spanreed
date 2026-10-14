@@ -4,6 +4,7 @@ pub(super) fn print() {
     println!(
         "spanreed — Linux AI subscription usage tracker\n\n\
          USAGE:\n\
+         \tspanreed --version            Show the installed binary version\n\
          \tspanreed list                 Show providers and whether they're detected\n\
          \tspanreed probe [id] [--force] Probe detected providers, or a single id\n\
          \t  (default: rate-limit quotas only)\n\
@@ -23,6 +24,7 @@ pub(super) fn print() {
          \tspanreed agent serve|open|status|doctor|stop|repair|workspace\n\
          \t                               Local host for desktop.grok.me (Grok Build over ACP;\n\
          \t                               also runs when invoked as `grok-bridge`)\n\
+         \tspanreed remote enable|serve|private-serve|status|pair|devices|revoke|disable|reset|service\n\
          \tspanreed grok-proxy [--bind HOST:PORT]\n\
          \t                               Alias for `capture serve --grok-cli-bind`\n\
          \tspanreed setup               Install CLI, ledger, optional capture service,\n\
@@ -49,6 +51,7 @@ pub(super) fn print() {
          \t                               (SPANREED_API_BASE optional)\n\
          \t                               At most once per day; setup installs\n\
          \t                               evening timer + login/missed-run catch-up\n\
+         \tspanreed licenses            Print embedded source license and dependency notices\n\
          \tspanreed self-update         Install latest GitHub Release (sha256 verified)\n\
          \t  --check [--json]             Report only (exit 2 if newer)\n\
          \t  --yes --dry-run              Apply without prompt / download-only verify\n\

@@ -68,6 +68,9 @@ async fn the_loop_separates_responses_from_notifications() {
         tokio::time::timeout(std::time::Duration::from_secs(2), events.recv()).await
     {
         match event {
+            AgentEvent::Barrier(sender) => {
+                let _ = sender.send(());
+            }
             AgentEvent::Update(params) => {
                 if let Some(chunk) = params
                     .pointer("/update/content/text")
@@ -82,6 +85,7 @@ async fn the_loop_separates_responses_from_notifications() {
             AgentEvent::Exited => break,
             AgentEvent::PermissionRequest { .. } => panic!("unexpected permission request"),
             AgentEvent::ExtNotification { .. } => {}
+            AgentEvent::InteractionRequest { .. } => panic!("unexpected interaction"),
         }
     }
     assert_eq!(text, "hello world");
@@ -110,6 +114,9 @@ async fn a_permission_request_is_projected_and_answered_natively() {
         tokio::time::timeout(std::time::Duration::from_secs(3), events.recv()).await
     {
         match event {
+            AgentEvent::Barrier(sender) => {
+                let _ = sender.send(());
+            }
             AgentEvent::PermissionRequest { request_id, params } => {
                 let offered: Vec<String> = params
                     .get("options")
@@ -165,6 +172,7 @@ async fn a_permission_request_is_projected_and_answered_natively() {
             }
             AgentEvent::Exited => break,
             AgentEvent::ExtNotification { .. } => {}
+            AgentEvent::InteractionRequest { .. } => panic!("unexpected interaction"),
         }
     }
     panic!("the agent never confirmed the selected option");
