@@ -3,7 +3,7 @@
   "vm": "win11-qa (qemu:///system)",
   "platform": "Windows 11 build 26200",
   "files": {
-    "scripts/run-windows-tests.ps1": "e12e0f195eb64ae6c1085c85b6cda1344200b6c7875a8a4494ce17a0a4d5837b",
+    "scripts/run-windows-tests.ps1": "f0b27896368adc7bd50431c0479ebe3193c3ab2b34f8c0b34effa2247b746c11",
     "scripts/windows-test-process.cs": "c67442300bd7d2deadccdd29958eb698304f989d940cb91b76c0cf8e201d18e3"
   },
   "normalProbe": {
@@ -105,5 +105,52 @@
     ],
     "previousRootRemoved": true,
     "finalProbeExitCode": 0
+  },
+  "hostedDesktopSuite": {
+    "headCommit": "34e0af02c63de20a927f9cb8f331823895922824",
+    "checkoutCommit": "a731d410499b0b326da1e724145e0131872e7e2a",
+    "jobId": 115603658047,
+    "cargoCommandsPassed": 2,
+    "credentialRoundtripPassed": 1,
+    "credentialRoundtripIgnored": 0,
+    "administratorRoleActive": false,
+    "parentEnvironmentExcluded": true,
+    "laterJobFailure": "Cargo metadata UTF-8 decoded as Windows cp1252 in native-notices.py; fixed separately"
+  },
+  "hostedCrossSuite": {
+    "headCommit": "34e0af02c63de20a927f9cb8f331823895922824",
+    "jobId": 115603659195,
+    "checkAllTargetsExitCode": 0,
+    "testAllExitCode": 101,
+    "failingCrate": "fabrials-agent-host --lib",
+    "exactTestFailureUnavailable": "Earlier stdout was hidden behind more than 100 stderr lines in the concatenated printed tail; PR artifacts were not uploaded."
+  },
+  "separatedDiagnostics": {
+    "evidence": "spanreed-limited-evidence-6cc9f93ea22f495fad83672d46fd02bf",
+    "fixture": "Native program writes stdout diagnostic, 150 stderr lines, exits 17",
+    "nativeExitCode": 17,
+    "wrapperExitCode": 1,
+    "stdoutMarkerRemainsPrinted": true,
+    "retainedStderrLines": 150,
+    "cleanupErrors": []
+  },
+  "latestNativeProbe": {
+    "evidence": "spanreed-limited-evidence-619a4b85837a44a4b64b90a7e3aeb6dc",
+    "exitCode": 0,
+    "metadataAndCompiledExecutablePassed": true,
+    "resolvedExecutablesReportedWithoutEnvironmentDump": true,
+    "cleanupErrors": []
+  },
+  "diagnosticEvidenceArchiveSha256": "149f3715e405c90404068203cb1e6f2be391ec895ae97c85f59a71b00f4b087d",
+  "diagnosticEvidenceDirectory": "/tmp/remote-windows-security-20261014-8368_gnj/diagnostic-evidence",
+  "fullHostLibraryVmDiagnostic": {
+    "sourceCommit": "2f5eba7f96a0ef4afc218bb9939d51631a7efa93",
+    "sourceArchiveSha256": "119559c8193d7780ab07bcc2ece91577325921374916dfa70a1a5195ea5562c0",
+    "passed": 442,
+    "failed": 2,
+    "ignored": "Explicit foreign-owned directory fixture test",
+    "failure": "Two POSIX shell tests cannot launch sh; this VM has no Git/POSIX shell installation",
+    "administratorRoleActive": false,
+    "provesOriginalHostedFailure": false
   }
 }

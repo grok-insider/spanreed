@@ -22,6 +22,11 @@ if ($Child) {
     try { [IO.File]::WriteAllText((Join-Path $config.source 'must-remain-read-only'), 'unexpected'); $sourceWritable=$true } catch [UnauthorizedAccessException] {}
     if ($sourceWritable) { throw 'The test source snapshot is writable by the test user' }
     $report = [ordered]@{schema=1;identity=$identity.Name;sid=$identity.User.Value;administratorRoleActive=$admin;createdOwner=$owner;sourceCommit=$config.sourceCommit;suite=$config.suite;sourceReadOnly=$true;parentEnvironmentExcluded=$true;checks=@();result='running'}
+    $report.executables = @{}
+    foreach ($name in @('rustc.exe','git.exe','sh.exe','python.exe','python3.exe')) {
+        $resolved = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        $report.executables[$name] = if ($resolved) { $resolved.Source } else { $null }
+    }
     try {
         Set-Location -LiteralPath $config.source
         if ($config.suite -in @('probe','timeout-probe')) {
@@ -67,9 +72,11 @@ if ($Child) {
                 $process.WaitForExit()
                 $code = $process.ExitCode
                 $output = $stdout.GetAwaiter().GetResult()
-                [IO.File]::WriteAllText($log, $output + $stderr.GetAwaiter().GetResult())
+                $errorLog = Join-Path $config.logs ('cargo-' + $index + '.stderr.log')
+                [IO.File]::WriteAllText($log, $output)
+                [IO.File]::WriteAllText($errorLog, $stderr.GetAwaiter().GetResult())
                 $process.Dispose()
-                $report.checks += @{command=('cargo ' + ($arguments -join ' '));exitCode=$code;log=[IO.Path]::GetFileName($log)}
+                $report.checks += @{command=('cargo ' + ($arguments -join ' '));exitCode=$code;log=[IO.Path]::GetFileName($log);stderrLog=[IO.Path]::GetFileName($errorLog)}
                 if ($code -ne 0) { throw ('Cargo check failed; see ' + [IO.Path]::GetFileName($log)) }
                 if ($config.suite -eq 'cargo-probe' -and $index -eq 0) {
                     $metadata = $output | ConvertFrom-Json

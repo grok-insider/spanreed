@@ -78,7 +78,22 @@ remaining directory was removed and the complete probe passed with bounded
 cleanup retries. No mutation substituting Git's linker was run in this guest,
 which has no Git installation.
 
-The complete Cargo suites have not yet passed through this wrapper. Only
-their subsequent CI results can establish that the hosted compiler setup,
-dependencies and all tests work under the new account. These probes do not
-qualify a Windows release or enable the closed Windows self-update gate.
+The hosted desktop Cargo suite passed at `34e0af0`: contracts and the explicitly
+executed Credential Manager roundtrip, under the dedicated non-administrator
+account. That job subsequently failed outside the wrapper when the native notice
+generator decoded Cargo metadata as cp1252; strict UTF-8 fixes that separate issue.
+
+The hosted cross suite passed its all-target check but failed in the agent host
+unit tests. Its precise assertion was obscured because the combined stdout/stderr
+tail contained only compilation messages. The wrapper now retains and prints
+separate tails for both streams and reports resolved tool paths without dumping
+the environment. A native failure fixture proved that its stdout diagnostic stays
+visible alongside 150 stderr lines, with cleanup succeeding; the normal compiled
+probe also passed.
+
+The complete host library at `2f5eba7` was exercised separately in the Windows VM:
+442 passed, two POSIX shell tests failed because that guest lacks `sh`/Git, and
+one test requiring an explicit foreign-owner fixture remained ignored. This does
+not establish the cause of the original hosted failure. The complete cross suite
+and subsequent installer build still require successful hosted runs. None of
+these checks qualifies a Windows release or enables its closed self-update gate.
