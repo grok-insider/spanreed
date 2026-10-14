@@ -24,6 +24,21 @@ use std::io::{BufRead as _, Write as _};
 // fixture implements.
 #[allow(clippy::too_many_lines)]
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--lifetime-child") {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        return;
+    }
+    let _lifetime_child = std::env::var_os("FAKE_AGENT_LIFETIME_PID").map(|marker| {
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--lifetime-child")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        std::fs::write(marker, child.id().to_string()).unwrap();
+        child
+    });
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let mut pending_permission: Option<serde_json::Value> = None;

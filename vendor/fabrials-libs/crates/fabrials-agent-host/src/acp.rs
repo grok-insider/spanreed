@@ -9,15 +9,15 @@
 //! `light.local.v1` surface.
 
 use std::collections::HashMap;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::agent_process::{AgentProcess, scope_error};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
@@ -53,6 +53,11 @@ pub enum AcpError {
     /// The agent executable could not be spawned.
     #[error("failed to spawn the agent process: {0}")]
     Spawn(#[source] std::io::Error),
+    #[allow(missing_docs)]
+    #[error(
+        "shared agent failed while starting in an independent systemd user scope: {0}; a working user manager is required when the host runs as a service"
+    )]
+    SharedScope(#[source] Box<AcpError>),
     /// A pipe to the child was unavailable.
     #[error("agent stdio pipe was unavailable")]
     Pipe,
@@ -331,10 +336,8 @@ pub struct AgentHandle {
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
     echoes: Arc<Mutex<HashMap<u64, PromptEcho>>>,
     next_id: AtomicU64,
-    child: Mutex<Child>,
-    /// Windows: job object that kills the agent process tree when dropped.
-    #[cfg(windows)]
-    _job: Option<crate::win_job::KillOnDropJob>,
+    child: Mutex<AgentProcess>,
+    scoped: bool,
 }
 
 #[derive(Debug)]
@@ -370,33 +373,10 @@ impl AgentHandle {
             return Err(AcpError::ForbiddenFlag);
         }
 
-        let mut builder = Command::new(&command.program);
-        builder
-            .args(&argv)
-            .envs(command.env.iter().map(|(key, value)| (key, value)))
-            .env(CLIENT_NAME_ENV, CLIENT_IDENTIFIER)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        if let Some(directory) = &command.working_directory {
-            builder.current_dir(directory);
-        }
-        #[cfg(unix)]
-        builder.process_group(0);
-
-        #[cfg(not(windows))]
-        let mut child = builder.spawn().map_err(AcpError::Spawn)?;
-        #[cfg(windows)]
-        let (mut child, job) = if command.mode == AgentMode::Isolated {
-            let (child, job) =
-                crate::win_job::KillOnDropJob::spawn(&mut builder).map_err(AcpError::Spawn)?;
-            (child, Some(job))
-        } else {
-            (builder.spawn().map_err(AcpError::Spawn)?, None)
-        };
-        let stdin = child.stdin.take().ok_or(AcpError::Pipe)?;
-        let stdout = child.stdout.take().ok_or(AcpError::Pipe)?;
+        let mut process = AgentProcess::spawn(command)?;
+        let scoped = process.scoped;
+        let stdin = process.child.stdin.take().ok_or(AcpError::Pipe)?;
+        let stdout = process.child.stdout.take().ok_or(AcpError::Pipe)?;
 
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -411,9 +391,8 @@ impl AgentHandle {
             pending: Arc::clone(&pending),
             echoes: Arc::clone(&echoes),
             next_id: AtomicU64::new(0),
-            child: Mutex::new(child),
-            #[cfg(windows)]
-            _job: job,
+            child: Mutex::new(process),
+            scoped,
         });
 
         tokio::spawn(read_loop(stdout, pending, echoes, events_tx, closed_rx));
@@ -570,7 +549,10 @@ impl AgentHandle {
             },
             "_meta": { "clientIdentifier": CLIENT_IDENTIFIER }
         });
-        let result = self.request("initialize", params).await?;
+        let result = self
+            .request("initialize", params)
+            .await
+            .map_err(|error| scope_error(self.scoped, error))?;
         serde_json::from_value(result).map_err(|_| AcpError::Malformed)
     }
 
@@ -826,10 +808,8 @@ impl AgentHandle {
     ///
     /// Returns [`AcpError::Transport`] when the child cannot be signalled.
     pub async fn shutdown(&self) -> Result<(), AcpError> {
-        let mut child = self.child.lock().await;
-        child.start_kill().map_err(AcpError::Transport)?;
-        let _ = child.wait().await;
-        Ok(())
+        self.transport_closed.send_replace(true);
+        self.child.lock().await.shutdown().await
     }
 }
 
@@ -1012,19 +992,17 @@ fn is_ext_notification_method(method: &str) -> bool {
 /// A supervised agent child speaking ACP over stdio.
 #[derive(Debug)]
 pub struct AgentSession {
-    child: Child,
+    child: AgentProcess,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
-    /// Windows: job object that kills the agent process tree when dropped.
-    #[cfg(windows)]
-    _job: Option<crate::win_job::KillOnDropJob>,
+    scoped: bool,
 }
 
 impl AgentSession {
     /// Spawn the agent and take ownership of its pipes.
     ///
-    /// The child runs in its own process group on Unix so the whole tree can be
+    /// The child runs in its own process group on Unix so that group can be
     /// terminated, and is killed when this value is dropped.
     ///
     /// # Errors
@@ -1037,40 +1015,16 @@ impl AgentSession {
             return Err(AcpError::ForbiddenFlag);
         }
 
-        let mut builder = Command::new(&command.program);
-        builder
-            .args(&argv)
-            .envs(command.env.iter().map(|(key, value)| (key, value)))
-            .env(CLIENT_NAME_ENV, CLIENT_IDENTIFIER)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        if let Some(directory) = &command.working_directory {
-            builder.current_dir(directory);
-        }
-        #[cfg(unix)]
-        builder.process_group(0);
-
-        #[cfg(not(windows))]
-        let mut child = builder.spawn().map_err(AcpError::Spawn)?;
-        #[cfg(windows)]
-        let (mut child, job) = if command.mode == AgentMode::Isolated {
-            let (child, job) =
-                crate::win_job::KillOnDropJob::spawn(&mut builder).map_err(AcpError::Spawn)?;
-            (child, Some(job))
-        } else {
-            (builder.spawn().map_err(AcpError::Spawn)?, None)
-        };
-        let stdin = child.stdin.take().ok_or(AcpError::Pipe)?;
-        let stdout = child.stdout.take().ok_or(AcpError::Pipe)?;
+        let mut child = AgentProcess::spawn(command)?;
+        let scoped = child.scoped;
+        let stdin = child.child.stdin.take().ok_or(AcpError::Pipe)?;
+        let stdout = child.child.stdout.take().ok_or(AcpError::Pipe)?;
         Ok(Self {
             child,
             stdin,
             stdout: BufReader::new(stdout),
             next_id: 0,
-            #[cfg(windows)]
-            _job: job,
+            scoped,
         })
     }
 
@@ -1087,7 +1041,10 @@ impl AgentSession {
             },
             "_meta": { "clientIdentifier": CLIENT_IDENTIFIER }
         });
-        let result = self.request("initialize", params).await?;
+        let result = self
+            .request("initialize", params)
+            .await
+            .map_err(|error| scope_error(self.scoped, error))?;
         serde_json::from_value(result).map_err(|_| AcpError::Malformed)
     }
 
@@ -1171,9 +1128,7 @@ impl AgentSession {
     /// Returns [`AcpError::Transport`] when the child cannot be signalled.
     pub async fn shutdown(mut self) -> Result<(), AcpError> {
         drop(self.stdin);
-        self.child.start_kill().map_err(AcpError::Transport)?;
-        let _ = self.child.wait().await;
-        Ok(())
+        self.child.shutdown().await
     }
 }
 
