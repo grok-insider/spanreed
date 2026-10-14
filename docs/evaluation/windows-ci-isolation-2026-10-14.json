@@ -152,5 +152,27 @@
     "failure": "Two POSIX shell tests cannot launch sh; this VM has no Git/POSIX shell installation",
     "administratorRoleActive": false,
     "provesOriginalHostedFailure": false
+  },
+  "fullHostLibraryVmWithGit": {
+    "sourceCommit": "2f5eba7f96a0ef4afc218bb9939d51631a7efa93",
+    "testExecutableSha256": "65684a417948e9d52086cc6ab70173bd3960288819a3efe54daa3944a9298556",
+    "passed": 444,
+    "failed": 0,
+    "ignored": 1,
+    "ignoredReason": "Explicit foreign-owned directory fixture test; separately qualified",
+    "elapsedSeconds": 3.03,
+    "administratorRoleActive": false,
+    "portableGitVersion": "2.55.0.windows.5",
+    "portableGitArchiveSha256": "5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290",
+    "portableGitSource": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/PortableGit-2.55.0.5-64-bit.7z.exe",
+    "systemGitInstalled": false,
+    "systemPathModified": false,
+    "pathScope": "Test process only: PortableGit/bin and PortableGit/usr/bin",
+    "gitBinAloneRunsShAndCat": true,
+    "gitCmdAloneExposesSh": false,
+    "temporaryScheduledTaskRemoved": true,
+    "evidenceArchiveSha256": "93242dc58e7fe92a4bcf25588f391929bf95d48925626c08e25536ad5c96a1d1",
+    "evidenceArchiveFile": "host-lib-git-evidence.zip",
+    "provesOriginalHostedFailure": false
   }
 }

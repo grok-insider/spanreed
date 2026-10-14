@@ -91,9 +91,20 @@ the environment. A native failure fixture proved that its stdout diagnostic stay
 visible alongside 150 stderr lines, with cleanup succeeding; the normal compiled
 probe also passed.
 
-The complete host library at `2f5eba7` was exercised separately in the Windows VM:
-442 passed, two POSIX shell tests failed because that guest lacks `sh`/Git, and
-one test requiring an explicit foreign-owner fixture remained ignored. This does
-not establish the cause of the original hosted failure. The complete cross suite
-and subsequent installer build still require successful hosted runs. None of
-these checks qualifies a Windows release or enables its closed self-update gate.
+The complete host library at `2f5eba7` was exercised separately in the Windows VM.
+Initially 442 passed and two POSIX shell tests failed because that guest lacked
+`sh`/Git. PortableGit 2.55.0.windows.5, matching the hosted runner, was downloaded
+from its official release, verified against the release SHA-256 and extracted
+under the QA directory. With its `bin` and `usr/bin` added only to the test
+process PATH, the same compiled suite passed: 444 passed, zero failed and one
+explicit foreign-owner fixture test ignored (qualified separately). The token
+remained non-administrator and the temporary launch task was removed. Git was
+not installed and the system PATH was not changed. A separate native shell probe
+confirmed that Git `bin/sh.exe` resolves `cat` even without `usr/bin` explicitly
+in PATH; Git `cmd` alone does not expose `sh`.
+
+This does not establish the cause of the original hosted failure: its precise
+assertion still needs the next hosted run with separate diagnostics. The complete
+cross suite and subsequent installer build still require successful hosted runs.
+None of these checks qualifies a Windows release or enables its closed
+self-update gate.
