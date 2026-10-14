@@ -212,18 +212,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn job_tree_fixture() {
+        let Some(mode) = std::env::var_os("FABRIALS_JOB_TEST_MODE") else {
+            return;
+        };
+        let marker =
+            std::path::PathBuf::from(std::env::var_os("FABRIALS_JOB_TEST_MARKER").unwrap());
+        if mode == "descendant" {
+            let pending = marker.with_extension("pending");
+            std::fs::write(&pending, std::process::id().to_string()).unwrap();
+            std::fs::rename(pending, marker).unwrap();
+            std::thread::sleep(Duration::from_secs(60));
+        } else {
+            assert_eq!(mode, "parent");
+            let mut descendant = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "win_job::tests::job_tree_fixture", "--nocapture"])
+                .env("FABRIALS_JOB_TEST_MODE", "descendant")
+                .env("FABRIALS_JOB_TEST_MARKER", marker)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            assert!(descendant.wait().unwrap().success());
+        }
+    }
+
     #[tokio::test]
     async fn dropping_job_terminates_the_live_child_and_its_descendant() {
         let root = tempfile::tempdir().unwrap();
         let marker = root.path().join("descendant.pid");
-        let mut command = Command::new("powershell.exe");
-        command.args(["-NoProfile", "-NonInteractive", "-Command"])
-            .arg(format!("$p=Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60' -PassThru -WindowStyle Hidden; [IO.File]::WriteAllText('{}',$p.Id.ToString()); Start-Sleep -Seconds 60",marker.display().to_string().replace("'","''")))
-            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let errors = root.path().join("fixture.stderr");
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "win_job::tests::job_tree_fixture", "--nocapture"])
+            .env("FABRIALS_JOB_TEST_MODE", "parent")
+            .env("FABRIALS_JOB_TEST_MARKER", &marker)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(&errors).unwrap());
         let (mut child, job) = KillOnDropJob::spawn(&mut command).unwrap();
         let deadline = Instant::now() + Duration::from_secs(15);
         while !marker.exists() {
-            assert!(Instant::now() < deadline, "descendant did not start");
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "fixture exited before its descendant started: {}",
+                std::fs::read_to_string(&errors).unwrap_or_default()
+            );
+            assert!(
+                Instant::now() < deadline,
+                "descendant did not start: {}",
+                std::fs::read_to_string(&errors).unwrap_or_default()
+            );
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         let descendant: u32 = std::fs::read_to_string(marker).unwrap().parse().unwrap();
@@ -233,6 +273,7 @@ mod tests {
             unsafe { WaitForSingleObject(descendant_handle.as_raw_handle(), 0) },
             WAIT_TIMEOUT
         );
+        assert!(child.try_wait().unwrap().is_none());
         drop(job);
         assert_eq!(
             unsafe { WaitForSingleObject(descendant_handle.as_raw_handle(), 5000) },

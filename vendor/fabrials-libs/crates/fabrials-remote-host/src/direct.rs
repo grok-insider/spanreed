@@ -281,12 +281,13 @@ impl DirectHost {
                 }
             }
         };
+        let close_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         drop(incoming);
         if completed {
             while let Ok(Message::Text(text)) = outgoing.try_recv() {
                 if !matches!(
-                    tokio::time::timeout(
-                        Duration::from_secs(5),
+                    tokio::time::timeout_at(
+                        close_deadline,
                         sink.send(AxumMessage::Text(text.as_str().into()))
                     )
                     .await,
@@ -298,11 +299,36 @@ impl DirectHost {
         }
         drop(outgoing);
         if !completed {
-            let _ = tokio::time::timeout(Duration::from_secs(5), worker).await;
+            let _ = tokio::time::timeout_at(close_deadline, worker).await;
         }
-        let _ = tokio::time::timeout(Duration::from_secs(5), sink.close()).await;
+        close_transport(sink, stream, close_deadline).await;
         result
     }
+}
+
+async fn close_transport(
+    mut sink: futures_util::stream::SplitSink<WebSocket, AxumMessage>,
+    mut stream: futures_util::stream::SplitStream<WebSocket>,
+    deadline: tokio::time::Instant,
+) {
+    let _ = tokio::time::timeout_at(deadline, async {
+        if sink.close().await.is_err() {
+            return;
+        }
+        let mut received = 0;
+        for _ in 0..64 {
+            match stream.next().await {
+                Some(Ok(AxumMessage::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(message)) => {
+                    received += message.into_data().len();
+                    if received >= 2 * 1024 * 1024 {
+                        break;
+                    }
+                }
+            }
+        }
+    })
+    .await;
 }
 
 #[cfg(test)]
@@ -315,6 +341,116 @@ mod tests {
     };
 
     type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+    async fn closing_socket() -> (
+        Socket,
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (finished, receiver) = tokio::sync::oneshot::channel();
+        let finished = Arc::new(std::sync::Mutex::new(Some(finished)));
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::get(move |upgrade: axum::extract::WebSocketUpgrade| {
+                let finished = finished.lock().unwrap().take().unwrap();
+                async move {
+                    upgrade
+                        .max_message_size(90 * 1024)
+                        .max_frame_size(90 * 1024)
+                        .on_upgrade(move |socket| async move {
+                            let (sink, stream) = socket.split();
+                            close_transport(
+                                sink,
+                                stream,
+                                tokio::time::Instant::now() + Duration::from_secs(5),
+                            )
+                            .await;
+                            let _ = finished.send(());
+                        })
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/"))
+            .await
+            .unwrap();
+        (socket, receiver, server)
+    }
+
+    async fn expect_tcp_eof(socket: &mut Socket) {
+        use tokio::io::AsyncReadExt;
+        let MaybeTlsStream::Plain(stream) = socket.get_mut() else {
+            panic!("expected the loopback TCP transport");
+        };
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), stream.read(&mut [0]))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn close_handshake_waits_for_peer_after_draining_pending_frames() {
+        let (mut socket, mut finished, server) = closing_socket().await;
+        for _ in 0..8 {
+            socket.send(Message::Text("pending".into())).await.unwrap();
+        }
+        assert!(matches!(socket.next().await, Some(Ok(Message::Close(_)))));
+        assert!(matches!(
+            finished.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        socket.flush().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), finished)
+            .await
+            .unwrap()
+            .unwrap();
+        expect_tcp_eof(&mut socket).await;
+        assert!(socket.next().await.is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn close_handshake_has_a_fixed_deadline_without_peer_acknowledgement() {
+        let (mut socket, mut finished, server) = closing_socket().await;
+        assert!(matches!(socket.next().await, Some(Ok(Message::Close(_)))));
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(4)).await;
+        assert!(matches!(
+            finished.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        tokio::time::timeout(Duration::from_secs(2), finished)
+            .await
+            .unwrap()
+            .unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn close_handshake_caps_unacknowledged_input() {
+        for (frames, bytes) in [(64, 1), (24, 90 * 1024)] {
+            let (mut socket, finished, server) = closing_socket().await;
+            for _ in 0..frames {
+                if socket
+                    .send(Message::Binary(vec![0; bytes].into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            tokio::time::timeout(Duration::from_secs(1), finished)
+                .await
+                .unwrap()
+                .unwrap();
+            server.abort();
+        }
+    }
 
     async fn receive(socket: &mut Socket) -> Value {
         loop {
@@ -501,10 +637,24 @@ mod tests {
         let response = plain(&mut socket, &mut channel).await;
         assert_eq!(response["type"], "response");
         assert_eq!(response["status"], 202);
+        let preserved_pairing = if forget {
+            let mut pairing = host.pairing.lock().await;
+            let now = fabrials_agent_host::now_ms();
+            let nonce = pairing.mint_nonce(now).unwrap();
+            Some(
+                pairing
+                    .redeem_nonce(nonce.expose(), now)
+                    .unwrap()
+                    .session_id,
+            )
+        } else {
+            None
+        };
         if forget {
             for request in [
                 json!({"id":"subscribe","method":"subscribe","body":{"afterSequence":0,"protocolVersion":4}}),
                 json!({"id":"forget","method":"command","body":{"protocolVersion":4,"requestId":"forget","idempotencyKey":"forget","operation":{"kind":"forgetBrowserPairing"}}}),
+                json!({"id":"late-effect","method":"command","body":{"protocolVersion":4,"requestId":"late-effect","idempotencyKey":"late-effect","operation":{"kind":"revokeBrowserPairing","sessionId":preserved_pairing}}}),
             ] {
                 for frame in channel
                     .encrypt(&serde_json::to_vec(&request).unwrap())
@@ -539,6 +689,28 @@ mod tests {
         }
         let revoked = plain(&mut socket, &mut channel).await;
         assert_eq!(revoked, json!({"type":"closed","reason":"revoked"}));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(5), socket.next())
+                .await
+                .unwrap(),
+            Some(Ok(Message::Close(_)))
+        ));
+        socket.flush().await.unwrap();
+        expect_tcp_eof(&mut socket).await;
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), socket.next())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        if let Some(preserved_pairing) = preserved_pairing {
+            assert!(
+                host.pairing
+                    .lock()
+                    .await
+                    .has_session(&preserved_pairing, fabrials_agent_host::now_ms())
+            );
+        }
         host.request_shutdown();
         tokio::time::timeout(Duration::from_secs(5), server)
             .await
