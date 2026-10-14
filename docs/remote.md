@@ -190,3 +190,40 @@ does not confer control. These switches are off by default and are not release
 acceptance results.
 
 Service rendering and operation plans are tested without installing a service. Native compile/test results, real service-manager lifecycle, official Grok continuity, Tailscale routing, Android/iOS installation and suspension are distinct checks. CI configuration and generated service files are not evidence that launchd, Task Scheduler or a mobile device have been exercised. Record the actual platform and results before distributing a release.
+
+### Station QA activation, second candidate — 2026-10-14
+
+The Linux QA profile activated the frozen Spanreed source
+`7e2a7816c73d7e58b64852509b47ede75527859a` with Portable
+`00393e13e45b7dfbbfcc9844b46d758f2a582486`. The GNU CLI SHA256 is
+`90d3f5078a3f392220f59d80d09ae96ad3f8bf4b33b28ab6f5f3d1ccbf4c6bf3`;
+the corresponding source archive SHA256 is
+`377d1352f3a6366472216216755b35fc8fc7cde89e3dd8fde4a6655588ef0197`.
+The sanitized [activation receipt](evaluation/station-activation-2026-10-14-r2.json)
+records the verified artifact, original notices, service transition, stopped-host
+backup, five byte-identical identity files and local/Tailscale HTTPS health.
+Only the QA profile and its two owned unit links changed; the ordinary daemon,
+shared leader and open terminal retained their process identities. No inference,
+browser or mobile actions were performed during this activation. Process survival
+does not qualify conversation continuity. Browser reconnect/revocation, S24 and
+real terminal continuation remain separate acceptance checks; this is not a
+public release or installer/self-update qualification.
+
+### Station QA activation, third candidate — 2026-10-14
+
+The Linux QA profile activated the frozen Spanreed source
+`e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a` with Portable
+`abe4f35895aacda102a09c3b50475379febf3b6c`. The GNU CLI SHA256 is
+`5cdd5c4d8aa6c9d04cc99d9772b0964a3d2fde67658818f91a9180bdc2ff7e47`;
+the corresponding source archive SHA256 is
+`d7482730885ea14e67d3df818a6680ea731173bf700c4c4f4bd2555b34a90bfc`.
+The [sanitized activation receipt](evaluation/station-activation-2026-10-14-r3.json)
+records the independently verified CI, Desktop and Nix workflows for that exact
+commit, the matching deployed public shell and source metadata, the private
+stopped-host backup, five byte-identical identity files and trusted HTTPS health.
+The QA unit, launcher and runtime closure were checked before activation; only
+the QA profile and its two owned unit links changed. The ordinary daemon, shared
+leader and open terminal retained their process identities. This receipt covers
+no model request, browser or mobile action, and no public release. Process
+survival does not qualify conversation continuity. The second candidate's
+receipt remains historical evidence for its own source and artifact only.

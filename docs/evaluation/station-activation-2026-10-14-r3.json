@@ -1,0 +1,165 @@
+{
+  "schema": 1,
+  "scope": "station-linux-qa-profile-activation",
+  "startedAt": "2026-10-14T03:11:52.180405+00:00",
+  "finishedAt": "2026-10-14T03:11:52.725615+00:00",
+  "result": "passed",
+  "rawReceiptSha256": "20f753897332cb0f6353e19a5dcf3557da400943fcd6a0db979d3aef3dc74b60",
+  "activationRunnerSha256": "d175592aa2593fcb92504d16de55bc8d2ac95a888ce61d637f5d98b7992c5e18",
+  "candidate": {
+    "spanreedCommit": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+    "portableCommit": "abe4f35895aacda102a09c3b50475379febf3b6c",
+    "fabrialsLibsCommit": "ee3060d023c5f5f34196e1ef7f439b65be9d0bb8",
+    "target": "x86_64-unknown-linux-gnu",
+    "profile": "release",
+    "binarySha256": "5cdd5c4d8aa6c9d04cc99d9772b0964a3d2fde67658818f91a9180bdc2ff7e47",
+    "correspondingSourceArchiveSha256": "d7482730885ea14e67d3df818a6680ea731173bf700c4c4f4bd2555b34a90bfc",
+    "bundleSha256": "30452ed2282ea3223d4a0094cb06ec2785acb3da28840f015c50edf307c46145",
+    "exactOriginalLicenseBytes": true,
+    "publicShellSha256": "f7f6bff858ee4296974a09c1bd5991c851ec9a829af49be7dcef6b153c56dee7"
+  },
+  "prerequisites": {
+    "stagedArtifactVerified": true,
+    "nixPackageVerified": true,
+    "isolatedLifecyclePassed": true,
+    "serviceUnitAndLauncherDifferOnlyByPackage": true,
+    "publicSourceMetadataMatchesNative": true,
+    "independentlyVerifiedCi": [
+      {
+        "runId": 38501614130,
+        "headSha": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "fmt + clippy + test",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "name": "fabrials-libs drift",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "name": "cross (macos-latest)",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "name": "cross (windows-latest)",
+            "status": "completed",
+            "conclusion": "success"
+          }
+        ],
+        "url": "https://github.com/grok-insider/spanreed/actions/runs/38501614130"
+      },
+      {
+        "runId": 38501614113,
+        "headSha": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "desktop (ubuntu-24.04, deb)",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "name": "desktop (windows-latest, nsis)",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "name": "signed-macos",
+            "status": "completed",
+            "conclusion": "skipped"
+          }
+        ],
+        "url": "https://github.com/grok-insider/spanreed/actions/runs/38501614113"
+      },
+      {
+        "runId": 38501614104,
+        "headSha": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "nix build (x86_64-linux)",
+            "status": "completed",
+            "conclusion": "success"
+          }
+        ],
+        "url": "https://github.com/grok-insider/spanreed/actions/runs/38501614104"
+      }
+    ],
+    "windowsPrMergeSource": {
+      "reportedCommit": "ba997e9c8931bb1984e5556687a0e2f778d3a1fa",
+      "sourceHeadCommit": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+      "executedTree": "b5b83cfd28cd64a193a0737d40776752f14076eb",
+      "sourceHeadTree": "b5b83cfd28cd64a193a0737d40776752f14076eb",
+      "treesEqual": true,
+      "explanation": "GitHub pull_request checked out its synthetic merge revision; Git trees independently queried through the GitHub Git API are identical.",
+      "logSha256": "b11022cf8593721785fdf762df99d75c41c0f1dce371feaa76bcc4e7ca5d8fc5",
+      "limitedUserResult": "passed",
+      "administratorRoleActive": false,
+      "cargoCommandsPassed": 5,
+      "treesIndependentlyReverifiedBeforeDocumentation": true
+    }
+  },
+  "activation": {
+    "qaProfileUpdated": true,
+    "ownedQaUnitSymlinksUpdated": 2,
+    "serviceEnabled": true,
+    "serviceActive": true,
+    "serviceRestartsAtPostcheck": 0,
+    "killMode": "control-group",
+    "fullNixosOrHomeManagerActivation": false,
+    "canonicalRemoteServiceInactive": true,
+    "ordinaryServiceAndCliUnchanged": true,
+    "qaAliasUnchanged": true
+  },
+  "preservation": {
+    "persistentIdentityFilesCompared": 5,
+    "persistentIdentityFilesByteIdentical": true,
+    "sharedLeaderProcessIdentityStartTimeAndCgroupUnchanged": true,
+    "terminalProcessIdentityStartTimeAndCgroupUnchanged": true,
+    "hostStoppedDuringBackup": true,
+    "privateBackupMode": "0700",
+    "backedUpRegularFiles": 11,
+    "sqliteFilesPresent": 0,
+    "stateRestoredFromBackup": false,
+    "previousPackageRetainedForRecovery": true
+  },
+  "network": {
+    "loopbackHealthHttpStatus": 200,
+    "tailscaleTrustedHttpsHealthHttpStatus": 200,
+    "loopbackListenersOnly": true,
+    "tailscaleServeConfigurationUnchanged": true,
+    "healthProtocolVersion": 2,
+    "healthProtocolVersionIsLegacyBridgeNotRemoteWire": true
+  },
+  "doctor": {
+    "grok-program": "passed",
+    "grok-home": "passed",
+    "state-directory": "passed",
+    "host-identity": "passed",
+    "private-origin": "passed",
+    "leader-socket": "unverified",
+    "terminal-continuity": "unverified",
+    "service-environment": "unverified",
+    "browser-route": "unverified",
+    "host-control": "passed"
+  },
+  "inferencePerformed": false,
+  "browserOrMobileActions": false,
+  "limitations": [
+    "Browser reconnect and revocation",
+    "Terminal conversation continuation",
+    "Android/S24",
+    "Public release and self-update",
+    "Actual Windows and macOS devices",
+    "Read-only doctor leaves service environment and leader socket liveness unverified; process preservation is not conversation continuity.",
+    "Rollback was prepared and verified defensively in the runner but not exercised by this successful activation."
+  ]
+}
