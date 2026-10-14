@@ -70,7 +70,7 @@
         "tools/remote-bindgen/Cargo.toml": "e9e212f8cc46e990ab1e5106603863598d17a02e7a240371794d3344f356db30",
         "tools/remote-bindgen/src/main.rs": "a031f5db3c41125b0d1d908ee956d99ce7608a59260ab3cb9c14f97184589648"
       },
-      "head": "18bf009bb121a3535077efa0169e40c40293f0d1",
+      "head": "9d78bcfc5a0d60f4518d78e48ecbe834e4b91877",
       "repository": "grok-insider/fabrials-libs",
       "treeSha256": "8ac116aec1b473fb1cd99c9c26705f9b3673c8c2432cd376c9fb577e6c96f406"
     },
