@@ -379,15 +379,23 @@ mod tests {
 
     #[tokio::test]
     async fn direct_noise_pairs_commands_and_revokes_without_cloud() {
-        exercise_direct_noise(fabrials_agent_host::origin::PRODUCTION_WEB_ORIGIN).await;
+        exercise_direct_noise(fabrials_agent_host::origin::PRODUCTION_WEB_ORIGIN, false).await;
     }
 
     #[tokio::test]
     async fn qualification_origin_pairs_without_accepting_other_hosted_origins() {
-        exercise_direct_noise(fabrials_agent_host::origin::QUALIFICATION_WEB_ORIGIN).await;
+        exercise_direct_noise(fabrials_agent_host::origin::QUALIFICATION_WEB_ORIGIN, false).await;
     }
 
-    async fn exercise_direct_noise(web_origin: &str) {
+    #[tokio::test]
+    async fn self_revocation_acknowledges_before_close_with_pending_commands() {
+        for _ in 0..32 {
+            exercise_direct_noise(fabrials_agent_host::origin::QUALIFICATION_WEB_ORIGIN, true)
+                .await;
+        }
+    }
+
+    async fn exercise_direct_noise(web_origin: &str, forget: bool) {
         let temporary = tempfile::tempdir().unwrap();
         let directory = temporary.path().join("state");
         fabrials_agent_host::instance::ensure_private_directory(&directory).unwrap();
@@ -407,6 +415,11 @@ mod tests {
         let host = Arc::new(
             HostState::new(identity.origin().unwrap())
                 .with_allowed_origins(vec![web_origin.into()])
+                .with_agent_mode(if forget {
+                    fabrials_agent_host::acp::AgentMode::Shared
+                } else {
+                    fabrials_agent_host::acp::AgentMode::Isolated
+                })
                 .with_private_origin(Some(direct.endpoint.clone()))
                 .unwrap(),
         );
@@ -488,7 +501,42 @@ mod tests {
         let response = plain(&mut socket, &mut channel).await;
         assert_eq!(response["type"], "response");
         assert_eq!(response["status"], 202);
-        host.pairing.lock().await.revoke(session_id);
+        if forget {
+            for request in [
+                json!({"id":"subscribe","method":"subscribe","body":{"afterSequence":0,"protocolVersion":4}}),
+                json!({"id":"forget","method":"command","body":{"protocolVersion":4,"requestId":"forget","idempotencyKey":"forget","operation":{"kind":"forgetBrowserPairing"}}}),
+            ] {
+                for frame in channel
+                    .encrypt(&serde_json::to_vec(&request).unwrap())
+                    .unwrap()
+                {
+                    send(&mut socket, channel_id, frame).await;
+                }
+            }
+            for n in 0..8 {
+                let request = json!({"id":format!("late-{n}"),"method":"command","body":{"protocolVersion":4,"requestId":format!("late-{n}"),"operation":{"kind":"bootstrap"}}});
+                for frame in channel
+                    .encrypt(&serde_json::to_vec(&request).unwrap())
+                    .unwrap()
+                {
+                    send(&mut socket, channel_id, frame).await;
+                }
+            }
+            loop {
+                let response = plain(&mut socket, &mut channel).await;
+                assert_ne!(
+                    response["type"], "closed",
+                    "closed before revocation acknowledgement"
+                );
+                if response["id"] == "forget" {
+                    assert_eq!(response["status"], 202);
+                    assert_eq!(response["body"]["result"]["outcome"], "acknowledged");
+                    break;
+                }
+            }
+        } else {
+            host.pairing.lock().await.revoke(session_id);
+        }
         let revoked = plain(&mut socket, &mut channel).await;
         assert_eq!(revoked, json!({"type":"closed","reason":"revoked"}));
         host.request_shutdown();
