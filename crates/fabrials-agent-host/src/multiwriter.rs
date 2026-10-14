@@ -310,6 +310,9 @@ async fn change_queue(
                     members: vec![],
                     workflows: vec![],
                     background_tasks: vec![],
+                    omitted_messages: 0,
+                    omitted_tools: 0,
+                    history_truncated: false,
                 });
             let loaded = agent.load_session(id, &path).await;
             let flushed = if loaded.is_ok() {

@@ -965,6 +965,17 @@ pub enum Event {
         /// Background bash/monitor tasks for this session (CLI Tasks pane).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         background_tasks: Vec<SnapshotBackgroundTask>,
+        /// Earlier transcript messages left out because the host keeps a
+        /// bounded window. Zero when no earlier message was dropped.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        omitted_messages: u64,
+        /// Tool rows left out by the same bounds.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        omitted_tools: u64,
+        /// Some history text was cut or not loaded, so the transcript is
+        /// incomplete even when no whole message count is known.
+        #[serde(default, skip_serializing_if = "is_false")]
+        history_truncated: bool,
     },
     /// A background task started, progressed, or finished.
     #[serde(rename_all = "camelCase")]
@@ -1385,6 +1396,16 @@ pub struct EventEnvelope {
     pub session_revision: Option<u64>,
     /// The event body.
     pub event: Event,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[cfg(test)]

@@ -26,6 +26,14 @@ fn write_private_json(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let lifetime_seconds = match std::env::var("DIRECT_BROWSER_QA_DURATION_SECS") {
+        Ok(value) => value.parse::<u64>()?,
+        Err(std::env::VarError::NotPresent) => 1800,
+        Err(error) => return Err(error.into()),
+    };
+    if !(60..=90000).contains(&lifetime_seconds) {
+        return Err("DIRECT_BROWSER_QA_DURATION_SECS must be between 60 and 90000".into());
+    }
     let web_origin = std::env::var("DIRECT_BROWSER_QA_WEB_ORIGIN")
         .unwrap_or_else(|_| fabrials_agent_host::origin::PRODUCTION_WEB_ORIGIN.into());
     fabrials_agent_host::origin::validate_hosted_web_origin(&web_origin)?;
@@ -140,10 +148,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     write_private_json(
         &directory,
         "ready.json",
-        &json!({"port":host.origin.port(),"pairing":{"endpoint":endpoint,"installationId":identity.install_id,"hostPublicKey":host_key,"nonce":nonce.expose(),"label":label}}),
+        &json!({"lifetimeSeconds":lifetime_seconds,"port":host.origin.port(),"pairing":{"endpoint":endpoint,"installationId":identity.install_id,"hostPublicKey":host_key,"nonce":nonce.expose(),"label":label}}),
     )?;
     let serving = tokio::spawn(fabrials_agent_host::server::serve(listeners, host.clone()));
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(1800);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(lifetime_seconds);
     while !directory.join("stop").exists() && tokio::time::Instant::now() < deadline {
         if directory.join("pair-next").exists() {
             std::fs::remove_file(directory.join("pair-next"))?;
