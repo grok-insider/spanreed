@@ -28,8 +28,9 @@
       "install location under the user's LocalAppData",
       "completion with optional run"
     ],
-    "uacPromptShown": false,
-    "smartScreenExercised": false
+    "smartScreenExercised": false,
+    "uacPromptObserved": false,
+    "uacObservationBasis": "No elevation prompt appears in the captures from launch to the welcome page; the VM policy has PromptOnSecureDesktop=0, so a prompt would have been on the captured desktop. Current-user mode does not request elevation."
   },
   "firstStart": {
     "at": "2026-10-14T09:23:36.6065814Z",
@@ -59,7 +60,7 @@
     "desktopShortcutRemoved": true,
     "applicationProcesses": 0,
     "userDataFilesRetained": 4,
-    "userDataRetentionIsDefault": true
+    "deleteApplicationDataCheckboxUncheckedAtConfirmation": true
   },
   "cleanup": {
     "completedAt": "2026-10-14T09:53:02.2572784Z",
@@ -204,7 +205,7 @@
   },
   "harnessNotes": [
     "The run was driven by two Codex agents through Syl; the session ended after the graphical uninstall. Cleanup and the final comparison were completed afterwards through the QEMU guest agent as LocalSystem, with the scripts whose hashes are listed.",
-    "A first cleanup invocation failed to parse because the host shell interpreted the backslash sequence in its path argument; it made no change, verified by a read-only state check before the successful run."
+    "Two cleanup invocations failed to parse before the successful run, because the host shell interpreted the backslash sequence in the script path argument; a read-only state check after each confirmed that neither changed anything."
   ],
   "notQualified": [
     "UAC and SmartScreen (current-user mode needs no elevation; the locally copied installer had no Mark of the Web)",

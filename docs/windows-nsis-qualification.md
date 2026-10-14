@@ -79,8 +79,9 @@ same VM, while the existing user's session stayed signed in. The
 hashes and the scripts used.
 
 The installer showed its welcome, license, install location under the user's
-LocalAppData and completion pages, and exited with code 0. No UAC prompt
-appeared, which matches current-user mode. The installed executable matched the
+LocalAppData and completion pages, and exited with code 0. No UAC prompt was
+captured; the VM shows prompts on the normal desktop, and current-user mode does
+not request elevation. The installed executable matched the
 CI extraction (`70def19b…`) and the HKCU registration reported 0.7.1. The first
 graphical start ran one application process in the temporary user's session,
 with its WebView2 processes, and showed the overview, Settings and the rendered
@@ -90,7 +91,8 @@ WebView2 error during the run.
 
 The graphical uninstaller exited with code 0. It removed the installation
 directory, registration and desktop shortcut, left no application process, and
-kept the four user data files, as its default option states.
+kept the four user data files; its Delete the application data option was
+unchecked at confirmation.
 
 Cleanup removed the temporary account, profile, profile directory and
 ProfileList key, its registry hives and its access entries on the test
