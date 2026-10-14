@@ -62,8 +62,55 @@ installation. The receipt distinguishes that final successful comparison from
 the original guard failure. The historical 9ea run retained only a service
 fingerprint, so its more limited conclusion remains unchanged.
 
-This does not exercise interactive installer UI, UAC or SmartScreen, the first
-graphical application start, machine-wide MSI installation, an upgrade while
-the application is active, actual CLI updater replacement or rollback,
-power-loss recovery or physical Windows hardware. Stable release signing and
-release artifact qualification remain separate gates.
+This lifecycle run does not exercise interactive installer UI, UAC or
+SmartScreen, the first graphical application start, machine-wide MSI
+installation, an upgrade while the application is active, actual CLI updater
+replacement or rollback, power-loss recovery or physical Windows hardware.
+Stable release signing and release artifact qualification remain separate
+gates. The interactive path is covered separately below.
+
+## Interactive installer and first graphical start
+
+Later on 2026-10-14, the same unsigned installer
+(`d0220e5fb1ab462b94649d78e3dd7e31de7d78557eaf4a7d4b2eea0ef2af71bd`) was run
+interactively by another new standard user, in a second console session of the
+same VM, while the existing user's session stayed signed in. The
+[receipt](evaluation/windows-gui-e6d9cc8-2026-10-14.json) records the evidence
+hashes and the scripts used.
+
+The installer showed its welcome, license, install location under the user's
+LocalAppData and completion pages, and exited with code 0. No UAC prompt
+appeared, which matches current-user mode. The installed executable matched the
+CI extraction (`70def19b…`) and the HKCU registration reported 0.7.1. The first
+graphical start ran one application process in the temporary user's session,
+with its WebView2 processes, and showed the overview, Settings and the rendered
+AGPL license text. The tray menu offered Open dashboard, Settings, Start agent
+host and Quit Spanreed. The Windows Application log recorded no Spanreed or
+WebView2 error during the run.
+
+The graphical uninstaller exited with code 0. It removed the installation
+directory, registration and desktop shortcut, left no application process, and
+kept the four user data files, as its default option states.
+
+Cleanup removed the temporary account, profile, profile directory and
+ProfileList key, its registry hives and its access entries on the test
+directory, without a reboot. The account never had extra logon rights and
+owned no scheduled task. While it ran, Service Control Manager switched
+`IsolationSession` from Manual to Auto, so the cleanup guard reported a service
+difference. The service returned to Manual 34 seconds later without
+intervention. BITS had shown the same kind of toggle before the run started.
+A later read-only comparison found the existing user's files and registration,
+the machine registration, Defender, the security policy, and both the raw and
+normalized service inventories equal to the state before the run. The receipt
+keeps both results and the Service Control Manager events. It does not
+attribute these toggles to Spanreed, but it does not prove their cause either.
+
+The run was driven through Syl by Codex agents until the graphical uninstall.
+Cleanup and the final comparison were finished afterwards through the QEMU
+guest agent as LocalSystem.
+
+The interactive run still does not cover SmartScreen, because the locally
+copied installer had no Mark of the Web. It also does not cover a signed
+release artifact, machine-wide MSI installation, upgrade while the application
+is running, CLI updater replacement or rollback, power loss, physical Windows
+hardware, or Windows accessibility tools.
