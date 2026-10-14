@@ -44,9 +44,13 @@ def main():
     assert checks['host-control']['status'] == 'failed'
     checks = run('relative-grok-home',environment={'GROK_HOME':'relative-home'})
     assert checks['grok-home']['code'] == 'grok_home_missing_or_relative'
-    for origin in ['http://fixture.example.ts.net','https://fixture.example.ts.net/path','https://fixture.example.ts.net:444','https://example.com','https://user@fixture.example.ts.net']:
+    for origin in ['http://fixture.example.ts.net','https://fixture.example.ts.net/path','https://fixture.example.ts.net?query=1','https://fixture.example.ts.net#fragment','https://localhost','https://127.0.0.1','https://user@fixture.example.ts.net']:
         checks = run('invalid-origin:'+origin,origin=origin)
         assert checks['private-origin']['code'] == 'invalid_private_origin'
+    for origin in ['https://fixture.example.ts.net','https://fixture.example.ts.net:444','https://example.com']:
+        checks = run('valid-origin:'+origin,origin=origin)
+        assert checks['private-origin']['status'] == 'passed'
+        assert checks['private-origin']['code'] == 'exact_https_origin'
     path = grok / 'leader.sock'
     stale = socket.socket(socket.AF_UNIX)
     stale.bind(str(path))
