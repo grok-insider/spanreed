@@ -1,0 +1,364 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-10-14T03:25:11.483105+00:00",
+  "sourceCommit": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+  "workflowRun": 38504260236,
+  "windowsJob": 115658012365,
+  "version": "0.7.1",
+  "installerSha256": "d0220e5fb1ab462b94649d78e3dd7e31de7d78557eaf4a7d4b2eea0ef2af71bd",
+  "installerBytes": 72964186,
+  "extractedBinarySha256": "70def19b0f4048d5ac0664e2218080f6984ad1e73126a438fdb9780e2f1aef45",
+  "provenanceSha256": "43aa765437316decb507c3f7a395d6510bb9f58799aaff39e7ad0191910d192f",
+  "originalNativeNoticesSha256": "474911919325f66c2638fef47bc1aaea8c61c8d5ea5f50ea7d07325c58c64a0d",
+  "exactOriginalNoticesEmbedded": true,
+  "exactApplicationLicenseEmbedded": true,
+  "nativeNoticeVerification": {
+    "verified": true,
+    "embeddedNativeAndFrontendNotices": true,
+    "binarySha256": "70def19b0f4048d5ac0664e2218080f6984ad1e73126a438fdb9780e2f1aef45",
+    "packageCount": 409,
+    "originalSections": 841
+  },
+  "checkoutLineEndings": {
+    "desktop/src-tauri/Cargo.lock": {
+      "gitBytesSha256": "d3db204df68eee1dc61614d8c645e8cb3dce0ed2a3e13992783865eba0612207",
+      "artifactBuildBytesSha256": "4a437507c1fa3c456ad8bb68b3048ec418f7ddb80627a6ae45df4fac5a47fb8d",
+      "representation": "Git Windows CRLF checkout"
+    },
+    "desktop/bun.lock": {
+      "gitBytesSha256": "8230be52b4541cf3ae4b44c7b4200f1e6bf2399c75b197e9a5ea459ff8977620",
+      "artifactBuildBytesSha256": "1091be034ed0e8e8610ef4e80b9ba19062b35a05040fd75e8a23129d981981ce",
+      "representation": "Git Windows CRLF checkout"
+    },
+    "LICENSE": {
+      "gitBytesSha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+      "artifactBuildBytesSha256": "e0eedba615d5cd1b986afb6c5b3a4b1ae33713e7e9dc74d19daec5e3221f9d2e",
+      "representation": "Git Windows CRLF checkout"
+    }
+  },
+  "stableBaselineVersion": "0.7.0",
+  "stableBaselineInstallerSha256": "27c1d500625b4ecb13b37b5bd472c0eb21cc9a6a8639161687d7fa9de2061617",
+  "runtimeInstallerQualified": true,
+  "lifecycleResult": "passed",
+  "lifecycleChecks": 31,
+  "installedFileCount": 420,
+  "cleanupResult": "resources_removed_and_final_read_only_baselines_passed",
+  "lifecycleReportSha256": "c5b445957f916bcddb4508dda8734734ba2740078452a25461043c8182cd77e9",
+  "cleanupReportSha256": "67c1c4549ceaaad5332d8329ae5e49eab10bfb3e802e08a98f0bd6b9d984b9ab",
+  "workflow": {
+    "conclusion": "success",
+    "headSha": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+    "status": "completed",
+    "url": "https://github.com/grok-insider/spanreed/actions/runs/38504260236"
+  },
+  "qualificationScope": "Exact e6 unsigned current-user Windows NSIS review artifact; stable publication remains a separate gate",
+  "platform": "Windows 11 x86_64 QA VM",
+  "administratorRoleActive": false,
+  "startedAt": "2026-10-14T03:25:41.0772456Z",
+  "finishedAt": "2026-10-14T03:25:57.9312728Z",
+  "cleanCandidateCycleUsesNewProfile": true,
+  "upgradeCycleUsesPreviouslyUninstalledProfile": true,
+  "checks": [
+    {
+      "name": "runs_as_expected_temporary_account",
+      "passed": true
+    },
+    {
+      "name": "not_administrator",
+      "passed": true
+    },
+    {
+      "name": "profile_is_temporary",
+      "passed": true
+    },
+    {
+      "name": "initial_installation_absent",
+      "passed": true
+    },
+    {
+      "name": "initial_registration_absent",
+      "passed": true
+    },
+    {
+      "name": "published_stable_hash",
+      "passed": true
+    },
+    {
+      "name": "candidate_installer_hash",
+      "passed": true
+    },
+    {
+      "name": "install_candidate_on_clean_profile",
+      "exitCode": 0
+    },
+    {
+      "name": "clean_install_candidate_binary_matches",
+      "passed": true
+    },
+    {
+      "name": "clean_install_candidate_version_registered",
+      "passed": true
+    },
+    {
+      "name": "uninstall_clean_candidate",
+      "exitCode": 0
+    },
+    {
+      "name": "clean_install_directory_removed",
+      "passed": true
+    },
+    {
+      "name": "clean_install_registration_removed",
+      "passed": true
+    },
+    {
+      "name": "install_published_0_7_0",
+      "exitCode": 0
+    },
+    {
+      "name": "old_binary_installed",
+      "passed": true
+    },
+    {
+      "name": "old_version_registered",
+      "passed": true
+    },
+    {
+      "name": "upgrade_to_candidate_0_7_1",
+      "exitCode": 0
+    },
+    {
+      "name": "candidate_binary_matches_extracted_artifact",
+      "passed": true
+    },
+    {
+      "name": "upgrade_replaced_old_binary",
+      "passed": true
+    },
+    {
+      "name": "candidate_version_registered",
+      "passed": true
+    },
+    {
+      "name": "upgrade_preserved_user_state",
+      "passed": true
+    },
+    {
+      "name": "repair_same_candidate",
+      "exitCode": 0
+    },
+    {
+      "name": "repair_kept_candidate_bytes",
+      "passed": true
+    },
+    {
+      "name": "repair_preserved_user_state",
+      "passed": true
+    },
+    {
+      "name": "repair_single_registration",
+      "passed": true
+    },
+    {
+      "name": "uninstaller_present",
+      "passed": true
+    },
+    {
+      "name": "uninstall_candidate",
+      "exitCode": 0
+    },
+    {
+      "name": "installation_directory_removed",
+      "passed": true
+    },
+    {
+      "name": "binary_removed",
+      "passed": true
+    },
+    {
+      "name": "registration_removed",
+      "passed": true
+    },
+    {
+      "name": "uninstall_preserved_user_state",
+      "passed": true
+    }
+  ],
+  "installedFilesInventorySha256": "b15bbb23d371bab5ff1a1a5a6324e959592bb6a63488a5d562a140a39fa0ddf3",
+  "scriptHashes": {
+    "qualify-nsis.ps1": "33c054b8957e3b17511cf22fccf61027681dd56fdd49caed5eb9a1f82f4a91df",
+    "run-nsis.ps1": "d913fa8a95f0cdafe7581743b4e74ad884084c5c9f6f50f3e6172aec507639d6",
+    "account-rights.ps1": "0af1f21accb5c612277a47e2388ab4a3139ced37d24b8f5e213b108fadd5d5a1"
+  },
+  "cleanup": {
+    "schema": 1,
+    "checkedAt": "2026-10-14T03:29:45.2088330Z",
+    "secondsSinceBoot": 127.7108416,
+    "temporaryAccountRemoved": true,
+    "temporaryTaskRemoved": true,
+    "temporaryProfileRemoved": true,
+    "temporaryProfileDirectoryRemoved": true,
+    "temporaryHiveRemoved": true,
+    "temporaryClassesHiveRemoved": true,
+    "temporaryBatchLogonRightRemoved": true,
+    "friendFilesPreserved": true,
+    "friendFileCount": 351,
+    "friendRegistrationPreserved": true,
+    "machineRegistrationPreserved": true,
+    "defenderPreserved": true,
+    "normalizedServicesPreserved": true,
+    "finalReadOnlyBaselinePassed": true,
+    "before": {
+      "friendFiles": "bd964d57a3c38f71063a4be91437a5cf344fc5eeefeefb17ad8bdec9477f3209",
+      "friendFileCount": 351,
+      "friendRegistration": "d2cb31c6a42ee4dd45a639e33bef73d81570509cdf3fd76b267fbad13e6d79e7",
+      "machineRegistration": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "services": "b966ef8da455217c850ce2db4e2a455938ff536249d0e3b874b78b2af48fb58f",
+      "normalizedServices": "fac1a37187c6a5ee2f40bb4d83133386850d95424fabe577e7af4356ce3995b3",
+      "defender": "e9556026afa3868d24f4795bf41866b4e74777a9d1e11731a0f331671f3f76c4"
+    },
+    "after": {
+      "friendFiles": "bd964d57a3c38f71063a4be91437a5cf344fc5eeefeefb17ad8bdec9477f3209",
+      "friendFileCount": 351,
+      "friendRegistration": "d2cb31c6a42ee4dd45a639e33bef73d81570509cdf3fd76b267fbad13e6d79e7",
+      "machineRegistration": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "services": "374154549937801c462bb0d8f299578fad0f7910e183556121bc566a6f54ae60",
+      "normalizedServices": "fac1a37187c6a5ee2f40bb4d83133386850d95424fabe577e7af4356ce3995b3",
+      "defender": "e9556026afa3868d24f4795bf41866b4e74777a9d1e11731a0f331671f3f76c4"
+    },
+    "originalCleanupGuardExitCode": 1,
+    "originalCleanupGuardResult": "Post-reboot IsolationSession start mode was temporarily Auto rather than Manual; original failing receipt retained."
+  },
+  "originalCleanupGuardReportSha256": "b0efdd2fef87eba85971e8df61f921eacd0a8a9d48d31fa87ef089b8359f179c",
+  "initialProfileCleanupErrorSha256": "766a40f9137681e72ae95d7ad0e7c020b957c3fe93bb04ae477c8eabf7a83911",
+  "serviceChangeEvents": [
+    {
+      "id": 7040,
+      "time": "2026-10-14T03:29:16.8768579Z",
+      "data": [
+        {
+          "name": "param1",
+          "value": "IsolationSession"
+        },
+        {
+          "name": "param2",
+          "value": "auto start"
+        },
+        {
+          "name": "param3",
+          "value": "demand start"
+        },
+        {
+          "name": "param4",
+          "value": "IsolationSession"
+        }
+      ]
+    },
+    {
+      "id": 7040,
+      "time": "2026-10-14T03:28:45.1057976Z",
+      "data": [
+        {
+          "name": "param1",
+          "value": "IsolationSession"
+        },
+        {
+          "name": "param2",
+          "value": "demand start"
+        },
+        {
+          "name": "param3",
+          "value": "auto start"
+        },
+        {
+          "name": "param4",
+          "value": "IsolationSession"
+        }
+      ]
+    },
+    {
+      "id": 7040,
+      "time": "2026-10-14T03:28:15.0944290Z",
+      "data": [
+        {
+          "name": "param1",
+          "value": "IsolationSession"
+        },
+        {
+          "name": "param2",
+          "value": "auto start"
+        },
+        {
+          "name": "param3",
+          "value": "demand start"
+        },
+        {
+          "name": "param4",
+          "value": "IsolationSession"
+        }
+      ]
+    },
+    {
+      "id": 7040,
+      "time": "2026-10-14T03:27:45.0816481Z",
+      "data": [
+        {
+          "name": "param1",
+          "value": "IsolationSession"
+        },
+        {
+          "name": "param2",
+          "value": "demand start"
+        },
+        {
+          "name": "param3",
+          "value": "auto start"
+        },
+        {
+          "name": "param4",
+          "value": "IsolationSession"
+        }
+      ]
+    }
+  ],
+  "harnessBaselineMutationChecks": {
+    "perUserSuffixIgnored": true,
+    "changedStartModeDetected": true,
+    "nonTemplateNameChangeDetected": true,
+    "missingServiceDetected": true
+  },
+  "ciLimitedUser": {
+    "sourceCommit": "e6d9cc8cb076d7896edec98ee7338d4d4d8f1f7a",
+    "administratorRoleActive": false,
+    "result": "passed",
+    "checks": [
+      {
+        "exitCode": 0,
+        "command": "cargo test --locked --features contracts",
+        "stderrLog": "cargo-0.stderr.log",
+        "log": "cargo-0.log"
+      },
+      {
+        "exitCode": 0,
+        "command": "cargo test --locked --lib secret::platform::tests::credential_roundtrip -- --ignored --exact",
+        "stderrLog": "cargo-1.stderr.log",
+        "log": "cargo-1.log"
+      }
+    ]
+  },
+  "ciLimitedUserCleanup": {
+    "privateRootRemoved": true,
+    "accountRemoved": true,
+    "errors": []
+  },
+  "ciLimitedUserReportSha256": "c2553c6b0312d01a4d900e38d3e37ea88ec9dcb3f4869890da68a7d215149bab",
+  "ciLimitedUserCleanupSha256": "eb83d4b11f1d77f9c7480f9202b7701ff31b7609e3dcc6829c36bb149264817a",
+  "notQualified": [
+    "Interactive installer UI, UAC and SmartScreen",
+    "First graphical application start",
+    "Machine-wide MSI installation",
+    "CLI self-update replacement and rollback",
+    "Active application upgrade",
+    "Power loss and physical Windows hardware"
+  ]
+}
