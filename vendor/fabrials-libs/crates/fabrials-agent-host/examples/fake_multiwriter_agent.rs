@@ -3,6 +3,9 @@
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
 
 fn emit(value: Value) {
     println!("{value}");
@@ -16,19 +19,61 @@ fn model_state(model: &str, effort: &str) -> Value {
     json!({"models":{"currentModelId":model,"availableModels":[{"modelId":"synthetic/custom","name":"Synthetic custom model"},{"modelId":"synthetic/alternate","name":"Synthetic alternate model"}]},"configOptions":[{"id":"reasoning_effort","currentValue":effort,"options":[{"value":"low","name":"Synthetic low"},{"value":"high","name":"Synthetic high"}]}]})
 }
 
-fn main() {
+fn take_control(directory: &Path) -> std::io::Result<Option<Value>> {
+    for (name, method) in [
+        ("release-turn", "test/release"),
+        ("disable-models", "test/disable_models"),
+    ] {
+        let path = directory.join(name);
+        let session = match std::fs::read_to_string(&path) {
+            Ok(session) => session,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        std::fs::remove_file(path)?;
+        if session.trim().len() > 512 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid synthetic session",
+            ));
+        }
+        return Ok(Some(
+            json!({"jsonrpc":"2.0","method":method,"params":{"sessionId":session.trim()}}),
+        ));
+    }
+    Ok(None)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut running = BTreeMap::<String, (Value, String)>::new();
     let mut accepted = Vec::<Value>::new();
     let mut created = 0u64;
     let catalogue = std::env::var("FAKE_MULTIWRITER_CATALOGUE").as_deref() == Ok("1");
     let images = std::env::var("FAKE_MULTIWRITER_IMAGES").as_deref() == Ok("1");
     let mut models = BTreeMap::<String, (String, String)>::new();
-    for line in std::io::stdin().lock().lines() {
-        let Ok(line) = line else {
-            break;
-        };
-        let Ok(message) = serde_json::from_str::<Value>(&line) else {
-            continue;
+    let control = std::env::var_os("FAKE_MULTIWRITER_CONTROL_DIR").map(PathBuf::from);
+    let (input, messages) = mpsc::sync_channel(32);
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            if input.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    loop {
+        let pending = control.as_deref().map(take_control).transpose()?.flatten();
+        let message = if let Some(message) = pending {
+            message
+        } else {
+            match messages.recv_timeout(Duration::from_millis(25)) {
+                Ok(line) => match serde_json::from_str::<Value>(&line) {
+                    Ok(message) => message,
+                    Err(_) => continue,
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
         };
         let id = message["id"].clone();
         let params = &message["params"];
@@ -106,7 +151,9 @@ fn main() {
                 if let Some((id, _)) = running.remove(&session) {
                     reply(id, json!({"stopReason":"end_turn"}));
                 }
-                reply(id, json!({}));
+                if !id.is_null() {
+                    reply(id, json!({}));
+                }
             }
             "session/set_model" | "session/set_config_option" if catalogue => {
                 let (model, effort) = models
@@ -126,7 +173,9 @@ fn main() {
                 emit(
                     json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"config_option_update","configOptions":[{"id":"model","currentValue":"synthetic/custom","options":[]}]}}}),
                 );
-                reply(id, json!({}));
+                if !id.is_null() {
+                    reply(id, json!({}));
+                }
             }
             "test/state" => reply(
                 id,
@@ -142,4 +191,5 @@ fn main() {
             ),
         }
     }
+    Ok(())
 }

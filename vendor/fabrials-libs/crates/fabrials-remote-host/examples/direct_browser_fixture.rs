@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,
     )
     .await;
-    let agent = if std::env::var("DIRECT_BROWSER_QA_ACP").as_deref() == Ok("1") {
+    let supervisor = if std::env::var("DIRECT_BROWSER_QA_ACP").as_deref() == Ok("1") {
         let program = std::env::current_exe()?
             .parent()
             .ok_or("fixture location")?
@@ -108,22 +108,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         command
             .env
             .push(("FAKE_MULTIWRITER_CATALOGUE".into(), "1".into()));
+        command.env.push((
+            "FAKE_MULTIWRITER_CONTROL_DIR".into(),
+            directory.to_string_lossy().into_owned(),
+        ));
         if std::env::var("DIRECT_BROWSER_QA_IMAGES").as_deref() == Ok("1") {
             command
                 .env
                 .push(("FAKE_MULTIWRITER_IMAGES".into(), "1".into()));
         }
-        let (agent, events) = fabrials_agent_host::acp::AgentHandle::spawn(&command)?;
-        agent.initialize().await?;
         let before = host.journal.lock().await.emitted_through();
-        host.attach_agent(agent.clone(), events);
+        let supervisor =
+            host.supervise_agent(command, fabrials_agent_host::RelaunchPolicy::default());
         tokio::time::timeout(Duration::from_secs(10),async {
             loop {
                 if matches!(host.journal.lock().await.replay_after(before),fabrials_agent_host::journal::ReplayOutcome::Replay(events) if events.iter().any(|event|matches!(event.event,fabrials_agent_host::protocol::Event::WorkspacesChanged))) {break;}
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await?;
-        Some(agent)
+        Some(supervisor)
     } else {
         None
     };
@@ -154,25 +157,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &json!({"endpoint":"https://direct-fixture.test","installationId":identity.install_id,"hostPublicKey":host_key,"nonce":nonce.expose(),"label":"Synthetic second client"}),
             )?;
         }
-        if let Some(agent) = &agent {
-            for (name, method) in [
-                ("release-turn", "test/release"),
-                ("disable-models", "test/disable_models"),
-            ] {
-                if let Ok(session_id) = std::fs::read_to_string(directory.join(name)) {
-                    std::fs::remove_file(directory.join(name))?;
-                    if session_id.trim().len() > 512 {
-                        return Err("invalid synthetic session".into());
-                    }
-                    agent
-                        .request(method, json!({"sessionId":session_id.trim()}))
-                        .await?;
-                }
-            }
-        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     host.request_shutdown();
     tokio::time::timeout(Duration::from_secs(5), serving).await???;
+    if let Some(supervisor) = supervisor {
+        tokio::time::timeout(Duration::from_secs(5), supervisor).await??;
+    }
     Ok(())
 }
